@@ -5,6 +5,7 @@ _qft(n) = chain(_B(n, k) for k in 1:n)
 function qft_code(qubit_num::Int)
     qc = _qft(qubit_num)
     tn = yao2einsum(qc)
+    # return tn.code, tn.tensors
     code = OMEinsum.flatten(tn.code)
     push!(code.ixs, collect(1:qubit_num))
     code = DynamicEinCode(code.ixs, collect(qubit_num+1:2*qubit_num))

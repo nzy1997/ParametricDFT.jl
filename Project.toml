@@ -4,16 +4,28 @@ version = "1.0.0-DEV"
 authors = ["nzy1997"]
 
 [deps]
+ADTypes = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
 Combinatorics = "861a8166-3701-5b0c-9a16-15d98fcdc6aa"
+DifferentiationInterface = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
 FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
+FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
+ManifoldDiff = "af67fdf4-a580-4b9f-bbec-742ef357defd"
+Manifolds = "1cead3c2-87b3-11e9-0ccd-23c62b72b94e"
+Manopt = "0fc0a36d-df90-57f3-8f93-d78a9fc72bb5"
 OMEinsum = "ebe7aa44-baf0-506c-a96f-8464559b3922"
 Optimisers = "3bd65402-5787-11e9-1adc-39752487f4e2"
 Yao = "5872b779-8223-5990-8dd0-5abbb0748c8c"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [compat]
+ADTypes = "1.18.0"
 Combinatorics = "1.0.3"
+DifferentiationInterface = "0.7.8"
 FFTW = "1.10.0"
+FiniteDifferences = "0.12.33"
+ManifoldDiff = "0.4.5"
+Manifolds = "0.10.23"
+Manopt = "0.5.24"
 OMEinsum = "0.9.2"
 Optimisers = "0.4.6"
 Yao = "0.9.2"
