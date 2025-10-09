@@ -15,35 +15,21 @@ end
 
 abstract type ParameterizationMethod end
 struct SingleParameter <: ParameterizationMethod end
+initial_theta(n::Int, method::SingleParameter) = [1.0]
 
 function qft_tensors(n::Int, theta::Vector, method::SingleParameter)
-    @show typeof(theta)
     @assert length(theta) == 1
-    tns = Vector{AbstractArray{ComplexF64}}(undef, n*(n-1)+1)
-    H = Matrix{ComplexF64}(undef, 2, 2)
-    H[1,1] = 1.0+0.0im
-    H[1,2] = 1.0+0.0im
-    H[2,1] = 1.0+0.0im
-    H[2,2] = -1.0+0.0im
-    H ./= sqrt(2)
+    tns = AbstractArray{ComplexF64}[]
+    H = ComplexF64[1.0 1.0; 1.0 -1.0] ./ sqrt(2)
     
-    count_tensor = 0
     for j in 1:n-1
-        count_tensor += 1
-        tns[count_tensor] = H
+        push!(tns, H)
         for k in j+1:n
-            count_tensor += 1
-            # 避免使用矩阵字面量，显式构造矩阵
-            ctrl_mat = Matrix{ComplexF64}(undef, 2, 2)
-            ctrl_mat[1,1] = 1.0+0.0im
-            ctrl_mat[1,2] = 1.0+0.0im
-            ctrl_mat[2,1] = 1.0+0.0im
-            ctrl_mat[2,2] = exp(im*π*theta[1]/2^(k-j))
-            tns[count_tensor] = ctrl_mat
+            ctrl_mat = ComplexF64[1.0 1.0; 1.0 exp(im*π*theta[1]/2^(k-j))]
+            push!(tns, ctrl_mat)
         end
     end
-    count_tensor += 1
-    tns[count_tensor] = H
+    push!(tns, H)
     return tns
 end
 
@@ -51,14 +37,32 @@ abstract type AbstractLoss end
 struct L1Norm <: AbstractLoss end
 
 
-function loss_function(n::Int,optcode::OMEinsum.AbstractEinsum,theta::Vector,pics::Vector,loss::L1Norm,method::SingleParameter)
-    @assert length(pics) == 2^n
+function loss_function(n::Int,optcode::OMEinsum.AbstractEinsum,theta::Vector,pic::Vector,loss::AbstractLoss,method::ParameterizationMethod)
+    @assert length(pic) == 2^n
     tensors = qft_tensors(n,theta,method)
-    @show typeof(tensors)
-    tensors[end] = reshape(pics, (fill(2, n)...,))
-    fft_res = reshape(optcode(tensors...), 2^n)
-    return _loss_function(fft_res,pics,loss)
+    push!(tensors, reshape(pic, (fill(2, n)...,)))
+    return _loss_function(optcode(tensors...),pic,loss)
 end
 
-_loss_function(fft_res,pics,loss::L1Norm) = sum(abs.(fft_res))
+_loss_function(fft_res,pic,loss::L1Norm) = sum(abs.(fft_res))
 
+function fft_with_training(n::Int, pic::Vector,loss::AbstractLoss,method::ParameterizationMethod)
+    optcode, _ = qft_code(n)
+    f(x) = loss_function(n,optcode,x,pic,loss,method)
+
+    rule = Optimisers.Adam(0.1)
+    theta = initial_theta(n, method)
+    state = Optimisers.setup(rule, theta)
+    grad = zero(theta)
+
+    max_epochs = 100
+    for epoch in 1:max_epochs
+        println("Epoch $epoch: Loss = $(f(theta))")
+        # grad = Zygote.gradient(f, theta)
+        grad = 0.1
+        Optimisers.update!(state, theta, grad)
+    end
+    tensors = qft_tensors(n,theta,method)
+    push!(tensors, reshape(pic, (fill(2, n)...,)))
+    return reshape(optcode(tensors...),2^n)
+end
