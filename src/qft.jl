@@ -1,69 +1,99 @@
 _A(i, j) = control(i, j=>shift(2π/(1<<(i-j+1))))
-_B(n, k) = chain(n, j==k ? put(k=>H) : _A(j, k) for j in k:n)
+# _A(n, i, j) = put(n,(i,j)=>matblock(rand_unitary(4)))
+_B(n, k) = chain(n, j==k ? put(k=>H) : _A( j, k) for j in k:n)
 _qft(n) = chain(_B(n, k) for k in 1:n)
 
 function qft_code(qubit_num::Int)
     qc = _qft(qubit_num)
     tn = yao2einsum(qc)
-    # return tn.code, tn.tensors
     code = OMEinsum.flatten(tn.code)
-    push!(code.ixs, collect(1:qubit_num))
-    code = DynamicEinCode(code.ixs, collect(qubit_num+1:2*qubit_num))
+    perm_vec = sort_order(qubit_num)
 
-    optcode = optimize_code(code,uniformsize(code, 2), TreeSA())
-    return optcode, tn.tensors
-end
+    @assert length(perm_vec) == length(code.ixs)
 
-abstract type ParameterizationMethod end
-struct SingleParameter <: ParameterizationMethod end
-initial_theta(n::Int, method::SingleParameter) = [1.0]
+    ixs = code.ixs[perm_vec]
+    tensors = tn.tensors[perm_vec]
+    code_reorder = DynamicEinCode(ixs, code.iy)
 
-function qft_tensors(n::Int, theta::Vector, method::SingleParameter)
-    @assert length(theta) == 1
-    tns = AbstractArray{ComplexF64}[]
-    H = ComplexF64[1.0 1.0; 1.0 -1.0] ./ sqrt(2)
-    
-    for j in 1:n-1
-        push!(tns, H)
-        for k in j+1:n
-            ctrl_mat = ComplexF64[1.0 1.0; 1.0 exp(im*π*theta[1]/2^(k-j))]
-            push!(tns, ctrl_mat)
-        end
-    end
-    push!(tns, H)
-    return tns
+    optcode = optimize_code(code_reorder,uniformsize(code, 2), TreeSA())
+    return optcode, tensors
 end
 
 abstract type AbstractLoss end
 struct L1Norm <: AbstractLoss end
 
 
-function loss_function(n::Int,optcode::OMEinsum.AbstractEinsum,theta::Vector,pic::Vector,loss::AbstractLoss,method::ParameterizationMethod)
+function loss_function(tensors,n::Int,optcode::OMEinsum.AbstractEinsum, pic::Vector,loss::AbstractLoss)
     @assert length(pic) == 2^n
-    tensors = qft_tensors(n,theta,method)
-    push!(tensors, reshape(pic, (fill(2, n)...,)))
-    return _loss_function(optcode(tensors...),pic,loss)
+    fft_mat = optcode(tensors...)
+    fft_mat = reshape(fft_mat, 2^(n),2^(n))
+    fft_pic = fft_mat * pic
+    return _loss_function(fft_pic,pic,loss)
 end
 
 _loss_function(fft_res,pic,loss::L1Norm) = sum(abs.(fft_res))
 
-function fft_with_training(n::Int, pic::Vector,loss::AbstractLoss,method::ParameterizationMethod)
-    optcode, _ = qft_code(n)
-    f(x) = loss_function(n,optcode,x,pic,loss,method)
+function fft_with_training(n::Int, pic::Vector,loss::AbstractLoss)
+    optcode, tensors = qft_code(n)
+    M = generate_manifold(n)
+    f(M,p) = loss_function(point2tensors(p,n),n,optcode,pic,loss)
+    grad_f2(M,p) = ManifoldDiff.gradient(M, x->f(M,x), p, RiemannianProjectionBackend(AutoZygote()))
+    
+    m = gradient_descent(M, f, grad_f2, tensors2point(tensors,n);
+        debug=[:Iteration,(:Change, "|Δp|: %1.9f |"),
+            (:Cost, " F(x): %1.11f | "), "\n", :Stop]
+      )
+      return m
+end
 
-    rule = Optimisers.Adam(0.1)
-    theta = initial_theta(n, method)
-    state = Optimisers.setup(rule, theta)
-    grad = zero(theta)
+function generate_manifold(n::Int)
+    M2 = UnitaryMatrices(2)
+    M1 = PowerManifold(UnitaryMatrices(1),4)
+    return ProductManifold(fill(M2,n)...,fill(M1,n*(n+1) ÷ 2-n)...)
+end
 
-    max_epochs = 100
-    for epoch in 1:max_epochs
-        println("Epoch $epoch: Loss = $(f(theta))")
-        # grad = Zygote.gradient(f, theta)
-        grad = 0.1
-        Optimisers.update!(state, theta, grad)
+function tensors2point(tensors,n::Int)
+    return ArrayPartition(tensors[1:n]...,[[tensors[count_num][1,1];;;tensors[count_num][1,2];;;tensors[count_num][2,1];;;tensors[count_num][2,2]] for count_num in n+1:n*(n+1) ÷ 2]...)
+end
+
+function point2tensors(p,n::Int)
+    # tensors = collect(p.x)
+    # count_num = 0
+    # for j in 1:n
+    #     for i in j:n
+    #         if i == j
+    #             count_num += 1
+    #         else
+    #             count_num += 1
+    #             tensors[count_num] = reshape(tensors[count_num],2,2)
+    #         end
+    #     end
+    # end
+    return [j< n+1 ? p.x[j] : reshape(p.x[j],2,2) for j in 1:n*(n+1) ÷ 2]
+end
+
+function sort_order(n::Int)
+    hcount = 0
+    totalcount = 0
+    perm_vec = Vector{Int64}()
+    for j in 1:n
+        for i in j:n
+            totalcount += 1
+            if i == j
+                hcount += 1
+                push!(perm_vec, totalcount)
+            end
+        end
     end
-    tensors = qft_tensors(n,theta,method)
-    push!(tensors, reshape(pic, (fill(2, n)...,)))
-    return reshape(optcode(tensors...),2^n)
+    totalcount = 0
+    for j in 1:n
+        for i in j:n
+            totalcount += 1
+            if i != j
+                hcount += 1
+                push!(perm_vec, totalcount)
+            end
+        end
+    end
+    return perm_vec
 end

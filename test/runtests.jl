@@ -34,7 +34,30 @@ end
 @testset "fft with training" begin
     qubit_num = 3
     pic = rand(2^(qubit_num))
-    theta = QDFT.fft_with_training(qubit_num, pic, QDFT.L1Norm(), QDFT.SingleParameter())
+    theta = QDFT.fft_with_training(qubit_num, pic, QDFT.L1Norm())
     @show theta
-    @test theta isa Vector
+    # @test theta isa Vector
+end
+
+@testset "generate manifold" begin
+    n = 3
+    M = QDFT.generate_manifold(n)
+    @test M isa ProductManifold
+
+    optcode, tensors = QDFT.qft_code(n)
+
+    p = QDFT.tensors2point(tensors, n)
+    @test p isa ArrayPartition
+    @test is_point(M, p)
+
+    tensors2 = QDFT.point2tensors(p, n)
+    @test tensors2 == tensors
+end
+
+@testset "sort order" begin
+    n = 4
+    optcode, tensors = QDFT.qft_code(n)
+    H = [1 1; 1 -1]./sqrt(2)
+    @test tensors[1:n] == fill(H, n)
+    @test length(tensors) == n*(n+1)/2
 end
