@@ -57,18 +57,6 @@ function tensors2point(tensors,n::Int)
 end
 
 function point2tensors(p,n::Int)
-    # tensors = collect(p.x)
-    # count_num = 0
-    # for j in 1:n
-    #     for i in j:n
-    #         if i == j
-    #             count_num += 1
-    #         else
-    #             count_num += 1
-    #             tensors[count_num] = reshape(tensors[count_num],2,2)
-    #         end
-    #     end
-    # end
     return [j< n+1 ? p.x[j] : reshape(p.x[j],2,2) for j in 1:n*(n+1) ÷ 2]
 end
 
