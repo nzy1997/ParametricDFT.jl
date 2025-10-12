@@ -25,15 +25,14 @@ struct L1Norm <: AbstractLoss end
 
 function loss_function(tensors,n::Int,optcode::OMEinsum.AbstractEinsum, pic::Vector,loss::AbstractLoss)
     @assert length(pic) == 2^n
-    fft_mat = optcode(tensors...)
-    fft_mat = reshape(fft_mat, 2^(n),2^(n))
-    fft_pic = fft_mat * pic
+    mat1 = ft_mat(tensors,optcode,n)
+    fft_pic = mat1 * pic
     return _loss_function(fft_pic,pic,loss)
 end
 
 _loss_function(fft_res,pic,loss::L1Norm) = sum(abs.(fft_res))
 
-function fft_with_training(n::Int, pic::Vector,loss::AbstractLoss)
+function fft_with_training(n::Int, pic::Vector,loss::AbstractLoss;steps::Int=1000)
     optcode, tensors = qft_code(n)
     M = generate_manifold(n)
     f(M,p) = loss_function(point2tensors(p,n),n,optcode,pic,loss)
@@ -41,7 +40,7 @@ function fft_with_training(n::Int, pic::Vector,loss::AbstractLoss)
     
     m = gradient_descent(M, f, grad_f2, tensors2point(tensors,n);
         debug=[:Iteration,(:Change, "|Δp|: %1.9f |"),
-            (:Cost, " F(x): %1.11f | "), "\n", :Stop]
+            (:Cost, " F(x): %1.11f | "), "\n", :Stop],stopping_criterion=StopAfterIteration(steps)|StopWhenGradientNormLess(1e-5)
       )
       return m
 end
@@ -84,4 +83,13 @@ function sort_order(n::Int)
         end
     end
     return perm_vec
+end
+
+function ft_mat(theta::Vector, code::OMEinsum.AbstractEinsum, n::Int)
+    return reshape(code(theta...), 2^(n), 2^(n))
+end
+
+function ift_mat(tensors::Vector, code::OMEinsum.AbstractEinsum, n::Int)
+    tensors
+    return reshape(code(tensors...), 2^(n), 2^(n))
 end
