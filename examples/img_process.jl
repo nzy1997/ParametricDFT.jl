@@ -1,6 +1,6 @@
 using Images
 using FFTW
-using QDFT
+using ParametricDFT
 
 # load image
 test_img = Images.load("examples/cat.png")
@@ -40,18 +40,18 @@ fftmat_truncate[:,1:mid-size] .= 0
 fftmat_truncate[:,mid+size:end] .= 0
 pic_fft_truncate = Gray.(ifft(ifftshift(fftmat_truncate)))
 
-# use QDFT.jl to get the frequency domain
+# use ParametricDFT.jl to get the frequency domain
 pic = vec(mat_g)
 pic2 = reshape(mat_g,4096)
 
 qubit_num = 12
 # pic = rand(2^(qubit_num))
-@time theta = QDFT.fft_with_training(qubit_num, pic, QDFT.L1Norm();steps = 200)
+@time theta = ParametricDFT.fft_with_training(qubit_num, pic, ParametricDFT.L1Norm();steps = 200)
 # steps = 1000: 2521.269052 seconds
 # steps = 200: 531.288617 seconds
 
-tensors = QDFT.point2tensors(theta, qubit_num)
-mat1 = QDFT.ft_mat(tensors, QDFT.qft_code(qubit_num)[1], qubit_num)
+tensors = ParametricDFT.point2tensors(theta, qubit_num)
+mat1 = ParametricDFT.ft_mat(tensors, ParametricDFT.qft_code(qubit_num)[1], qubit_num)
 
 # save and load the matrix
 using DelimitedFiles
@@ -73,7 +73,7 @@ ft_pic_cut[findall(x->abs(x)<cut_threshold, ft_pic)] .= 0
 
 mat1'*ft_pic_cut 
 
-pic_qdft_truncate = Gray.(reshape(mat1'*ft_pic_cut,64,64))
+pic_ParametricDFT_truncate = Gray.(reshape(mat1'*ft_pic_cut,64,64))
 
 pic_fft_truncate
-pic_qdft_truncate
+pic_ParametricDFT_truncate

@@ -1,14 +1,14 @@
 ```@meta
-CurrentModule = QDFT
+CurrentModule = ParametricDFT
 ```
 
-# QDFT
+# ParametricDFT
 
-Documentation for [QDFT](https://github.com/nzy1997/QDFT.jl).
+Documentation for [ParametricDFT](https://github.com/nzy1997/ParametricDFT.jl).
 
 ```@index
 ```
 
 ```@autodocs
-Modules = [QDFT]
+Modules = [ParametricDFT]
 ```

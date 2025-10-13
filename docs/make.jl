@@ -1,14 +1,14 @@
-using QDFT
+using ParametricDFT
 using Documenter
 
-DocMeta.setdocmeta!(QDFT, :DocTestSetup, :(using QDFT); recursive=true)
+DocMeta.setdocmeta!(ParametricDFT, :DocTestSetup, :(using ParametricDFT); recursive=true)
 
 makedocs(;
-    modules=[QDFT],
+    modules=[ParametricDFT],
     authors="nzy1997",
-    sitename="QDFT.jl",
+    sitename="ParametricDFT.jl",
     format=Documenter.HTML(;
-        canonical="https://nzy1997.github.io/QDFT.jl",
+        canonical="https://nzy1997.github.io/ParametricDFT.jl",
         edit_link="main",
         assets=String[],
     ),
@@ -18,6 +18,6 @@ makedocs(;
 )
 
 deploydocs(;
-    repo="github.com/nzy1997/QDFT.jl",
+    repo="github.com/nzy1997/ParametricDFT.jl",
     devbranch="main",
 )

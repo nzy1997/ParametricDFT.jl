@@ -1,4 +1,4 @@
-module QDFT
+module ParametricDFT
 
 using Yao
 using OMEinsum
