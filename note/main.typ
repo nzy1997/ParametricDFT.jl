@@ -251,5 +251,14 @@ Intuitively, the fourier basis is not optimal for image processing, because:
 == References
 - Image processing in Julia: https://www.youtube.com/watch?app=desktop&v=DGojI9xcCfg
 - Fast Fourier transformation: https://www.youtube.com/watch?v=E8HeD-MUrjY
+- FFT example: https://github.com/GiggleLiu/ScientificComputingDemos/tree/main/ImageProcessing
 - Compressed sensing: https://www.youtube.com/watch?v=Dt2WYkqZfbs&list=PLMrJAkhIeNNRHP5UA-gIimsXLQyHXxRty
-- Tensor network: https://github.com/GiggleLiu/tutorial-tensornetwork
+- Tensor network: https://github.com/GiggleLiu/tutorial-tensornetwork\
+- Manifold optimization: https://www.youtube.com/watch?v=dJz1klEutRY
+- #link("https://github.com/JuliaManifolds/Manifolds.jl")[
+  Manifolds.jl
+], #link("https://github.com/JuliaManifolds/ManifoldDiff.jl")[
+  ManifoldDiff.jl
+], #link("https://github.com/JuliaManifolds/Manopt.jl")[
+  Manopt.jl
+]
