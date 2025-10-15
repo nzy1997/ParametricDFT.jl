@@ -23,7 +23,7 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.0'
+          - '1'
         os:
           - ubuntu-latest
         arch:
@@ -71,6 +71,6 @@ jobs:
         shell: julia --project=docs --color=yes {0}
         run: |
           using Documenter: DocMeta, doctest
-          using QDFT
-          DocMeta.setdocmeta!(QDFT, :DocTestSetup, :(using QDFT); recursive=true)
-          doctest(QDFT)
+          using ParametricDFT
+          DocMeta.setdocmeta!(ParametricDFT, :DocTestSetup, :(using ParametricDFT); recursive=true)
+          doctest(ParametricDFT)
