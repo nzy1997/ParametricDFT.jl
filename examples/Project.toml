@@ -1,0 +1,5 @@
+[deps]
+DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
+FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
+Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"
+ParametricDFT = "cc2eb9de-5297-4754-b0bd-fdc80c6df40d"

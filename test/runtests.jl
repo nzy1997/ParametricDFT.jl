@@ -3,10 +3,11 @@ using Test
 using FFTW
 using OMEinsum
 using LinearAlgebra
-using Manifolds
+using Manifolds, Random
 using RecursiveArrayTools
 
 @testset "qft" begin
+    Random.seed!(1234)
     qubit_num = 3
     optcode, tensors = ParametricDFT.qft_code(qubit_num)
     pic = rand(2^(qubit_num))
@@ -15,6 +16,7 @@ using RecursiveArrayTools
 end
 
 @testset "fft with training" begin
+    Random.seed!(1234)
     qubit_num = 3
     pic = rand(2^(qubit_num))
     theta = ParametricDFT.fft_with_training(qubit_num, pic, ParametricDFT.L1Norm())

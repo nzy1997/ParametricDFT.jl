@@ -1,79 +1,165 @@
+# ================================================================================
+# Image Processing Example with ParametricDFT.jl
+# ================================================================================
+# This example demonstrates the use of ParametricDFT.jl for image compression
+# by learning a parametric quantum Fourier transform and truncating in the
+# frequency domain.
+
 using Images
 using FFTW
 using ParametricDFT
+using DelimitedFiles
 
-# load image
-test_img = Images.load("examples/cat.png")
-test_img = test_img[101:4:356,301:4:556]
+# ================================================================================
+# Section 1: Utility Functions for Image Processing
+# ================================================================================
 
-# convert image to grayscale
+"""
+    img2gray(img)
+
+Convert an RGB image to grayscale by extracting the green channel.
+"""
 function img2gray(img)
-    return [Gray(img[i,j].g) for i in 1:size(img,1), j in 1:size(img,2)]
-end
-function img2mat(img)
-    return [img[i,j].val for i in 1:size(img,1), j in 1:size(img,2)]
+    return [Gray(img[i, j].g) for i in 1:size(img, 1), j in 1:size(img, 2)]
 end
 
+"""
+    img2mat(img)
+
+Convert a grayscale image to a matrix of Float64 values.
+"""
+function img2mat(img)
+    return [img[i, j].val for i in 1:size(img, 1), j in 1:size(img, 2)]
+end
+
+"""
+    mat2img(mat)
+
+Convert a matrix of Float64 values back to a grayscale image.
+"""
 function mat2img(mat)
     return Gray.(mat)
 end
 
-# convert image to matrix
-img_g = img2gray(test_img)
-mat_g = img2mat(img_g)
+# ================================================================================
+# Section 2: Load and Prepare Image
+# ================================================================================
 
-# use fft in FFTW.jl to get the frequency domain
-fftmat = fftshift(fft(mat_g))
-fftabs = abs.(fftmat)
-fftabs_normalized = fftabs ./ maximum(fftabs)
-Gray.(fftabs_normalized)
+# Load image and downsample to 64×64 pixels
+test_img = Images.load("examples/cat.png")
+test_img = test_img[101:4:356, 301:4:556]
 
-# truncate the frequency domain
-fftmat_truncate = copy(fftmat)
-Gray.(ifft(ifftshift(fftmat)))
+# Convert to grayscale and then to matrix
+img_gray = img2gray(test_img)
+mat_gray = img2mat(img_gray)
 
+println("Image size: $(size(mat_gray))")
+
+# ================================================================================
+# Section 3: Classical FFT for Comparison (using FFTW.jl)
+# ================================================================================
+
+# Compute FFT using classical FFTW
+fft_result = fftshift(fft(mat_gray))
+
+# Visualize the frequency domain (normalized for display)
+fft_magnitude = abs.(fft_result)
+fft_normalized = fft_magnitude ./ maximum(fft_magnitude)
+display(Gray.(fft_normalized))
+
+# Truncate frequency domain (keep only low frequencies)
+fft_truncated = copy(fft_result)
 mid = 32
-size = 10
-fftmat_truncate[1:mid-size,:] .= 0
-fftmat_truncate[mid+size:end,:] .= 0
-fftmat_truncate[:,1:mid-size] .= 0
-fftmat_truncate[:,mid+size:end] .= 0
-pic_fft_truncate = Gray.(ifft(ifftshift(fftmat_truncate)))
+band_size = 10
 
-# use ParametricDFT.jl to get the frequency domain
-pic = vec(mat_g)
-pic2 = reshape(mat_g,4096)
+# Zero out high frequencies
+fft_truncated[1:mid-band_size, :] .= 0
+fft_truncated[mid+band_size:end, :] .= 0
+fft_truncated[:, 1:mid-band_size] .= 0
+fft_truncated[:, mid+band_size:end] .= 0
 
-qubit_num = 12
-# pic = rand(2^(qubit_num))
-@time theta = ParametricDFT.fft_with_training(qubit_num, pic, ParametricDFT.L1Norm();steps = 200)
-# steps = 1000: 2521.269052 seconds
-# steps = 200: 531.288617 seconds
+# Inverse FFT to get compressed image
+img_fft_compressed = Gray.(real.(ifft(ifftshift(fft_truncated))))
 
+println("Classical FFT compression completed")
+
+# ================================================================================
+# Section 4: Parametric Quantum DFT (using ParametricDFT.jl)
+# ================================================================================
+
+# Prepare image vector for processing
+img_vector = vec(mat_gray)
+qubit_num = 12  # 2^12 = 4096 pixels (64×64)
+
+println("\nTraining parametric DFT with $qubit_num qubits...")
+println("This will take several minutes (~9 minutes for 200 steps)...\n")
+
+# Train the parametric DFT circuit to minimize L1 norm
+@time theta = ParametricDFT.fft_with_training(
+    qubit_num, 
+    img_vector, 
+    ParametricDFT.L1Norm();
+    steps = 200
+)
+
+# Convert trained parameters to tensors and construct DFT matrix
 tensors = ParametricDFT.point2tensors(theta, qubit_num)
-mat1 = ParametricDFT.ft_mat(tensors, ParametricDFT.qft_code(qubit_num)[1], qubit_num)
+optcode = ParametricDFT.qft_code(qubit_num)[1]
+dft_matrix = ParametricDFT.ft_mat(tensors, optcode, qubit_num)
 
-# save and load the matrix
-using DelimitedFiles
-# writedlm("examples/matrices/epoch200.txt", mat1)
-mat1 = readdlm("examples/matrices/epoch200.txt",'\t',Complex{Float64})
+# Optional: Save the trained matrix for later use
+# using DelimitedFiles
+# writedlm("examples/matrices/epoch200.txt", dft_matrix)
 
-Gray.(abs.(mat1)./ maximum(abs.(mat1)))
+# Optional: Load a pre-trained matrix to skip training
+# dft_matrix = readdlm("examples/matrices/epoch200.txt", '\t', Complex{Float64})
 
-ft_pic = mat1*pic
-reshape_ft_pic = reshape(ft_pic,64,64)
-Gray.(abs.(reshape_ft_pic))
+# Visualize the learned DFT matrix
+display(Gray.(abs.(dft_matrix) ./ maximum(abs.(dft_matrix))))
 
+# ================================================================================
+# Section 5: Image Compression with Parametric DFT
+# ================================================================================
+
+# Apply the learned DFT to the image
+ft_img_vector = dft_matrix * img_vector
+
+# Visualize the frequency domain representation
+ft_img_reshaped = reshape(ft_img_vector, 64, 64)
+display(Gray.(abs.(ft_img_reshaped)))
+
+# Truncate in frequency domain by thresholding small coefficients
 cut_threshold = 0.25
-count(x->abs(x)<cut_threshold, ft_pic)
-count(x->abs(x)>cut_threshold, ft_pic)
+num_zeros = count(x -> abs(x) < cut_threshold, ft_img_vector)
+num_kept = count(x -> abs(x) >= cut_threshold, ft_img_vector)
 
-ft_pic_cut = copy(ft_pic)
-ft_pic_cut[findall(x->abs(x)<cut_threshold, ft_pic)] .= 0
+println("\nCompression ratio:")
+println("  Coefficients set to zero: $num_zeros / $(length(ft_img_vector))")
+println("  Coefficients kept: $num_kept / $(length(ft_img_vector))")
+println("  Compression: $(round(100 * num_zeros / length(ft_img_vector), digits=1))%")
 
-mat1'*ft_pic_cut 
+# Apply threshold: zero out small coefficients
+ft_img_truncated = copy(ft_img_vector)
+ft_img_truncated[findall(x -> abs(x) < cut_threshold, ft_img_vector)] .= 0
 
-pic_ParametricDFT_truncate = Gray.(reshape(mat1'*ft_pic_cut,64,64))
+# Inverse DFT to reconstruct the compressed image
+img_reconstructed = dft_matrix' * ft_img_truncated
+img_parametric_compressed = Gray.(reshape(img_reconstructed, 64, 64))
 
-pic_fft_truncate
-pic_ParametricDFT_truncate
+# ================================================================================
+# Section 6: Display Results
+# ================================================================================
+
+println("\n" * "="^60)
+println("Results:")
+println("="^60)
+println("Original image:")
+display(img_gray)
+
+println("\nClassical FFT compression:")
+display(img_fft_compressed)
+
+println("\nParametric DFT compression:")
+display(img_parametric_compressed)
+
+println("\nExample completed!")
