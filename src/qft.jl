@@ -19,14 +19,18 @@ function qft_code(m::Int, n::Int; inverse=false)
     qc1 = Yao.EasyBuild.qft_circuit(m)
     qc2 = Yao.EasyBuild.qft_circuit(n)
     qc = chain(subroutine(m + n, qc1, 1:m), subroutine(m + n, qc2, m+1:m+n))
-    if inverse
-        qc = qc'
-    end
+    # if inverse
+    #     qc = qc'
+    # end
     tn = yao2einsum(qc; optimizer=nothing)
     perm_vec = sortperm(tn.tensors, by= x-> !(x ≈ mat(H)))
     ixs = tn.code.ixs[perm_vec]
     tensors = tn.tensors[perm_vec]
-    code_reorder = DynamicEinCode([ixs..., tn.code.iy[m+n+1:end]], tn.code.iy[1:m+n])
+    if inverse
+        code_reorder = DynamicEinCode([ixs..., tn.code.iy[m+n+1:end]], tn.code.iy[1:m+n])
+    else
+        code_reorder = DynamicEinCode([ixs..., tn.code.iy[1:m+n]], tn.code.iy[m+n+1:end])
+    end
     optcode = optimize_code(code_reorder, uniformsize(tn.code, 2), TreeSA())
     return optcode, tensors
 end

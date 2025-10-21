@@ -1,10 +1,11 @@
 using ParametricDFT
 using Test
-using FFTW
+# using FFTW
 using OMEinsum
 using LinearAlgebra
 using Manifolds, Random
 using RecursiveArrayTools
+using Yao
 
 @testset "qft" begin
     Random.seed!(1234)
@@ -42,8 +43,10 @@ end
     Random.seed!(1234)
     m, n = 3, 3
     optcode, tensors = ParametricDFT.qft_code(m, n)
+    tensors[1] = rand_unitary(2)
+    tensors[end][1,2] = exp(im*pi/4)
+    tensors[end][2,1] = exp(-im*pi/5)
     optcode_inv, tensors_inv = ParametricDFT.qft_code(m, n; inverse=true)
-
     # Create a random input image
     pic = rand(ComplexF64, 2^m, 2^n)
 
@@ -51,7 +54,7 @@ end
     fft_result = ParametricDFT.ft_mat(tensors, optcode, m, n, pic)
 
     # Apply inverse FFT
-    reconstructed = ParametricDFT.ift_mat(tensors_inv, optcode_inv, m, n, fft_result)
+    reconstructed = ParametricDFT.ift_mat(conj.(tensors), optcode_inv, m, n, fft_result)
 
     # Check that we recover the original image (up to numerical precision)
     @test isapprox(reconstructed, pic, rtol=1e-10)
