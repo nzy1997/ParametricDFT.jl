@@ -10,7 +10,7 @@ using Manopt
 using RecursiveArrayTools
 
 export fft_with_training, qft_code, ft_mat, ift_mat
-export point2tensors, tensors2point
+export point2tensors, tensors2point, generate_manifold
 export AbstractLoss, L1Norm
 
 include("qft.jl")

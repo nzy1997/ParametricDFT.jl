@@ -2,40 +2,32 @@
 # Quantum Fourier Transform Circuit Construction
 # ============================================================================
 
-# Controlled phase shift gate: phase angle is 2π/2^(i-j+1)
-_A(i, j) = control(i, j=>shift(2π/(1<<(i-j+1))))
-
-# k-th stage of QFT: Hadamard on qubit k, then controlled phases from qubits j>k
-_B(n, k) = chain(n, j==k ? put(k=>H) : _A(j, k) for j in k:n)
-
-# Construct full n-qubit QFT circuit
-_qft(n) = chain(_B(n, k) for k in 1:n)
-
 """
-    qft_code(qubit_num::Int)
+    qft_code(m::Int, n::Int)
 
 Generate an optimized tensor network representation of the QFT circuit.
 
 # Arguments
-- `qubit_num::Int`: Number of qubits
+- `m::Int`: Number of qubits for row indices
+- `n::Int`: Number of qubits for column indices
 
 # Returns
 - `optcode::AbstractEinsum`: Optimized einsum contraction code
 - `tensors::Vector`: Initial circuit parameters (unitary matrices)
 """
-function qft_code(qubit_num::Int)
-    qc = _qft(qubit_num)
-    tn = yao2einsum(qc)
-    code = OMEinsum.flatten(tn.code)
-    perm_vec = sort_order(qubit_num)
-    
-    @assert length(perm_vec) == length(code.ixs)
-    
-    ixs = code.ixs[perm_vec]
+function qft_code(m::Int, n::Int; inverse=false)
+    qc1 = Yao.EasyBuild.qft_circuit(m)
+    qc2 = Yao.EasyBuild.qft_circuit(n)
+    qc = chain(subroutine(m + n, qc1, 1:m), subroutine(m + n, qc2, m+1:m+n))
+    if inverse
+        qc = qc'
+    end
+    tn = yao2einsum(qc; optimizer=nothing)
+    perm_vec = sortperm(tn.tensors, by= x-> !(x ≈ mat(H)))
+    ixs = tn.code.ixs[perm_vec]
     tensors = tn.tensors[perm_vec]
-    code_reorder = DynamicEinCode(ixs, code.iy)
-    
-    optcode = optimize_code(code_reorder, uniformsize(code, 2), TreeSA())
+    code_reorder = DynamicEinCode([ixs..., tn.code.iy[m+n+1:end]], tn.code.iy[1:m+n])
+    optcode = optimize_code(code_reorder, uniformsize(tn.code, 2), TreeSA())
     return optcode, tensors
 end
 
@@ -68,16 +60,15 @@ Compute the loss for current circuit parameters.
 - `tensors::Vector`: Circuit parameters (unitary matrices)
 - `n::Int`: Number of qubits
 - `optcode::AbstractEinsum`: Optimized einsum code
-- `pic::Vector`: Input signal (length must be 2^n)
+- `pic::Matrix`: Input signal (size must be 2^m × 2^n)
 - `loss::AbstractLoss`: Loss function type
 
 # Returns
 - Loss value
 """
-function loss_function(tensors, n::Int, optcode::OMEinsum.AbstractEinsum, pic::Vector, loss::AbstractLoss)
-    @assert length(pic) == 2^n "Input vector length must be 2^n"
-    mat1 = ft_mat(tensors, optcode, n)
-    fft_pic = mat1 * pic
+function loss_function(tensors, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum, pic::Matrix, loss::AbstractLoss)
+    @assert (size(pic) == (2^m, 2^n)) "Input matrix size must be 2^m × 2^n"
+    fft_pic = reshape(optcode(tensors..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
     return _loss_function(fft_pic, pic, loss)
 end
 
@@ -89,39 +80,43 @@ _loss_function(fft_res, pic, loss::L1Norm) = sum(abs.(fft_res))
 # ============================================================================
 
 """
-    fft_with_training(n::Int, pic::Vector, loss::AbstractLoss; steps::Int=1000)
+    fft_with_training(m::Int, n::Int, pic::Matrix, loss::AbstractLoss; steps::Int=1000, use_cuda::Bool=false)
 
-Train a parametric quantum DFT circuit using Riemannian gradient descent.
+Train a parametric 2D quantum DFT circuit using Riemannian gradient descent.
 
 # Arguments
-- `n::Int`: Number of qubits (input length must be 2^n)
-- `pic::Vector`: Input signal
+- `m::Int`: Number of qubits for row dimension (image height = 2^m)
+- `n::Int`: Number of qubits for column dimension (image width = 2^n)
+- `pic::Matrix`: Input signal (size must be 2^m × 2^n)
 - `loss::AbstractLoss`: Loss function (e.g., `L1Norm()`)
 - `steps::Int=1000`: Maximum optimization iterations
+- `use_cuda::Bool=false`: Whether to use CUDA acceleration (not yet implemented)
 
 # Returns
 - Optimized parameters on the manifold (use `point2tensors` to convert to tensors)
 
 # Example
 ```julia
-theta = fft_with_training(8, rand(256), L1Norm(); steps=200)
+m, n = 6, 6  # For 64×64 image
+pic = rand(ComplexF64, 2^m, 2^n)
+theta = fft_with_training(m, n, pic, L1Norm(); steps=200)
 ```
 """
-function fft_with_training(n::Int, pic::Vector, loss::AbstractLoss; steps::Int=1000)
-    optcode, tensors = qft_code(n)
-    M = generate_manifold(n)
+function fft_with_training(m::Int, n::Int, pic::Matrix, loss::AbstractLoss; steps::Int=1000, use_cuda::Bool=false)
+    optcode, tensors = qft_code(m, n)
+    M = generate_manifold(tensors)
     
-    f(M, p) = loss_function(point2tensors(p, n), n, optcode, pic, loss)
+    f(M, p) = loss_function(point2tensors(p, M), m, n, optcode, pic, loss)
     grad_f2(M, p) = ManifoldDiff.gradient(M, x->f(M, x), p, RiemannianProjectionBackend(AutoZygote()))
     
-    m = gradient_descent(
-        M, f, grad_f2, tensors2point(tensors, n);
+    result = gradient_descent(
+        M, f, grad_f2, tensors2point(tensors, M);
         debug = [:Iteration, (:Change, "|Δp|: %1.9f |"),
                 (:Cost, " F(x): %1.11f | "), "\n", :Stop],
         stopping_criterion = StopAfterIteration(steps) | StopWhenGradientNormLess(1e-5)
     )
     
-    return m
+    return result
 end
 
 # ============================================================================
@@ -129,90 +124,80 @@ end
 # ============================================================================
 
 """
-    generate_manifold(n::Int)
+    generate_manifold(tensors)
 
-Generate product manifold for n-qubit QFT parameters.
+Generate product manifold for m+n-qubit QFT parameters.
 Returns a product of U(2) manifolds for Hadamard gates and U(1)^4 for controlled gates.
 """
-function generate_manifold(n::Int)
+function generate_manifold(tensors)
     M2 = UnitaryMatrices(2)
     M1 = PowerManifold(UnitaryMatrices(1), 4)
-    return ProductManifold(fill(M2, n)..., fill(M1, n*(n+1) ÷ 2 - n)...)
+    return ProductManifold(map(x -> x ≈ mat(H) ? M2 : M1, tensors)...)
 end
 
 """
-    tensors2point(tensors, n::Int)
+    tensors2point(tensors, M::ProductManifold)
 
 Convert circuit tensors (unitary matrices) to a point on the product manifold.
 """
-function tensors2point(tensors, n::Int)
+function tensors2point(tensors, M::ProductManifold)
     return ArrayPartition(
-        tensors[1:n]...,
-        [[tensors[count_num][1, 1];;; tensors[count_num][1, 2];;; 
-          tensors[count_num][2, 1];;; tensors[count_num][2, 2]] 
-         for count_num in n+1:n*(n+1) ÷ 2]...
+        [mi isa UnitaryMatrices ? tensors[j] : 
+         [tensors[j][1, 1];;; tensors[j][1, 2];;; 
+          tensors[j][2, 1];;; tensors[j][2, 2]] 
+         for (j, mi) in enumerate(M.manifolds)]...
     )
 end
 
 """
-    point2tensors(p, n::Int)
+    point2tensors(p, M)
 
 Convert a manifold point back to circuit tensors (unitary matrices).
 """
-function point2tensors(p, n::Int)
-    return [j < n+1 ? p.x[j] : reshape(p.x[j], 2, 2) for j in 1:n*(n+1) ÷ 2]
+function point2tensors(p, M)
+    return [mi isa UnitaryMatrices ? p.x[j] : reshape(p.x[j], 2, 2) for (j, mi) in enumerate(M.manifolds)]
 end
 
 # ============================================================================
 # Helper Functions
 # ============================================================================
 
-# Generate permutation vector to reorder tensors: Hadamard gates first, then controlled gates
-function sort_order(n::Int)
-    hcount = 0
-    totalcount = 0
-    perm_vec = Vector{Int64}()
-    
-    # First pass: collect Hadamard gate indices (diagonal elements)
-    for j in 1:n
-        for i in j:n
-            totalcount += 1
-            if i == j
-                hcount += 1
-                push!(perm_vec, totalcount)
-            end
-        end
-    end
-    
-    # Second pass: collect controlled gate indices (off-diagonal elements)
-    totalcount = 0
-    for j in 1:n
-        for i in j:n
-            totalcount += 1
-            if i != j
-                hcount += 1
-                push!(perm_vec, totalcount)
-            end
-        end
-    end
-    
-    return perm_vec
+"""
+    ft_mat(tensors::Vector, code::AbstractEinsum, m::Int, n::Int, pic::Matrix)
+
+Apply 2D DFT to an image using the trained circuit parameters.
+
+# Arguments
+- `tensors::Vector`: Circuit tensors (unitary matrices)
+- `code::AbstractEinsum`: Optimized einsum code
+- `m::Int`: Number of qubits for row dimension
+- `n::Int`: Number of qubits for column dimension
+- `pic::Matrix`: Input image (size 2^m × 2^n)
+
+# Returns
+- Transformed image in frequency domain (size 2^m × 2^n)
+"""
+function ft_mat(tensors::Vector, code::OMEinsum.AbstractEinsum, m::Int, n::Int, pic::Matrix)
+    @assert size(pic) == (2^m, 2^n) "Input size must be 2^m × 2^n"
+    return reshape(code(tensors..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
 end
 
 """
-    ft_mat(theta::Vector, code::AbstractEinsum, n::Int)
+    ift_mat(tensors::Vector, code::AbstractEinsum, m::Int, n::Int, pic::Matrix)
 
-Construct DFT matrix from circuit parameters by contracting the tensor network.
-"""
-function ft_mat(theta::Vector, code::OMEinsum.AbstractEinsum, n::Int)
-    return reshape(code(theta...), 2^n, 2^n)
-end
+Apply inverse 2D DFT using the inverse QFT circuit with trained parameters.
 
-"""
-    ift_mat(tensors::Vector, code::AbstractEinsum, n::Int)
+# Arguments
+- `tensors::Vector`: Circuit tensors (unitary matrices) from inverse QFT (use qft_code(m, n; inverse=true))
+- `code::AbstractEinsum`: Optimized einsum code from inverse QFT
+- `m::Int`: Number of qubits for row dimension
+- `n::Int`: Number of qubits for column dimension
+- `pic::Matrix`: Input in frequency domain (size 2^m × 2^n)
 
-Construct inverse DFT matrix from circuit parameters.
+# Returns
+- Transformed image in spatial domain (size 2^m × 2^n)
 """
-function ift_mat(tensors::Vector, code::OMEinsum.AbstractEinsum, n::Int)
-    return reshape(code(tensors...), 2^n, 2^n)
+function ift_mat(tensors::Vector, code::OMEinsum.AbstractEinsum, m::Int, n::Int, pic::Matrix)
+    @assert size(pic) == (2^m, 2^n) "Input size must be 2^m × 2^n"
+    return reshape(code(tensors..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
 end

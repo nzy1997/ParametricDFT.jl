@@ -87,64 +87,58 @@ println("Classical FFT compression completed")
 # Section 4: Parametric Quantum DFT (using ParametricDFT.jl)
 # ================================================================================
 
-# Prepare image vector for processing
-img_vector = vec(mat_gray)
-qubit_num = 12  # 2^12 = 4096 pixels (64×64)
+# Prepare image matrix for processing - convert to complex for quantum circuit
+img_matrix = Complex{Float64}.(mat_gray)
+m, n = 6, 6  # 2^6 × 2^6 = 64×64 pixels
 
-println("\nTraining parametric DFT with $qubit_num qubits...")
-println("This will take several minutes (~9 minutes for 200 steps)...\n")
+println("\nTraining parametric 2D DFT with $m × $n qubits...")
+println("This will take several minutes (200 steps)...\n")
 
 # Train the parametric DFT circuit to minimize L1 norm
 @time theta = ParametricDFT.fft_with_training(
-    qubit_num, 
-    img_vector, 
+    m, n,
+    img_matrix, 
     ParametricDFT.L1Norm();
     steps = 200
 )
 
-# Convert trained parameters to tensors and construct DFT matrix
-tensors = ParametricDFT.point2tensors(theta, qubit_num)
-optcode = ParametricDFT.qft_code(qubit_num)[1]
-dft_matrix = ParametricDFT.ft_mat(tensors, optcode, qubit_num)
+# Convert trained parameters to tensors and construct DFT einsum code
+optcode, initial_tensors = ParametricDFT.qft_code(m, n)
+M = ParametricDFT.generate_manifold(initial_tensors)
+tensors = ParametricDFT.point2tensors(theta, M)
 
-# Optional: Save the trained matrix for later use
+# Apply the learned 2D DFT
+ft_img = reshape(optcode(tensors..., reshape(img_matrix, fill(2, m+n)...)), 2^m, 2^n)
+
+# Optional: Save the trained parameters for later use
 # using DelimitedFiles
-# writedlm("examples/matrices/epoch200.txt", dft_matrix)
-
-# Optional: Load a pre-trained matrix to skip training
-# dft_matrix = readdlm("examples/matrices/epoch200.txt", '\t', Complex{Float64})
-
-# Visualize the learned DFT matrix
-display(Gray.(abs.(dft_matrix) ./ maximum(abs.(dft_matrix))))
+# writedlm("examples/matrices/epoch200_params.txt", theta)
 
 # ================================================================================
 # Section 5: Image Compression with Parametric DFT
 # ================================================================================
 
-# Apply the learned DFT to the image
-ft_img_vector = dft_matrix * img_vector
-
 # Visualize the frequency domain representation
-ft_img_reshaped = reshape(ft_img_vector, 64, 64)
-display(Gray.(abs.(ft_img_reshaped)))
+display(Gray.(abs.(ft_img) ./ maximum(abs.(ft_img))))
 
 # Truncate in frequency domain by thresholding small coefficients
 cut_threshold = 0.25
-num_zeros = count(x -> abs(x) < cut_threshold, ft_img_vector)
-num_kept = count(x -> abs(x) >= cut_threshold, ft_img_vector)
+num_zeros = count(x -> abs(x) < cut_threshold, ft_img)
+num_kept = count(x -> abs(x) >= cut_threshold, ft_img)
 
 println("\nCompression ratio:")
-println("  Coefficients set to zero: $num_zeros / $(length(ft_img_vector))")
-println("  Coefficients kept: $num_kept / $(length(ft_img_vector))")
-println("  Compression: $(round(100 * num_zeros / length(ft_img_vector), digits=1))%")
+println("  Coefficients set to zero: $num_zeros / $(length(ft_img))")
+println("  Coefficients kept: $num_kept / $(length(ft_img))")
+println("  Compression: $(round(100 * num_zeros / length(ft_img), digits=1))%")
 
 # Apply threshold: zero out small coefficients
-ft_img_truncated = copy(ft_img_vector)
-ft_img_truncated[findall(x -> abs(x) < cut_threshold, ft_img_vector)] .= 0
+ft_img_truncated = copy(ft_img)
+ft_img_truncated[abs.(ft_img_truncated) .< cut_threshold] .= 0
 
 # Inverse DFT to reconstruct the compressed image
-img_reconstructed = dft_matrix' * ft_img_truncated
-img_parametric_compressed = Gray.(reshape(img_reconstructed, 64, 64))
+optcode_inv, tensors_inv = ParametricDFT.qft_code(m, n; inverse=true)
+img_reconstructed = ParametricDFT.ift_mat(tensors_inv, optcode_inv, m, n, ft_img_truncated)
+img_parametric_compressed = Gray.(real.(img_reconstructed))
 
 # ================================================================================
 # Section 6: Display Results

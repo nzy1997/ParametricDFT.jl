@@ -13,8 +13,15 @@ RecursiveArrayTools = "731186ca-8d62-57ce-b412-fbd966d074cd"
 Yao = "5872b779-8223-5990-8dd0-5abbb0748c8c"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
+[weakdeps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+
+[extensions]
+CUDAExt = "CUDA"
+
 [compat]
 ADTypes = "1.18.0"
+CUDA = "5.9.1"
 FFTW = "1.10.0"
 LinearAlgebra = "1.12.0"
 ManifoldDiff = "0.4.5"
