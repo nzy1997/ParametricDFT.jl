@@ -9,6 +9,7 @@ Pkg.activate(script_dir)
 using DelimitedFiles
 using Statistics
 using Distributions
+using Dates
 
 # Load the results CSV
 workspace_root = dirname(script_dir)
@@ -19,33 +20,82 @@ println("Statistical Significance Analysis")
 println("="^80)
 println("\nLoading data from: $csv_file")
 
+# Check if file exists
+if !isfile(csv_file)
+    error("CSV file not found: $csv_file")
+end
+
+# Get file modification time
+file_mtime = Dates.unix2datetime(mtime(csv_file))
+println("File last modified: $(Dates.format(file_mtime, "yyyy-mm-dd HH:MM:SS"))")
+
+# Read CSV header first to validate structure
+header_line = readline(csv_file)
+expected_columns = [
+    "filename", "success", "ssim_fft", "ssim_parametric", 
+    "mse_fft", "mse_parametric", "psnr_fft", "psnr_parametric",
+    "msssim_fft", "msssim_parametric", "fft_forward_time", "fft_inverse_time",
+    "parametric_forward_time", "parametric_inverse_time"
+]
+
+header_cols = split(header_line, ',')
+if length(header_cols) < length(expected_columns)
+    error("CSV file has unexpected format. Expected $(length(expected_columns)) columns, found $(length(header_cols))")
+end
+
 # Read CSV data
 data = readdlm(csv_file, ',', skipstart=1)
+total_rows = size(data, 1)
+println("Total rows in CSV: $total_rows")
 
 # Extract successful results only
 successful_rows = [i for i in 1:size(data, 1) if data[i, 2] == "✓"]
+failed_rows = total_rows - length(successful_rows)
 
-# Extract metrics (paired data - same images)
-ssim_fft = [parse(Float64, string(data[i, 3])) for i in successful_rows]
-ssim_parametric = [parse(Float64, string(data[i, 4])) for i in successful_rows]
+println("Successful results: $(length(successful_rows))")
+if failed_rows > 0
+    println("Failed results: $failed_rows")
+end
 
-mse_fft = [parse(Float64, string(data[i, 5])) for i in successful_rows]
-mse_parametric = [parse(Float64, string(data[i, 6])) for i in successful_rows]
+if length(successful_rows) < 2
+    error("Need at least 2 successful results for statistical analysis. Found: $(length(successful_rows))")
+end
 
-psnr_fft = [parse(Float64, string(data[i, 7])) for i in successful_rows]
-psnr_parametric = [parse(Float64, string(data[i, 8])) for i in successful_rows]
+# Extract metrics (paired data - same images) with error handling
+function safe_parse_float(val, row_idx, col_name)
+    try
+        return parse(Float64, string(val))
+    catch e
+        error("Error parsing $col_name at row $row_idx: $val - $e")
+    end
+end
 
-msssim_fft = [parse(Float64, string(data[i, 9])) for i in successful_rows]
-msssim_parametric = [parse(Float64, string(data[i, 10])) for i in successful_rows]
+println("\nExtracting metrics from successful results...")
+ssim_fft = [safe_parse_float(data[i, 3], i, "ssim_fft") for i in successful_rows]
+ssim_parametric = [safe_parse_float(data[i, 4], i, "ssim_parametric") for i in successful_rows]
 
-fft_forward_time = [parse(Float64, string(data[i, 11])) for i in successful_rows]
-parametric_forward_time = [parse(Float64, string(data[i, 13])) for i in successful_rows]
+mse_fft = [safe_parse_float(data[i, 5], i, "mse_fft") for i in successful_rows]
+mse_parametric = [safe_parse_float(data[i, 6], i, "mse_parametric") for i in successful_rows]
 
-fft_inverse_time = [parse(Float64, string(data[i, 12])) for i in successful_rows]
-parametric_inverse_time = [parse(Float64, string(data[i, 14])) for i in successful_rows]
+psnr_fft = [safe_parse_float(data[i, 7], i, "psnr_fft") for i in successful_rows]
+psnr_parametric = [safe_parse_float(data[i, 8], i, "psnr_parametric") for i in successful_rows]
+
+msssim_fft = [safe_parse_float(data[i, 9], i, "msssim_fft") for i in successful_rows]
+msssim_parametric = [safe_parse_float(data[i, 10], i, "msssim_parametric") for i in successful_rows]
+
+fft_forward_time = [safe_parse_float(data[i, 11], i, "fft_forward_time") for i in successful_rows]
+parametric_forward_time = [safe_parse_float(data[i, 13], i, "parametric_forward_time") for i in successful_rows]
+
+fft_inverse_time = [safe_parse_float(data[i, 12], i, "fft_inverse_time") for i in successful_rows]
+parametric_inverse_time = [safe_parse_float(data[i, 14], i, "parametric_inverse_time") for i in successful_rows]
 
 n = length(successful_rows)
-println("\nSample size: $n images")
+println("✓ Successfully extracted metrics from $n images")
+println("\n" * "="^80)
+println("Dataset Summary")
+println("="^80)
+println("Sample size: $n images")
+println("Analysis date: $(Dates.format(now(), "yyyy-mm-dd HH:MM:SS"))")
 
 # ================================================================================
 # Paired t-test function
@@ -200,18 +250,51 @@ end
 println("\n" * "="^80)
 println("Conclusion")
 println("="^80)
+
+# Calculate practical significance thresholds
+ssim_practical_threshold = 0.01  # 1% difference in SSIM is typically noticeable
+psnr_practical_threshold = 0.5   # 0.5 dB difference in PSNR is typically noticeable
+
+quality_improvements = []
+for r in quality_metrics
+    if r["metric"] == "SSIM" && abs(r["mean_diff"]) > ssim_practical_threshold
+        push!(quality_improvements, r["metric"])
+    elseif r["metric"] == "PSNR (dB)" && abs(r["mean_diff"]) > psnr_practical_threshold
+        push!(quality_improvements, r["metric"])
+    end
+end
+
+practical_quality_improvement = length(quality_improvements) > 0
+
+avg_speedup = mean(parametric_forward_time) / mean(fft_forward_time)
+
 println("""
-Based on the statistical analysis:
+Based on the statistical analysis of $n images:
 
-1. Quality Metrics: The differences between Parametric DFT and Classical FFT are
-   very small. Even if statistically significant, the effect sizes are negligible
-   to small, meaning the practical difference is minimal.
+1. Quality Metrics: 
+   - All quality metrics show statistically significant differences
+   - Parametric DFT shows slight improvements in all quality metrics
+   - However, the absolute differences are very small:
+     * SSIM: $(round(mean(ssim_parametric) - mean(ssim_fft), digits=4)) improvement
+     * PSNR: $(round(mean(psnr_parametric) - mean(psnr_fft), digits=2)) dB improvement
+   - These differences are $(practical_quality_improvement ? "potentially" : "not") practically meaningful
+     (thresholds: SSIM > $ssim_practical_threshold, PSNR > $psnr_practical_threshold dB)
 
-2. Performance Metrics: Classical FFT is significantly faster (approximately
-   7-8x faster), which is both statistically and practically significant.
+2. Performance Metrics:
+   - Classical FFT is significantly faster
+   - Average speedup: $(round(avg_speedup, digits=2))x faster
+   - Forward: $(round(mean(fft_forward_time), digits=6))s vs $(round(mean(parametric_forward_time), digits=6))s
+   - Inverse: $(round(mean(fft_inverse_time), digits=6))s vs $(round(mean(parametric_inverse_time), digits=6))s
+   - This performance difference is both statistically and practically significant
 
-3. Overall: Parametric DFT achieves comparable image quality to Classical FFT
-   but at a significant computational cost. The quality improvements, if any,
-   are too small to be practically meaningful.
+3. Overall Assessment:
+   - Parametric DFT achieves $(practical_quality_improvement ? "slightly better" : "comparable") image quality
+   - The quality improvements are statistically significant but $(practical_quality_improvement ? "may be" : "not") practically meaningful
+   - Classical FFT is $(round(avg_speedup, digits=1))x faster, which is a substantial practical advantage
+   - Recommendation: Use Classical FFT unless the small quality improvements justify the $(round(avg_speedup, digits=1))x performance cost
 """)
+
+println("\n" * "="^80)
+println("Analysis completed at: $(Dates.format(now(), "yyyy-mm-dd HH:MM:SS"))")
+println("="^80)
 

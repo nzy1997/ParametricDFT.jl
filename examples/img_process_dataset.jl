@@ -179,7 +179,15 @@ data_dir = joinpath(workspace_root, "data")
 target_size = 512  # 2^9 = 512
 m, n = 9, 9  # 2^9 × 2^9 = 512×512 pixels
 compression_ratio = 0.95  # 95% compression (keep only 5% of coefficients)
-training_steps_per_image = 100  # Steps per image (will train on all images sequentially)
+
+# Enhanced training configuration (TEST VERSION - reduced for faster testing)
+training_steps_per_image = 200  # Reduced steps per image for testing
+num_epochs = 3  # Single epoch for testing
+use_reconstruction_loss = true  # Use reconstruction loss instead of L1 norm
+validation_split = 0.2  # 20% of images for validation
+shuffle_images = false  # Disable shuffling for faster testing
+learning_rate = 0.01  # Initial learning rate (will be used by gradient_descent)
+convergence_threshold = 1e-5  # Stop if loss change is below this
 
 # Find all image files in the data directory
 image_extensions = [".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"]
@@ -195,8 +203,8 @@ end
 # Sort files for consistent processing order
 sort!(image_files)
 
-# Limit to first 10 images for testing
-max_images = 20
+# Limit to first N images for testing (TEST VERSION - reduced for faster testing)
+max_images = 50
 if length(image_files) > max_images
     image_files = image_files[1:max_images]
     println("\nFound $(length(image_files)) images in $data_dir (limited to first $max_images for testing)")
@@ -208,14 +216,34 @@ if length(image_files) == 0
     error("No images found in $data_dir")
 end
 
+# Split into training and validation sets
+using Random
+Random.seed!(42)  # For reproducibility
+if shuffle_images
+    shuffle!(image_files)
+end
+
+num_validation = max(1, Int(round(length(image_files) * validation_split)))
+validation_files = image_files[1:num_validation]
+training_files = image_files[num_validation+1:end]
+
+println("\nDataset split:")
+println("  Training images: $(length(training_files))")
+println("  Validation images: $(length(validation_files))")
+
 # ================================================================================
-# Section 3: Sequential Training on All Images
+# Section 3: Enhanced Training with Multiple Epochs and Validation
 # ================================================================================
 
 println("\n" * "="^80)
-println("Sequential Training Parametric 2D DFT with $m × $n qubits")
-println("Training on each image for $training_steps_per_image steps")
-println("Total images: $(length(image_files))")
+println("Enhanced Training Parametric 2D DFT with $m × $n qubits")
+println("Training configuration:")
+println("  Loss function: $(use_reconstruction_loss ? "Reconstruction MSE" : "L1 Norm (frequency domain)")")
+println("  Epochs: $num_epochs")
+println("  Steps per image: $training_steps_per_image")
+println("  Training images: $(length(training_files))")
+println("  Validation images: $(length(validation_files))")
+println("  Learning rate: $learning_rate")
 println("This will take some time...")
 println("="^80)
 
@@ -223,14 +251,44 @@ println("="^80)
 optcode, initial_tensors = ParametricDFT.qft_code(m, n)
 M = ParametricDFT.generate_manifold(initial_tensors)
 current_theta = ParametricDFT.tensors2point(initial_tensors, M)
+# Use Ref to handle scoping in nested loops
+current_theta_ref = Ref(current_theta)
+
+# Prepare inverse transform (needed for reconstruction loss)
+optcode_inv, tensors_inv = ParametricDFT.qft_code(m, n; inverse=true)
+
+# Helper function to compute reconstruction loss
+function compute_reconstruction_loss(img_matrix, tensors, optcode, optcode_inv, compression_ratio)
+    # Forward transform
+    ft_img = reshape(optcode(tensors..., reshape(img_matrix, fill(2, m+n)...)), 2^m, 2^n)
+    
+    # Apply compression (simulate compression during training)
+    ft_img_truncated, _, _ = compress_by_ratio(ft_img, compression_ratio)
+    
+    # Inverse transform
+    img_reconstructed = ParametricDFT.ift_mat(conj.(tensors), optcode_inv, m, n, ft_img_truncated)
+    
+    # Compute MSE between original and reconstructed
+    mse = sum(abs2.(img_matrix .- img_reconstructed)) / length(img_matrix)
+    return mse
+end
 
 # Helper function to train on a single image starting from current parameters
-function train_on_image(img_matrix, current_theta, steps, optcode, M)
+function train_on_image(img_matrix, current_theta, steps, optcode, optcode_inv, M, compression_ratio, use_recon_loss)
     # Define loss function
-    f(M, p) = begin
-        tensors = ParametricDFT.point2tensors(p, M)
-        fft_pic = reshape(optcode(tensors..., reshape(img_matrix, fill(2, m+n)...)), 2^m, 2^n)
-        return sum(abs.(fft_pic))  # L1Norm
+    if use_recon_loss
+        # Reconstruction loss: optimize for end-to-end compression quality
+        f(M, p) = begin
+            tensors = ParametricDFT.point2tensors(p, M)
+            return compute_reconstruction_loss(img_matrix, tensors, optcode, optcode_inv, compression_ratio)
+        end
+    else
+        # Original L1 norm loss: encourages sparsity in frequency domain
+        f(M, p) = begin
+            tensors = ParametricDFT.point2tensors(p, M)
+            fft_pic = reshape(optcode(tensors..., reshape(img_matrix, fill(2, m+n)...)), 2^m, 2^n)
+            return sum(abs.(fft_pic))
+        end
     end
     
     # Define gradient function
@@ -249,57 +307,165 @@ function train_on_image(img_matrix, current_theta, steps, optcode, M)
     return result
 end
 
-# Train sequentially on all images
-println("\nTraining sequentially on all images...")
-successful_training = 0
-
-for (idx, img_path) in enumerate(image_files)
-    try
-        # Load and preprocess image
-        img = Images.load(img_path)
-        img = resize_to_power_of_2(img, target_size)
-        img_gray = img2gray(img)
-        mat_gray = img2mat(img_gray)
-        img_matrix = Complex{Float64}.(mat_gray)
-        
-        # Train on this image starting from current parameters
-        print("  [$(idx)/$(length(image_files))] Training on $(basename(img_path))...\r")
-        global current_theta = train_on_image(img_matrix, current_theta, training_steps_per_image, optcode, M)
-        global successful_training += 1
-        
-    catch e
-        println("\n  Warning: Failed to train on $(basename(img_path)): $e")
+# Helper function to evaluate validation loss
+function evaluate_validation_loss(validation_files, current_theta, optcode, optcode_inv, M, compression_ratio)
+    total_loss = 0.0
+    count = 0
+    
+    for img_path in validation_files
+        try
+            img = Images.load(img_path)
+            img = resize_to_power_of_2(img, target_size)
+            img_gray = img2gray(img)
+            mat_gray = img2mat(img_gray)
+            img_matrix = Complex{Float64}.(mat_gray)
+            
+            tensors = ParametricDFT.point2tensors(current_theta, M)
+            loss = compute_reconstruction_loss(img_matrix, tensors, optcode, optcode_inv, compression_ratio)
+            total_loss += loss
+            count += 1
+        catch e
+            # Skip failed images
+        end
     end
+    
+    return count > 0 ? total_loss / count : Inf
 end
-println()  # New line after progress
 
-if successful_training == 0
-    error("No images were successfully used for training")
+# Train with multiple epochs and validation
+function train_with_validation!(
+    current_theta_ref, training_files, validation_files, optcode, optcode_inv, M,
+    num_epochs, training_steps_per_image, compression_ratio, use_reconstruction_loss,
+    shuffle_images, target_size
+)
+    # Evaluate initial validation loss
+    initial_val_loss = evaluate_validation_loss(validation_files, current_theta_ref[], optcode, optcode_inv, M, compression_ratio)
+    println("\nInitial validation loss: $(round(initial_val_loss, digits=8))")
+    
+    # Local variables (no global needed in function scope)
+    best_val_loss = initial_val_loss
+    best_theta = current_theta_ref[]
+    patience = 2  # Stop if validation doesn't improve for this many epochs
+    patience_counter = 0
+    
+    # Train for multiple epochs
+    for epoch in 1:num_epochs
+        println("\n" * "="^80)
+        println("Epoch $epoch/$num_epochs")
+        println("="^80)
+        
+        # Shuffle training images each epoch
+        if shuffle_images && epoch > 1
+            shuffle!(training_files)
+            println("Shuffled training images")
+        end
+        
+        epoch_losses = Float64[]
+        successful_training = 0
+        
+        # Train on each image in training set
+        for (idx, img_path) in enumerate(training_files)
+            try
+                # Load and preprocess image
+                img = Images.load(img_path)
+                img = resize_to_power_of_2(img, target_size)
+                img_gray = img2gray(img)
+                mat_gray = img2mat(img_gray)
+                img_matrix = Complex{Float64}.(mat_gray)
+                
+                # Train on this image starting from current parameters
+                print("  [$(idx)/$(length(training_files))] Training on $(basename(img_path))...\r")
+                # Update theta using Ref to avoid scoping issues
+                current_theta_ref[] = train_on_image(
+                    img_matrix, current_theta_ref[], training_steps_per_image, 
+                    optcode, optcode_inv, M, compression_ratio, use_reconstruction_loss
+                )
+                
+                # Compute loss for this image
+                tensors = ParametricDFT.point2tensors(current_theta_ref[], M)
+                if use_reconstruction_loss
+                    loss = compute_reconstruction_loss(img_matrix, tensors, optcode, optcode_inv, compression_ratio)
+                else
+                    fft_pic = reshape(optcode(tensors..., reshape(img_matrix, fill(2, m+n)...)), 2^m, 2^n)
+                    loss = sum(abs.(fft_pic))
+                end
+                push!(epoch_losses, loss)
+                successful_training += 1
+                
+            catch e
+                println("\n  Warning: Failed to train on $(basename(img_path)): $e")
+            end
+        end
+        println()  # New line after progress
+        
+        if successful_training == 0
+            error("No images were successfully used for training in epoch $epoch")
+        end
+        
+        # Evaluate validation loss
+        val_loss = evaluate_validation_loss(validation_files, current_theta_ref[], optcode, optcode_inv, M, compression_ratio)
+        avg_train_loss = mean(epoch_losses)
+        
+        println("\nEpoch $epoch results:")
+        println("  Average training loss: $(round(avg_train_loss, digits=8))")
+        println("  Validation loss: $(round(val_loss, digits=8))")
+        
+        # Check if validation improved
+        if val_loss < best_val_loss
+            improvement = (best_val_loss - val_loss) / best_val_loss * 100
+            println("  ✓ Validation improved by $(round(improvement, digits=2))%")
+            best_val_loss = val_loss
+            best_theta = current_theta_ref[]
+            patience_counter = 0
+        else
+            patience_counter += 1
+            println("  ✗ Validation did not improve (patience: $patience_counter/$patience)")
+            if patience_counter >= patience && epoch > 1
+                println("\nEarly stopping: validation loss not improving")
+                current_theta_ref[] = best_theta
+                break
+            end
+        end
+    end
+    
+    # Return best parameters
+    return best_theta, best_val_loss
 end
+
+# Run training
+final_best_theta, final_best_val_loss = train_with_validation!(
+    current_theta_ref, training_files, validation_files, optcode, optcode_inv, M,
+    num_epochs, training_steps_per_image, compression_ratio, use_reconstruction_loss,
+    shuffle_images, target_size
+)
+
+# Use best parameters found during training
+current_theta = final_best_theta
+println("\n✓ Training completed. Best validation loss: $(round(final_best_val_loss, digits=8))")
 
 # Convert final trained parameters to tensors
 tensors = ParametricDFT.point2tensors(current_theta, M)
 
-# Prepare inverse transform
-optcode_inv, tensors_inv = ParametricDFT.qft_code(m, n; inverse=true)
-
-println("\n✓ Parametric DFT training completed on $successful_training images")
+println("\n✓ Parametric DFT training completed")
 
 # ================================================================================
 # Section 4: Process All Images in Dataset (Similar to img_process.jl lines 117-229)
 # ================================================================================
 
+# Process each image (use all images for final evaluation)
+all_eval_files = vcat(training_files, validation_files)
+sort!(all_eval_files)  # Sort for consistent output
+
 println("\n" * "="^10)
-println("Processing $(length(image_files)) images for comparison...")
+println("Processing $(length(all_eval_files)) images for comparison...")
 println("="^10)
 
 # Storage for all results
 all_results = Dict[]
 
-# Process each image
-for (idx, img_path) in enumerate(image_files)
+for (idx, img_path) in enumerate(all_eval_files)
     println("\n" * "-"^10)
-    println("[$(idx)/$(length(image_files))] Processing: $(basename(img_path))")
+    println("[$(idx)/$(length(all_eval_files))] Processing: $(basename(img_path))")
     println("-"^10)
     
     try
@@ -418,7 +584,7 @@ failed_count = length(all_results) - length(successful_results)
 println("\n" * "="^80)
 println("Processing Summary:")
 println("="^80)
-println("Total images: $(length(image_files))")
+println("Total images: $(length(all_eval_files))")
 println("Successfully processed: $(length(successful_results))")
 println("Failed: $failed_count")
 
