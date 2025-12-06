@@ -1,5 +1,14 @@
 [deps]
+ADTypes = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
 DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
+ImageQualityIndexes = "2996bd0c-7a13-11e9-2da2-2f5ce47296a9"
 Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"
+ManifoldDiff = "af67fdf4-a580-4b9f-bbec-742ef357defd"
+Manopt = "0fc0a36d-df90-57f3-8f93-d78a9fc72bb5"
 ParametricDFT = "cc2eb9de-5297-4754-b0bd-fdc80c6df40d"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+
+[sources]
+ParametricDFT = {path = ".."}

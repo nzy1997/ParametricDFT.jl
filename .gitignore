@@ -7,3 +7,15 @@ Manifest*.toml
 /learn/
 /examples/matrices/
 .vscode/
+.devcontainer/
+
+# Container-related files (optional - others may not use containers)
+Dockerfile
+docker-compose.yml
+.dockerignore
+*.dockerfile
+docker-compose.override.yml
+.cursor/
+*.csv 
+*.png
+*.jpg
