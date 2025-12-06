@@ -5,7 +5,7 @@ DocMeta.setdocmeta!(ParametricDFT, :DocTestSetup, :(using ParametricDFT); recurs
 
 makedocs(;
     modules=[ParametricDFT],
-    authors=["nzy1997", "zazabap"],
+    authors="nzy1997, zazabap",
     sitename="ParametricDFT.jl",
     format=Documenter.HTML(;
         canonical="https://nzy1997.github.io/ParametricDFT.jl",
