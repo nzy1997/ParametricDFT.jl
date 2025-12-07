@@ -113,7 +113,7 @@ $
   F_n bold(x) = (mat(
   1, 1;
   1, -1
-) times.circle I_(n/2)) mat(I_(n/2), 0; 0, D_(n/2)) vec(
+) times.o I_(n/2)) mat(I_(n/2), 0; 0, D_(n/2)) vec(
   F_(n/2) bold(x)_("odd"),
   F_(n/2) bold(x)_("even")
 ),
@@ -150,11 +150,11 @@ This diagonal matrix corresponds to operation: if $q_0$ is $0$ (odd index), the 
 // Similarly, we can define $"ctrl"_2(A)$, $"ctrl"_3(A)$, ..., $"ctrl"_n(A)$ if $q_2 = 1$, $q_3 = 1$, ..., $q_n = 1$, the operation $A$ is applied.
 // Then we have:
 // $
-//   mat(I_A times.circle I_B, 0; 0, A times.circle B) = "ctrl"_1(A times.circle I_B) "ctrl"_1(I_A times.circle B)
+//   mat(I_A times.o I_B, 0; 0, A times.o B) = "ctrl"_1(A times.o I_B) "ctrl"_1(I_A times.o B)
 // $
 Observe that
 $
-D_n = "diag"(1, omega^(n/2)) times.circle "diag"(1, omega, omega^2, ..., omega^(n/2-1)) = "diag"(1, omega^(n/2)) times.circle "diag"(1, omega^(n/4)) times.circle dots times.circle "diag"(1, omega)$. We have
+D_n = "diag"(1, omega^(n/2)) times.o "diag"(1, omega, omega^2, ..., omega^(n/2-1)) = "diag"(1, omega^(n/2)) times.o "diag"(1, omega^(n/4)) times.o dots times.o "diag"(1, omega)$. We have
 $
   mat(I_(n/2), 0; 0, D_(n/2)) = "ctrl"_0("diag"(1, omega^(n/4))_1) "ctrl"_0("diag"(1, omega^(n/8))_2) ... "ctrl"_0 ("diag"(1, omega)_(log_2 n)),
 $
