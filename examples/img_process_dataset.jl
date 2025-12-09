@@ -178,7 +178,10 @@ println("="^80)
 data_dir = joinpath(workspace_root, "data")
 target_size = 512  # 2^9 = 512
 m, n = 9, 9  # 2^9 × 2^9 = 512×512 pixels
-compression_ratio = 0.95  # 95% compression (keep only 5% of coefficients)
+# compression_ratio = 0.95  # 95% compression (keep only 5% of coefficients)
+# compression_ratio = 0.70  # 70% compression (keep only 30% of coefficients)
+# compression_ratio = 0.80  # 70% compression (keep only 30% of coefficients)
+compression_ratio = 0.90  # 70% compression (keep only 30% of coefficients)
 
 # Enhanced training configuration (TEST VERSION - reduced for faster testing)
 training_steps_per_image = 200  # Reduced steps per image for testing
@@ -698,7 +701,8 @@ if length(successful_results) > 0
         "parametric_forward_time", "parametric_inverse_time"
     ]
     
-    output_file = joinpath(workspace_root, "dataset_compression_results.csv")
+    compression_str = string(Int(round(compression_ratio * 100)))
+    output_file = joinpath(workspace_root, "dataset_compression_results_$(compression_str).csv")
     open(output_file, "w") do io
         writedlm(io, [header], ',')
         writedlm(io, csv_data, ',')

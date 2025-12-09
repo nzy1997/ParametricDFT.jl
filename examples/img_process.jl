@@ -96,14 +96,14 @@ img_matrix = Complex{Float64}.(mat_gray)
 m, n = 9, 9  # 2^9 × 2^9 = 512×512 pixels
 
 println("\nTraining parametric 2D DFT with $m × $n qubits...")
-println("This will take several minutes (800 steps)...\n")
+println("This will take several minutes (50 steps)...\n")
 
 # Train the parametric DFT circuit to minimize L1 norm
 @time theta = ParametricDFT.fft_with_training(
     m, n,
     img_matrix, 
     ParametricDFT.L1Norm();
-    steps = 800
+    steps = 50
 )
 
 # Convert trained parameters to tensors and construct DFT einsum code
@@ -131,7 +131,8 @@ display(Gray.(fft_normalized))
 # ================================================================================
 
 # Set compression ratio
-compression_ratio = 0.95  # 95% compression (keep only 5% of coefficients)
+# `compression_ratio = 0.95  # 95% compression (keep only 5% of coefficients)
+compression_ratio = 0.70  # 70% compression (keep only 30% of coefficients)
 
 # Truncate frequency domain by fixed compression ratio
 fft_truncated, keep_count_fft, total_coeffs_fft = compress_by_ratio(fft_result, compression_ratio)
