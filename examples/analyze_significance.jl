@@ -13,7 +13,7 @@ using Dates
 
 # Load the results CSV
 workspace_root = dirname(script_dir)
-csv_file = joinpath(workspace_root, "dataset_compression_results.csv")
+csv_file = joinpath(workspace_root, "results/dataset_compression_results_70.csv")
 
 println("="^80)
 println("Statistical Significance Analysis")

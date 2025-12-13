@@ -9,8 +9,11 @@ update:
 test:
 	$(JL) -e 'using Pkg; Pkg.test()'
 
+testloss:
+	$(JL) -e 'include("test/losstests.jl")'
+
 example:
 	julia --project=examples examples/img_process.jl
 
-.PHONY: init test update example
+.PHONY: init test update example testloss
 

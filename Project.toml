@@ -5,6 +5,7 @@ authors = ["nzy1997"]
 
 [deps]
 ADTypes = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 ManifoldDiff = "af67fdf4-a580-4b9f-bbec-742ef357defd"
 Manifolds = "1cead3c2-87b3-11e9-0ccd-23c62b72b94e"
 Manopt = "0fc0a36d-df90-57f3-8f93-d78a9fc72bb5"
@@ -22,6 +23,7 @@ CUDAExt = "CUDA"
 
 [compat]
 ADTypes = "1.18.0"
+ChainRulesCore = "1"
 CUDA = "5.9.1"
 FFTW = "1.10.0"
 LinearAlgebra = "1.12.0"

@@ -98,11 +98,15 @@ m, n = 9, 9  # 2^9 × 2^9 = 512×512 pixels
 println("\nTraining parametric 2D DFT with $m × $n qubits...")
 println("This will take several minutes (50 steps)...\n")
 
-# Train the parametric DFT circuit to minimize L1 norm
+# Set k for MSE loss: keep top 30% of coefficients (matching compression ratio)
+k = Int(round(2^(m+n) * 0.30))
+println("MSE loss: keeping top $k coefficients out of $(2^(m+n)) total")
+
+# Train the parametric DFT circuit to minimize MSE reconstruction error
 @time theta = ParametricDFT.fft_with_training(
     m, n,
     img_matrix, 
-    ParametricDFT.L1Norm();
+    ParametricDFT.MSELoss(k);
     steps = 50
 )
 
@@ -124,7 +128,7 @@ fft_forward_time = @elapsed fftshift(fft(mat_gray))
 # Visualize the frequency domain (normalized for display)
 fft_magnitude = abs.(fft_result)
 fft_normalized = fft_magnitude ./ maximum(fft_magnitude)
-display(Gray.(fft_normalized))
+# display(Gray.(fft_normalized))
 
 # ================================================================================
 # Section 5: Image Compression with Fixed Compression Ratio
@@ -137,9 +141,15 @@ compression_ratio = 0.70  # 70% compression (keep only 30% of coefficients)
 # Truncate frequency domain by fixed compression ratio
 fft_truncated, keep_count_fft, total_coeffs_fft = compress_by_ratio(fft_result, compression_ratio)
 
+# Compute normalized truncated frequency domain for visualization
+fft_truncated_magnitude = abs.(fft_truncated)
+fft_truncated_normalized = fft_truncated_magnitude ./ maximum(fft_truncated_magnitude)
+
 # Inverse FFT to get compressed image
-@time img_fft_compressed = Gray.(real.(ifft(ifftshift(fft_truncated))))
+@time img_fft_compressed_raw = real.(ifft(ifftshift(fft_truncated)))
 fft_inverse_time = @elapsed real.(ifft(ifftshift(fft_truncated)))
+# Clamp values to [0, 1] range for valid image storage
+img_fft_compressed = Gray.(clamp.(img_fft_compressed_raw, 0.0, 1.0))
 
 println("Classical FFT compression completed")
 
@@ -152,11 +162,17 @@ println("Classical FFT compression completed")
 parametric_forward_time = @elapsed reshape(optcode(tensors..., reshape(img_matrix, fill(2, m+n)...)), 2^m, 2^n)
 
 # Visualize the frequency domain representation
-display(Gray.(abs.(ft_img) ./ maximum(abs.(ft_img))))
+ft_img_magnitude = abs.(ft_img)
+ft_img_normalized = ft_img_magnitude ./ maximum(ft_img_magnitude)
+# display(Gray.(ft_img_normalized))
 
 # Truncate in frequency domain by fixed compression ratio
 ft_img_truncated, keep_count, total_coeffs = compress_by_ratio(ft_img, compression_ratio)
 zero_count = total_coeffs - keep_count
+
+# Compute normalized truncated frequency domain for visualization
+ft_img_truncated_magnitude = abs.(ft_img_truncated)
+ft_img_truncated_normalized = ft_img_truncated_magnitude ./ maximum(ft_img_truncated_magnitude)
 
 println("\nFixed compression ratio:")
 println("  Total coefficients: $total_coeffs")
@@ -168,24 +184,57 @@ println("  Compression ratio: $(round(100 * compression_ratio, digits=1))%")
 optcode_inv, tensors_inv = ParametricDFT.qft_code(m, n; inverse=true)
 @time img_reconstructed = ParametricDFT.ift_mat(conj.(tensors), optcode_inv, m, n, ft_img_truncated)
 parametric_inverse_time = @elapsed ParametricDFT.ift_mat(conj.(tensors), optcode_inv, m, n, ft_img_truncated)
-img_parametric_compressed = Gray.(real.(img_reconstructed))
+# Clamp values to [0, 1] range for valid image storage
+img_parametric_compressed = Gray.(clamp.(real.(img_reconstructed), 0.0, 1.0))
 
 # ================================================================================
-# Section 7: Display Results
+# Section 7: Display Results and Save Images
 # ================================================================================
 
+# Create results directory if it doesn't exist
+results_dir = joinpath(@__DIR__, "results")
+if !isdir(results_dir)
+    mkdir(results_dir)
+    println("Created results directory: $results_dir")
+end
+
+# Save spatial domain images
 println("\n" * "="^60)
-println("Results:")
+println("Saving images to results folder...")
 println("="^60)
-println("Original image:")
-display(img_gray)
 
-println("\nClassical FFT compression:")
-display(img_fft_compressed)
+# Save original image
+save(joinpath(results_dir, "original_image.png"), img_gray)
+println("Saved: original_image.png")
 
-println("\nParametric DFT compression:")
-display(img_parametric_compressed)
+# Save classical FFT compressed image
+save(joinpath(results_dir, "classical_fft_compressed.png"), img_fft_compressed)
+println("Saved: classical_fft_compressed.png")
 
+# Save parametric DFT compressed image
+save(joinpath(results_dir, "parametric_dft_compressed.png"), img_parametric_compressed)
+println("Saved: parametric_dft_compressed.png")
+
+# Prepare and save frequency domain images (normalized for visualization)
+println("\nSaving frequency domain images...")
+
+# Original frequency domain (classical FFT) - reuse existing fft_normalized
+save(joinpath(results_dir, "frequency_domain_original_fft.png"), Gray.(fft_normalized))
+println("Saved: frequency_domain_original_fft.png")
+
+# Truncated frequency domain (classical FFT) - reuse existing fft_truncated_normalized
+save(joinpath(results_dir, "frequency_domain_truncated_fft.png"), Gray.(fft_truncated_normalized))
+println("Saved: frequency_domain_truncated_fft.png")
+
+# Parametric DFT frequency domain - reuse existing ft_img_normalized
+save(joinpath(results_dir, "frequency_domain_parametric_dft.png"), Gray.(ft_img_normalized))
+println("Saved: frequency_domain_parametric_dft.png")
+
+# Truncated parametric DFT frequency domain - reuse existing ft_img_truncated_normalized
+save(joinpath(results_dir, "frequency_domain_truncated_parametric_dft.png"), Gray.(ft_img_truncated_normalized))
+println("Saved: frequency_domain_truncated_parametric_dft.png")
+
+println("\nAll images saved to: $results_dir")
 println("\nExample completed!")
 # ================================================================================
 # Section 8: Image Quality Assessment
