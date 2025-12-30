@@ -1,0 +1,562 @@
+% =============================================================================
+% Literature Review Bibliography: Parametric Tensor Networks for Image Sparsity
+% Focused on topics relevant to learning optimized sparse representations
+% using differentiable tensor networks inspired by QFT circuit structures
+% =============================================================================
+
+% -----------------------------------------------------------------------------
+% Section 2: FFT and Quantum Fourier Transform
+% -----------------------------------------------------------------------------
+
+@article{cooley1965algorithm,
+  title={An algorithm for the machine calculation of complex {Fourier} series},
+  author={Cooley, James W and Tukey, John W},
+  journal={Mathematics of Computation},
+  volume={19},
+  number={90},
+  pages={297--301},
+  year={1965},
+  publisher={American Mathematical Society},
+  doi={10.1090/S0025-5718-1965-0178586-1},
+  note={The foundational FFT paper introducing the divide-and-conquer algorithm}
+}
+
+@book{nielsen2010quantum,
+  title={Quantum Computation and Quantum Information},
+  author={Nielsen, Michael A and Chuang, Isaac L},
+  year={2010},
+  edition={10th Anniversary},
+  publisher={Cambridge University Press},
+  isbn={978-1107002173},
+  note={Standard reference for quantum computing including QFT}
+}
+
+@article{coppersmith2002approximate,
+  title={An approximate {Fourier} transform useful in quantum factoring},
+  author={Coppersmith, Don},
+  journal={arXiv preprint quant-ph/0201067},
+  year={2002},
+  note={Shows that approximate QFT suffices for Shor's algorithm}
+}
+
+@article{shor1994algorithms,
+  title={Algorithms for quantum computation: discrete logarithms and factoring},
+  author={Shor, Peter W},
+  booktitle={Proceedings of the 35th Annual Symposium on Foundations of Computer Science},
+  pages={124--134},
+  year={1994},
+  organization={IEEE},
+  doi={10.1109/SFCS.1994.365700},
+  note={Introduces quantum factoring algorithm using QFT}
+}
+
+% -----------------------------------------------------------------------------
+% Section 2.3: Tensor Networks
+% -----------------------------------------------------------------------------
+
+@article{orus2014practical,
+  title={A practical introduction to tensor networks: Matrix product states and projected entangled pair states},
+  author={Or{\'u}s, Rom{\'a}n},
+  journal={Annals of Physics},
+  volume={349},
+  pages={117--158},
+  year={2014},
+  publisher={Elsevier},
+  doi={10.1016/j.aop.2014.06.013},
+  note={Comprehensive introduction to tensor networks for physicists}
+}
+
+@article{bridgeman2017hand,
+  title={Hand-waving and interpretive dance: An introductory course on tensor networks},
+  author={Bridgeman, Jacob C and Chubb, Christopher T},
+  journal={Journal of Physics A: Mathematical and Theoretical},
+  volume={50},
+  number={22},
+  pages={223001},
+  year={2017},
+  publisher={IOP Publishing},
+  doi={10.1088/1751-8121/aa6dc3},
+  note={Accessible tutorial on tensor network methods}
+}
+
+@article{white1992density,
+  title={Density matrix formulation for quantum renormalization groups},
+  author={White, Steven R},
+  journal={Physical Review Letters},
+  volume={69},
+  number={19},
+  pages={2863},
+  year={1992},
+  publisher={APS},
+  doi={10.1103/PhysRevLett.69.2863},
+  note={Introduces DMRG, the precursor to MPS methods}
+}
+
+@article{verstraete2008matrix,
+  title={Matrix product states, projected entangled pair states, and variational renormalization group methods for quantum spin systems},
+  author={Verstraete, Frank and Murg, Valentin and Cirac, J Ignacio},
+  journal={Advances in Physics},
+  volume={57},
+  number={2},
+  pages={143--224},
+  year={2008},
+  publisher={Taylor \& Francis},
+  doi={10.1080/14789940801912366},
+  note={Comprehensive review of tensor network methods in quantum physics}
+}
+
+% -----------------------------------------------------------------------------
+% Section 3: Compressed Sensing and Sparse Representations
+% -----------------------------------------------------------------------------
+
+@article{candes2006robust,
+  title={Robust uncertainty principles: Exact signal reconstruction from highly incomplete frequency information},
+  author={Cand{\`e}s, Emmanuel J and Romberg, Justin and Tao, Terence},
+  journal={IEEE Transactions on Information Theory},
+  volume={52},
+  number={2},
+  pages={489--509},
+  year={2006},
+  publisher={IEEE},
+  doi={10.1109/TIT.2005.862083},
+  note={Foundational compressed sensing paper proving exact recovery via L1 minimization}
+}
+
+@article{donoho2006compressed,
+  title={Compressed sensing},
+  author={Donoho, David L},
+  journal={IEEE Transactions on Information Theory},
+  volume={52},
+  number={4},
+  pages={1289--1306},
+  year={2006},
+  publisher={IEEE},
+  doi={10.1109/TIT.2006.871582},
+  note={Foundational compressed sensing paper introducing the theory}
+}
+
+@article{candes2008restricted,
+  title={The restricted isometry property and its implications for compressed sensing},
+  author={Cand{\`e}s, Emmanuel J},
+  journal={Comptes Rendus Mathematique},
+  volume={346},
+  number={9-10},
+  pages={589--592},
+  year={2008},
+  publisher={Elsevier},
+  doi={10.1016/j.crma.2008.03.014},
+  note={Introduces the Restricted Isometry Property (RIP)}
+}
+
+@article{olshausen1996emergence,
+  title={Emergence of simple-cell receptive field properties by learning a sparse code for natural images},
+  author={Olshausen, Bruno A and Field, David J},
+  journal={Nature},
+  volume={381},
+  number={6583},
+  pages={607--609},
+  year={1996},
+  publisher={Nature Publishing Group},
+  doi={10.1038/381607a0},
+  note={Seminal work showing sparse coding produces V1-like receptive fields}
+}
+
+@article{olshausen1997sparse,
+  title={Sparse coding with an overcomplete basis set: A strategy employed by {V1}?},
+  author={Olshausen, Bruno A and Field, David J},
+  journal={Vision Research},
+  volume={37},
+  number={23},
+  pages={3311--3325},
+  year={1997},
+  publisher={Elsevier},
+  doi={10.1016/S0042-6989(97)00169-7},
+  note={Extended analysis of sparse coding for natural images}
+}
+
+% -----------------------------------------------------------------------------
+% Section 4: Limitations of Fourier and Alternative Transforms
+% -----------------------------------------------------------------------------
+
+@article{ahmed1974discrete,
+  title={Discrete cosine transform},
+  author={Ahmed, Nasir and Natarajan, T\_ and Rao, Kamisetty R},
+  journal={IEEE Transactions on Computers},
+  volume={100},
+  number={1},
+  pages={90--93},
+  year={1974},
+  publisher={IEEE},
+  doi={10.1109/T-C.1974.223784},
+  note={Original DCT paper, basis for JPEG compression}
+}
+
+@article{mallat1989theory,
+  title={A theory for multiresolution signal decomposition: The wavelet representation},
+  author={Mallat, St{\'e}phane G},
+  journal={IEEE Transactions on Pattern Analysis and Machine Intelligence},
+  volume={11},
+  number={7},
+  pages={674--693},
+  year={1989},
+  publisher={IEEE},
+  doi={10.1109/34.192463},
+  note={Foundational wavelet theory paper}
+}
+
+@article{candes2004new,
+  title={New tight frames of curvelets and optimal representations of objects with piecewise {$C^2$} singularities},
+  author={Cand{\`e}s, Emmanuel J and Donoho, David L},
+  journal={Communications on Pure and Applied Mathematics},
+  volume={57},
+  number={2},
+  pages={219--266},
+  year={2004},
+  publisher={Wiley Online Library},
+  doi={10.1002/cpa.10116},
+  note={Curvelets for optimal edge representation}
+}
+
+@article{kutyniok2012shearlets,
+  title={Shearlets: Multiscale analysis for multivariate data},
+  author={Kutyniok, Gitta and Labate, Demetrio},
+  journal={Applied and Numerical Harmonic Analysis},
+  year={2012},
+  publisher={Birkh{\"a}user Boston},
+  note={Comprehensive treatment of shearlet theory}
+}
+
+@article{do2005contourlet,
+  title={The contourlet transform: An efficient directional multiresolution image representation},
+  author={Do, Minh N and Vetterli, Martin},
+  journal={IEEE Transactions on Image Processing},
+  volume={14},
+  number={12},
+  pages={2091--2106},
+  year={2005},
+  publisher={IEEE},
+  doi={10.1109/TIP.2005.859376},
+  note={Contourlets for directional image representation}
+}
+
+% -----------------------------------------------------------------------------
+% Section 5: Dictionary Learning
+% -----------------------------------------------------------------------------
+
+@book{elad2010sparse,
+  title={Sparse and Redundant Representations: From Theory to Applications in Signal and Image Processing},
+  author={Elad, Michael},
+  year={2010},
+  publisher={Springer},
+  isbn={978-1441970107},
+  note={Comprehensive textbook on sparse representations}
+}
+
+@article{aharon2006ksvd,
+  title={{K-SVD}: An algorithm for designing overcomplete dictionaries for sparse representation},
+  author={Aharon, Michal and Elad, Michael and Bruckstein, Alfred},
+  journal={IEEE Transactions on Signal Processing},
+  volume={54},
+  number={11},
+  pages={4311--4322},
+  year={2006},
+  publisher={IEEE},
+  doi={10.1109/TSP.2006.881199},
+  note={The K-SVD dictionary learning algorithm}
+}
+
+@inproceedings{mairal2009online,
+  title={Online dictionary learning for sparse coding},
+  author={Mairal, Julien and Bach, Francis and Ponce, Jean and Sapiro, Guillermo},
+  booktitle={Proceedings of the 26th International Conference on Machine Learning},
+  pages={689--696},
+  year={2009},
+  organization={ACM},
+  note={Scalable online dictionary learning}
+}
+
+@inproceedings{zeiler2010deconvolutional,
+  title={Deconvolutional networks},
+  author={Zeiler, Matthew D and Krishnan, Dilip and Taylor, Graham W and Fergus, Rob},
+  booktitle={2010 IEEE Computer Society Conference on Computer Vision and Pattern Recognition},
+  pages={2528--2535},
+  year={2010},
+  organization={IEEE},
+  doi={10.1109/CVPR.2010.5539957},
+  note={Convolutional sparse coding approach}
+}
+
+% -----------------------------------------------------------------------------
+% Section 5.2: Structured Learnable Transforms
+% -----------------------------------------------------------------------------
+
+@inproceedings{dao2019learning,
+  title={Learning Fast Algorithms for Linear Transforms Using Butterfly Factorizations},
+  author={Dao, Tri and Gu, Albert and Erichson, Nicholas and Rudra, Atri and R{\'e}, Christopher},
+  booktitle={International Conference on Machine Learning},
+  pages={1517--1527},
+  year={2019},
+  organization={PMLR},
+  url={https://arxiv.org/abs/1903.05895},
+  note={Learning FFT-like butterfly structures}
+}
+
+@inproceedings{dao2020kaleidoscope,
+  title={Kaleidoscope: An Efficient, Learnable Representation for All Structured Linear Maps},
+  author={Dao, Tri and Chen, Beidi and Sohoni, Nimit and Desai, Arjun and Poli, Michael and Grogan, Jessica and Liu, Alexander and Rao, Aniruddh and Rudra, Atri and R{\'e}, Christopher},
+  booktitle={International Conference on Learning Representations},
+  year={2020},
+  url={https://arxiv.org/abs/2012.14966},
+  note={Generalizes butterfly matrices to learnable structured transforms}
+}
+
+@inproceedings{lee2021fnet,
+  title={{FNet}: Mixing Tokens with {Fourier} Transforms},
+  author={Lee-Thorp, James and Ainslie, Joshua and Eckstein, Ilya and Ontanon, Santiago},
+  booktitle={Proceedings of NAACL-HLT 2022},
+  pages={4296--4313},
+  year={2022},
+  organization={ACL},
+  url={https://arxiv.org/abs/2105.03824},
+  note={Uses fixed FFT as efficient Transformer layer}
+}
+
+% -----------------------------------------------------------------------------
+% Section 5.3: Tensor Network Approaches for ML
+% -----------------------------------------------------------------------------
+
+@article{stoudenmire2016supervised,
+  title={Supervised learning with quantum-inspired tensor networks},
+  author={Stoudenmire, Edwin and Schwab, David J},
+  journal={Advances in Neural Information Processing Systems},
+  volume={29},
+  year={2016},
+  url={https://arxiv.org/abs/1605.05775},
+  note={MPS for image classification achieving <1\% error on MNIST}
+}
+
+@article{cheng2020supervised,
+  title={Supervised learning with projected entangled pair states},
+  author={Cheng, Song and Wang, Lei and Zhang, Pan},
+  journal={Physical Review B},
+  volume={103},
+  number={12},
+  pages={125117},
+  year={2021},
+  publisher={APS},
+  url={https://arxiv.org/abs/2009.09932},
+  note={2D PEPS tensor networks for image classification}
+}
+
+@article{zhao2021tensor,
+  title={Tensor {LISTA}: Differentiable sparse representation learning for multi-dimensional tensor},
+  author={Zhao, Qi and Liu, Guangcan and Liu, Qingshan},
+  journal={Neurocomputing},
+  volume={463},
+  pages={623--636},
+  year={2021},
+  publisher={Elsevier},
+  doi={10.1016/j.neucom.2021.08.034},
+  note={Differentiable sparse coding for tensors}
+}
+
+@article{soltani2015tensor,
+  title={A tensor-based dictionary learning approach to tomographic image reconstruction},
+  author={Soltani, Sara and Kilmer, Misha E and Hansen, Per Christian},
+  journal={BIT Numerical Mathematics},
+  volume={56},
+  number={4},
+  pages={1425--1454},
+  year={2016},
+  publisher={Springer},
+  url={https://arxiv.org/abs/1506.04954},
+  note={Tensor dictionary learning for imaging}
+}
+
+@article{novikov2015tensorizing,
+  title={Tensorizing neural networks},
+  author={Novikov, Alexander and Podoprikhin, Dmitry and Osokin, Anton and Vetrov, Dmitry P},
+  journal={Advances in Neural Information Processing Systems},
+  volume={28},
+  year={2015},
+  url={https://arxiv.org/abs/1509.06569},
+  note={Tensor decomposition for neural network compression}
+}
+
+% -----------------------------------------------------------------------------
+% Section 6: Quantum-Inspired Machine Learning
+% -----------------------------------------------------------------------------
+
+@article{cerezo2021variational,
+  title={Variational quantum algorithms},
+  author={Cerezo, Marco and Arrasmith, Andrew and Babbush, Ryan and Benjamin, Simon C and Endo, Suguru and Fujii, Keisuke and McClean, Jarrod R and Mitarai, Kosuke and Yuan, Xiao and Cincio, Lukasz and others},
+  journal={Nature Reviews Physics},
+  volume={3},
+  number={9},
+  pages={625--644},
+  year={2021},
+  publisher={Nature Publishing Group},
+  doi={10.1038/s42254-021-00348-9},
+  note={Review of variational quantum circuit methods}
+}
+
+@article{wang2020experimental,
+  title={Experimental realization of a quantum image classifier via tensor-network-based machine learning},
+  author={Wang, K and Xiao, L and Yi, W and Ran, S-J and Xue, P},
+  journal={arXiv preprint arXiv:2003.08551},
+  year={2020},
+  note={Experimental tensor network image classifier}
+}
+
+@article{huggins2019towards,
+  title={Towards quantum machine learning with tensor networks},
+  author={Huggins, William and Patil, Piyush and Mitchell, Bradley and Whaley, K Birgitta and Stoudenmire, E Miles},
+  journal={Quantum Science and Technology},
+  volume={4},
+  number={2},
+  pages={024001},
+  year={2019},
+  publisher={IOP Publishing},
+  doi={10.1088/2058-9565/aaea94},
+  note={Connections between quantum ML and tensor networks}
+}
+
+% -----------------------------------------------------------------------------
+% Additional Relevant Works
+% -----------------------------------------------------------------------------
+
+@article{newman2024stable,
+  title={Stable tensor neural networks for efficient deep learning},
+  author={Newman, Elizabeth and Horesh, Lior and Avron, Haim and Kilmer, Misha E},
+  journal={Frontiers in Big Data},
+  volume={7},
+  pages={1363978},
+  year={2024},
+  publisher={Frontiers},
+  doi={10.3389/fdata.2024.1363978},
+  note={Stable tensor neural networks}
+}
+
+@inproceedings{nash2021generating,
+  title={Generating images with sparse representations},
+  author={Nash, Charlie and Menick, Jacob and Dieleman, Sander and Battaglia, Peter},
+  booktitle={International Conference on Machine Learning},
+  pages={7958--7968},
+  year={2021},
+  organization={PMLR},
+  url={https://proceedings.mlr.press/v139/nash21a.html},
+  note={Image generation using sparse DCT representations}
+}
+
+@inproceedings{ranzato2007efficient,
+  title={Efficient learning of sparse representations with an energy-based model},
+  author={Ranzato, Marc'Aurelio and Poultney, Christopher and Chopra, Sumit and LeCun, Yann},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={19},
+  year={2007},
+  note={Energy-based sparse coding}
+}
+
+@article{liao2019differentiable,
+  title={Differentiable programming tensor networks},
+  author={Liao, Hai-Jun and Liu, Jin-Guo and Wang, Lei and Xiang, Tao},
+  journal={Physical Review X},
+  volume={9},
+  number={3},
+  pages={031041},
+  year={2019},
+  publisher={APS},
+  doi={10.1103/PhysRevX.9.031041},
+  note={Automatic differentiation for tensor networks}
+}
+
+% -----------------------------------------------------------------------------
+% Image Processing and Computer Vision
+% -----------------------------------------------------------------------------
+
+@book{gonzalez2018digital,
+  title={Digital Image Processing},
+  author={Gonzalez, Rafael C and Woods, Richard E},
+  year={2018},
+  edition={4th},
+  publisher={Pearson},
+  note={Standard textbook on image processing}
+}
+
+@article{simoncelli2001natural,
+  title={Natural image statistics and neural representation},
+  author={Simoncelli, Eero P and Olshausen, Bruno A},
+  journal={Annual Review of Neuroscience},
+  volume={24},
+  number={1},
+  pages={1193--1216},
+  year={2001},
+  publisher={Annual Reviews},
+  doi={10.1146/annurev.neuro.24.1.1193},
+  note={Review of natural image statistics and visual coding}
+}
+
+% -----------------------------------------------------------------------------
+% Optimization and Learning Theory
+% -----------------------------------------------------------------------------
+
+@article{beck2009fast,
+  title={A fast iterative shrinkage-thresholding algorithm for linear inverse problems},
+  author={Beck, Amir and Teboulle, Marc},
+  journal={SIAM Journal on Imaging Sciences},
+  volume={2},
+  number={1},
+  pages={183--202},
+  year={2009},
+  publisher={SIAM},
+  doi={10.1137/080716542},
+  note={FISTA algorithm for L1 optimization}
+}
+
+@article{gregor2010learning,
+  title={Learning fast approximations of sparse coding},
+  author={Gregor, Karol and LeCun, Yann},
+  booktitle={Proceedings of the 27th International Conference on Machine Learning},
+  pages={399--406},
+  year={2010},
+  note={LISTA: Learned ISTA for sparse coding}
+}
+
+% -----------------------------------------------------------------------------
+% Classical FFT Algorithms (for completeness)
+% -----------------------------------------------------------------------------
+
+@article{duhamel1990fast,
+  title={Fast {Fourier} transforms: A tutorial review and a state of the art},
+  author={Duhamel, Pierre and Vetterli, Martin},
+  journal={Signal Processing},
+  volume={19},
+  number={4},
+  pages={259--299},
+  year={1990},
+  publisher={Elsevier},
+  doi={10.1016/0165-1684(90)90158-U},
+  note={Comprehensive FFT review}
+}
+
+@article{frigo2005design,
+  title={The design and implementation of {FFTW3}},
+  author={Frigo, Matteo and Johnson, Steven G},
+  journal={Proceedings of the IEEE},
+  volume={93},
+  number={2},
+  pages={216--231},
+  year={2005},
+  publisher={IEEE},
+  doi={10.1109/JPROC.2004.840301},
+  note={FFTW library design and optimization}
+}
+
+@book{van1992computational,
+  title={Computational Frameworks for the Fast {Fourier} Transform},
+  author={Van Loan, Charles},
+  year={1992},
+  publisher={SIAM},
+  isbn={978-0898712858},
+  note={Mathematical treatment of FFT structures}
+}
