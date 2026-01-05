@@ -47,39 +47,90 @@ this type and implement `_loss_function(fft_result, input, loss)`.
 """
 abstract type AbstractLoss end
 
-"""
-    topk_truncate(x::AbstractVector, k::Integer)
 
-Return a vector where only the `k` largest-magnitude entries of `x` are kept and all
-others are set to zero.
 
-Note: the forward pass is discontinuous where the identity of the top-k entries
-changes. For AD, we provide an `rrule` that treats the selected indices as constant
-in the pullback (straight-through on the chosen entries).
 """
-function topk_truncate(x::AbstractVector{T}, k::Integer) where {T}
+    topk_truncate(x::AbstractMatrix, k::Integer)
+
+Return a matrix where frequency-dependent truncation is applied for image compression.
+Low-frequency components (near center) are kept with higher priority, while high-frequency
+components (away from center) are kept with lower priority.
+
+This is more appropriate for image compression than global top-k selection, as it
+preserves more low-frequency information which contains most of the image structure.
+"""
+function topk_truncate(x::AbstractMatrix{T}, k::Integer) where {T}
+    m, n = size(x)
     k2 = min(Int(k), length(x))
+    
+    # Calculate frequency distances from center (DC component)
+    center_i, center_j = (m + 1) ÷ 2, (n + 1) ÷ 2
+    max_dist = sqrt((m/2)^2 + (n/2)^2)
+    
+    # Create frequency-weighted scores: combine magnitude with frequency position
+    # Lower frequency (closer to center) gets higher weight
+    scores = zeros(Float64, m, n)
     mags = abs.(x)
-    idx = partialsortperm(mags, k2, rev=true)
-    y = zeros(T, length(x))
-    @inbounds for i in idx
-        y[i] = x[i]
+    
+    @inbounds for j in 1:n, i in 1:m
+        freq_dist = sqrt((i - center_i)^2 + (j - center_j)^2)
+        # Weight: higher for low frequencies (smaller distance)
+        # Use inverse distance weighting, normalized by max distance
+        freq_weight = 1.0 - (freq_dist / max_dist) * 0.5  # Scale factor to balance magnitude vs frequency
+        scores[i, j] = mags[i, j] * (1.0 + freq_weight)
+    end
+    
+    # Select top k based on weighted scores
+    scores_flat = vec(scores)
+    idx = partialsortperm(scores_flat, k2, rev=true)
+    
+    y = zeros(T, m, n)
+    @inbounds for flat_idx in idx
+        # Julia arrays are column-major: flat_idx = (j-1)*m + i
+        i = ((flat_idx - 1) % m) + 1
+        j = ((flat_idx - 1) ÷ m) + 1
+        y[i, j] = x[i, j]
     end
     return y
 end
 
-function ChainRulesCore.rrule(::typeof(topk_truncate), x::AbstractVector{T}, k::Integer) where {T}
+function ChainRulesCore.rrule(::typeof(topk_truncate), x::AbstractMatrix{T}, k::Integer) where {T}
+    m, n = size(x)
     k2 = min(Int(k), length(x))
+    
+    # Calculate frequency distances from center
+    center_i, center_j = (m + 1) ÷ 2, (n + 1) ÷ 2
+    max_dist = sqrt((m/2)^2 + (n/2)^2)
+    
+    # Create frequency-weighted scores
+    scores = zeros(Float64, m, n)
     mags = abs.(x)
-    idx = partialsortperm(mags, k2, rev=true)
-    y = zeros(T, length(x))
-    @inbounds for i in idx
-        y[i] = x[i]
+    
+    @inbounds for j in 1:n, i in 1:m
+        freq_dist = sqrt((i - center_i)^2 + (j - center_j)^2)
+        freq_weight = 1.0 - (freq_dist / max_dist) * 0.5
+        scores[i, j] = mags[i, j] * (1.0 + freq_weight)
     end
+    
+    # Select top k based on weighted scores
+    scores_flat = vec(scores)
+    idx = partialsortperm(scores_flat, k2, rev=true)
+    
+    y = zeros(T, m, n)
+    @inbounds for flat_idx in idx
+        # Julia arrays are column-major: flat_idx = (j-1)*m + i
+        i = ((flat_idx - 1) % m) + 1
+        j = ((flat_idx - 1) ÷ m) + 1
+        y[i, j] = x[i, j]
+    end
+    
     function pullback(ȳ)
-        x̄ = zeros(T, length(x))
-        @inbounds for i in idx
-            x̄[i] = ȳ[i]
+        x̄ = zeros(T, m, n)
+        @inbounds for flat_idx in idx
+            # Julia arrays are column-major: flat_idx = (j-1)*m + i
+            i = ((flat_idx - 1) % m) + 1
+            j = ((flat_idx - 1) ÷ m) + 1
+            x̄[i, j] = ȳ[i, j]
         end
         return (ChainRulesCore.NoTangent(), x̄, ChainRulesCore.NoTangent())
     end
@@ -168,12 +219,10 @@ function _loss_function(fft_res, pic, loss::MSELoss, tensors, m, n, inverse_code
         error("MSELoss requires inverse_code to be provided")
     end
     
-    # Truncate: keep top k elements by magnitude
-    fft_flat = vec(fft_res)
-    k = min(loss.k, length(fft_flat))
-    
-    # Create truncated version (zeros except for top k)
-    fft_truncated = reshape(topk_truncate(fft_flat, k), 2^m, 2^n)
+    # Truncate: use frequency-dependent truncation for image compression
+    # This keeps more low-frequency components and fewer high-frequency components
+    k = min(loss.k, length(fft_res))
+    fft_truncated = topk_truncate(fft_res, k)
     
     # Apply inverse transform
     reconstructed = reshape(inverse_code(conj.(tensors)..., reshape(fft_truncated, fill(2, m+n)...)), 2^m, 2^n)

@@ -15,7 +15,7 @@ echo "To monitor: tail -f $LOG_FILE"
 echo "To check if running: ps aux | grep julia"
 
 cd "$SCRIPT_DIR"
-nohup julia --project=examples examples/img_process_dataset.jl > "$LOG_FILE" 2>&1 &
+nohup julia --project=examples examples/img_process.jl > "$LOG_FILE" 2>&1 &
 
 PID=$!
 echo "Process started with PID: $PID"

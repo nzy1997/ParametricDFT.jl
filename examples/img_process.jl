@@ -78,7 +78,7 @@ end
 
 # Load image and downsample to 64×64 pixels
 # test_img = Images.load("examples/cat.png")
-test_img = Images.load("data/cat_005.jpg")
+test_img = Images.load("examples/TomAndJerry.jpg")
 # test_img = test_img[101:4:356, 301:4:556]
 test_img = test_img[1:512, 1:512]
 
