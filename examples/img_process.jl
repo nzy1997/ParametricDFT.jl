@@ -78,9 +78,10 @@ end
 
 # Load image and downsample to 64×64 pixels
 # test_img = Images.load("examples/cat.png")
-test_img = Images.load("examples/TomAndJerry.jpg")
+test_img = Images.load("examples/makima.jpg")
+# test_img = Images.load("examples/TomAndJerry.jpg")
 # test_img = test_img[101:4:356, 301:4:556]
-test_img = test_img[1:512, 1:512]
+test_img = test_img[1:1024, 1:1024]
 
 # Convert to grayscale and then to matrix
 img_gray = img2gray(test_img)
@@ -94,7 +95,7 @@ println("Image size: $(size(mat_gray))")
 
 # Prepare image matrix for processing - convert to complex for quantum circuit
 img_matrix = Complex{Float64}.(mat_gray)
-m, n = 9, 9  # 2^9 × 2^9 = 512×512 pixels
+m, n = 10, 10  # 2^10 × 2^10 = 1024×1024 pixels
 
 println("\nTraining parametric 2D DFT with $m × $n qubits...")
 println("This will take several minutes (50 steps)...\n")

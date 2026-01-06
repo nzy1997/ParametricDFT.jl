@@ -47,8 +47,6 @@ this type and implement `_loss_function(fft_result, input, loss)`.
 """
 abstract type AbstractLoss end
 
-
-
 """
     topk_truncate(x::AbstractMatrix, k::Integer)
 
@@ -82,7 +80,7 @@ function topk_truncate(x::AbstractMatrix{T}, k::Integer) where {T}
     
     # Select top k based on weighted scores
     scores_flat = vec(scores)
-    idx = partialsortperm(scores_flat, k2, rev=true)
+    idx = partialsortperm(scores_flat, 1:k2, rev=true)
     
     y = zeros(T, m, n)
     @inbounds for flat_idx in idx
@@ -114,7 +112,7 @@ function ChainRulesCore.rrule(::typeof(topk_truncate), x::AbstractMatrix{T}, k::
     
     # Select top k based on weighted scores
     scores_flat = vec(scores)
-    idx = partialsortperm(scores_flat, k2, rev=true)
+    idx = partialsortperm(scores_flat, 1:k2, rev=true)
     
     y = zeros(T, m, n)
     @inbounds for flat_idx in idx
