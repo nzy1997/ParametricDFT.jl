@@ -5,6 +5,9 @@
 # by learning a parametric quantum Fourier transform and truncating in the
 # frequency domain.
 
+# Auto-accept dataset downloads (for MLDatasets)
+ENV["DATADEPS_ALWAYS_ACCEPT"] = "true"
+
 using Images
 using FFTW
 using ParametricDFT
@@ -76,16 +79,74 @@ end
 # Section 2: Load and Prepare Image
 # ================================================================================
 
-# Load image and downsample to 64×64 pixels
-# test_img = Images.load("examples/cat.png")
-test_img = Images.load("examples/makima.jpg")
-# test_img = Images.load("examples/TomAndJerry.jpg")
-# test_img = test_img[101:4:356, 301:4:556]
-test_img = test_img[1:1024, 1:1024]
+# Choose image source: :mnist, :fashion_mnist, or :file
+IMAGE_SOURCE = :mnist  # Options: :mnist, :fashion_mnist, :file
 
-# Convert to grayscale and then to matrix
-img_gray = img2gray(test_img)
-mat_gray = img2mat(img_gray)
+# For MNIST sources: use :small for 32×32 (quick test) or :large for 512×512 (full demo)
+MNIST_SIZE = :small  # Options: :small (32×32, fast), :large (512×512, full demo)
+
+if IMAGE_SOURCE in (:mnist, :fashion_mnist)
+    # Load from MNIST or Fashion-MNIST dataset
+    # Requires: using Pkg; Pkg.add("MLDatasets")
+    using MLDatasets
+    
+    if IMAGE_SOURCE == :mnist
+        # Load MNIST dataset (handwritten digits 0-9)
+        dataset = MNIST(split=:test)
+        println("Loading image from MNIST dataset...")
+    else
+        # Load Fashion-MNIST dataset (clothing items: T-shirt, Trouser, etc.)
+        dataset = FashionMNIST(split=:test)
+        println("Loading image from Fashion-MNIST dataset...")
+    end
+    
+    # Get a single image (change sample_idx to explore different samples)
+    # MNIST/Fashion-MNIST images are 28×28 grayscale, values in [0, 1]
+    sample_idx = 1
+    raw_img = dataset.features[:, :, sample_idx]
+    label = dataset.targets[sample_idx]
+    println("Sample index: $sample_idx, Label: $label")
+    
+    if MNIST_SIZE == :small
+        # Option A: Pad to 32×32 (m=5, n=5) - fast for quick testing
+        # Centered padding: 2 pixels on each side
+        target_size = 32
+        mat_gray = zeros(Float64, target_size, target_size)
+        mat_gray[3:30, 3:30] = Float64.(raw_img)
+        println("Using small size: 32×32 (padded)")
+    else
+        # Option B: Tile to 512×512 (m=9, n=9) - full demonstration
+        # Creates an 18×18 grid of the same image
+        tile_size = 28
+        target_size = 512
+        tiles_per_side = target_size ÷ tile_size  # 18 tiles
+        
+        mat_gray = zeros(Float64, target_size, target_size)
+        for ti in 1:tiles_per_side, tj in 1:tiles_per_side
+            row_start = (ti - 1) * tile_size + 1
+            col_start = (tj - 1) * tile_size + 1
+            mat_gray[row_start:row_start+tile_size-1, col_start:col_start+tile_size-1] = Float64.(raw_img)
+        end
+        println("Using large size: 512×512 (tiled 18×18)")
+    end
+    
+    # Convert to Gray image for saving/display
+    img_gray = Gray.(mat_gray)
+    
+else
+    # Load image from file and downsample
+    # test_img = Images.load("examples/cat.png")
+    # test_img = Images.load("examples/makima.jpg")
+    # test_img = Images.load("examples/TomAndJerry.jpg")
+    # test_img = test_img[101:4:356, 301:4:556]
+    
+    test_img = Images.load("path/to/your/image.png")
+    test_img = test_img[1:512, 1:512]
+    
+    # Convert to grayscale and then to matrix
+    img_gray = img2gray(test_img)
+    mat_gray = img2mat(img_gray)
+end
 
 println("Image size: $(size(mat_gray))")
 
@@ -95,9 +156,15 @@ println("Image size: $(size(mat_gray))")
 
 # Prepare image matrix for processing - convert to complex for quantum circuit
 img_matrix = Complex{Float64}.(mat_gray)
-m, n = 10, 10  # 2^10 × 2^10 = 1024×1024 pixels
 
-println("\nTraining parametric 2D DFT with $m × $n qubits...")
+# Automatically determine qubit dimensions from image size
+# Image size must be 2^m × 2^n
+img_height, img_width = size(mat_gray)
+m = Int(log2(img_height))
+n = Int(log2(img_width))
+@assert 2^m == img_height && 2^n == img_width "Image dimensions must be powers of 2. Got $(img_height)×$(img_width)"
+
+println("\nTraining parametric 2D DFT with $m × $n qubits ($(2^m)×$(2^n) image)...")
 println("This will take several minutes (50 steps)...\n")
 
 # Set k for MSE loss: keep top 30% of coefficients (matching compression ratio)

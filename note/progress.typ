@@ -169,3 +169,78 @@ The QR retraction update is: $U_(k+1) = "QR"(U_k - alpha_k V_k)$ where $V_k = "g
 5. *Hybrid Loss*: $cal(L)_"hybrid"(bold(theta)) = alpha cal(L)_(L 1)(bold(theta)) + beta cal(L)_"recon"(bold(theta))$
    - Balances sparsity promotion with reconstruction quality
    - Hyperparameters $alpha, beta$ control the trade-off
+
+= Sparse Basis in Parametric QFT
+
+== Motivation
+
+A *sparse basis* is a transform basis in which a signal can be represented with few non-zero coefficients. For compression, the goal is to find a basis $cal(T)$ such that $bold(y) = cal(T)(bold(x))$ has most of its energy concentrated in a small number of components, i.e., $||bold(y)||_0 << dim(bold(y))$.
+
+Classical transforms (FFT, DCT) provide fixed bases optimized for specific signal classes. The parametric QFT learns a *data-adaptive sparse basis* by optimizing the circuit parameters $bold(theta) in M$ to maximize sparsity for the given input.
+
+== QFT as Sparse Basis Transform
+
+The QFT circuit implements a unitary transform $cal(T)(bold(theta)): CC^(2^m times 2^n) -> CC^(2^m times 2^n)$ parameterized by:
+- *Hadamard gates* $H in U(2)$: Create superposition states
+- *Controlled phase gates* $M_k = "diag"(1, e^(i phi_k)) in U(1)^4$: Apply frequency-dependent phase shifts
+
+The standard QFT (with fixed parameters) is equivalent to the classical DFT. By making the parameters learnable on the unitary manifold $M$, we search for a transform that achieves better sparsity for specific input signals.
+
+#line(length: 100%)
+
+```julia
+# QFT circuit construction: Hadamard + controlled phase gates
+qc1 = Yao.EasyBuild.qft_circuit(m)  # m-qubit QFT for rows
+qc2 = Yao.EasyBuild.qft_circuit(n)  # n-qubit QFT for columns
+qc = chain(subroutine(m + n, qc1, 1:m), subroutine(m + n, qc2, m+1:m+n))
+```
+
+#line(length: 100%)
+
+== Frequency-Dependent Truncation
+
+For image compression, low-frequency components carry structural information while high-frequency components capture fine details. The truncation strategy prioritizes based on a weighted score:
+
+$s_(i,j) = |bold(y)_(i,j)| dot (1 + w_(i,j))$ where $w_(i,j) = 1 - d_(i,j) / (2 d_"max")$
+
+Here $d_(i,j) = sqrt((i - c_i)^2 + (j - c_j)^2)$ is the frequency distance from the DC component (center), and $d_"max"$ is the maximum distance. This weighting favors low-frequency components (smaller $d_(i,j)$) over high-frequency ones of similar magnitude.
+
+#line(length: 100%)
+
+```julia
+function topk_truncate(x::AbstractMatrix, k::Integer)
+    center_i, center_j = (m + 1) ÷ 2, (n + 1) ÷ 2
+    max_dist = sqrt((m/2)^2 + (n/2)^2)
+    # Weight: higher for low frequencies (smaller distance)
+    freq_weight = 1.0 - (freq_dist / max_dist) * 0.5
+    scores[i, j] = mags[i, j] * (1.0 + freq_weight)
+    # Select top k based on weighted scores
+    idx = partialsortperm(vec(scores), 1:k, rev=true)
+end
+```
+
+#line(length: 100%)
+
+== Sparse Basis Learning Objective
+
+The optimization finds parameters $bold(theta)^* = arg min_(bold(theta) in M) cal(L)(bold(theta))$ where:
+
+1. *L1 Sparsity*: $cal(L)_(L 1) = ||cal(T)(bold(theta))(bold(x))||_1$ directly promotes sparse representations
+2. *MSE Reconstruction*: $cal(L)_"MSE" = ||bold(x) - cal(T)^(-1)("topk"(cal(T)(bold(x)), k))||_F^2$ optimizes for reconstruction quality after truncation
+
+The learned basis $cal(T)(bold(theta)^*)$ is signal-adaptive: unlike fixed DCT/FFT bases, it can exploit structure specific to the input data (e.g., textures, edges in images).
+
+== Comparison with Fixed Bases
+
+#table(
+  columns: 3,
+  [*Property*], [*Fixed Basis (FFT/DCT)*], [*Parametric QFT*],
+  [Adaptivity], [None (fixed transform)], [Data-dependent optimization],
+  [Sparsity], [Optimal for periodic/smooth signals], [Learned for specific input],
+  [Computation], [$O(N log N)$], [$O(N log N)$ + training cost],
+  [Unitarity], [Preserved], [Preserved (manifold constraint)],
+)
+
+
+
+
