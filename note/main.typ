@@ -376,7 +376,7 @@ In this diagram, each $U_k$ is a parameterized $4 times 4$ unitary matrix acting
 
 + *XX+YY+ZZ interaction*: Inspired by Hamiltonian simulation:
   $
-    U_k = exp(i(alpha_k X X + beta_k Y Y + gamma_k Z Z))
+    U_k = exp(i(alpha_k X times.o X + beta_k Y times.o Y + gamma_k Z times.o Z))
   $
   with only 3 real parameters $(alpha_k, beta_k, gamma_k)$ controlling the entanglement strength.
 
