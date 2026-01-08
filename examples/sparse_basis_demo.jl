@@ -62,7 +62,30 @@ end
 """
     fft_compress(img, ratio)
 
-Compress using classical FFT for comparison.
+Compress an image using a simple FFT-based coefficient truncation scheme.
+
+# Arguments
+- `img::AbstractMatrix`: Real-valued 2D array representing a grayscale image.
+  Typical inputs are normalized to `[0, 1]` or `[0, 255]`, but any real-valued
+  intensities are accepted. The array is treated as a 2D signal and transformed
+  using a 2D FFT.
+- `ratio::Float64`: Compression ratio in the range `[0.0, 1.0]`. A value of
+  `0.0` keeps all frequency coefficients (no compression), while `1.0` keeps
+  only a single largest-magnitude coefficient (maximum compression). Intermediate
+  values keep a fraction `1 - ratio` of the coefficients with largest magnitude.
+
+# Returns
+- `AbstractMatrix{Float64}`: Reconstructed image obtained by applying the
+  inverse FFT to the truncated spectrum. The returned matrix has the same
+  dimensions as `img`. Any small imaginary parts produced by numerical error
+  are discarded by taking the real component.
+
+# Algorithm
+The function computes the 2D FFT of the input image and shifts the zero
+frequency component to the center of the spectrum. It then keeps the
+`1 - ratio` fraction of coefficients with the largest magnitude, sets all
+other coefficients to zero, shifts the spectrum back, and applies the inverse
+FFT to obtain a compressed reconstruction in the spatial domain.
 """
 function fft_compress(img::AbstractMatrix, ratio::Float64)
     freq = fftshift(fft(img))
