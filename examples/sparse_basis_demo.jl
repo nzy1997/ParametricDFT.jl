@@ -20,6 +20,7 @@ using Images
 using ImageQualityIndexes
 using Random
 using Statistics
+using FFTW
 
 # ================================================================================
 # Configuration
@@ -56,6 +57,25 @@ function pad_mnist_image(raw_img::AbstractMatrix)
     # Center the 28×28 image in the 32×32 canvas (2 pixels padding on each side)
     padded[3:30, 3:30] = Float64.(raw_img)
     return padded
+end
+
+"""
+    fft_compress(img, ratio)
+
+Compress using classical FFT for comparison.
+"""
+function fft_compress(img::AbstractMatrix, ratio::Float64)
+    freq = fftshift(fft(img))
+    total = length(freq)
+    keep = max(1, round(Int, total * (1 - ratio)))
+    
+    # Keep largest coefficients by magnitude
+    flat = vec(freq)
+    idx = partialsortperm(abs.(flat), 1:keep, rev=true)
+    compressed = zeros(ComplexF64, size(freq))
+    compressed[idx] = freq[idx]
+    
+    return real.(ifft(ifftshift(compressed)))
 end
 
 """
@@ -274,6 +294,10 @@ function main()
     recovered_default = recover(default_basis, compressed_default)
     display_comparison(test_image, recovered_default, "Standard QFT (Default Basis):")
     
+    # Compare with classical FFT
+    recovered_fft = fft_compress(test_image, COMPRESSION_RATIO)
+    display_comparison(test_image, recovered_fft, "Classical FFT (FFTW):")
+    
     # ============================================================================
     # Save Images
     # ============================================================================
@@ -297,6 +321,11 @@ function main()
     Images.save(default_path, Gray.(clamp.(recovered_default, 0.0, 1.0)))
     println("  Saved: recovered_default.png")
     
+    # Save recovered image (classical FFT)
+    fft_path = joinpath(OUTPUT_DIR, "recovered_fft.png")
+    Images.save(fft_path, Gray.(clamp.(recovered_fft, 0.0, 1.0)))
+    println("  Saved: recovered_fft.png")
+    
     # ============================================================================
     # Summary
     # ============================================================================
@@ -319,9 +348,10 @@ function main()
     - original_digit_$test_label.png  : Original test image
     - recovered_trained.png     : Recovered with trained basis
     - recovered_default.png     : Recovered with default basis
+    - recovered_fft.png         : Recovered with classical FFT
     
     Key insight: The trained basis should produce better reconstruction
-    quality compared to the default QFT basis for this dataset.
+    quality compared to both the default QFT basis and classical FFT.
     """)
     
     println("="^70)
