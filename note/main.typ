@@ -321,17 +321,17 @@ We propose an _entangled QFT basis_ that introduces controlled-phase gates betwe
   content((7.6, -0.4), [$E_1$], anchor: "west", padding: 0.1)
 }))
 
-The entanglement gates $E_k = "diag"(1, 1, 1, e^(i phi_k))$ are parameterized controlled-phase gates that couple the $k$-th qubit from the x-axis with the $k$-th qubit from the y-axis. For a square $n times n$ qubit system with one-to-one coupling, we add exactly $n$ entanglement gates, one after each Hadamard layer.
+The entanglement gates $E_k = "diag"(1, 1, 1, e^(i phi_k))$ are parameterized controlled-phase gates that couple the $k$-th qubit from the x-axis with the $k$-th qubit from the y-axis. For a square $2^n times 2^n$ image encoded with $n$ row qubits and $n$ column qubits (total $2n$ qubits) and one-to-one coupling between corresponding row/column qubits, we add exactly $n$ entanglement gates, one after each Hadamard layer.
 
 The total transformation becomes:
 $
   cal(T)_"entangled" = U_"entangle" dot (F_n times.o F_n)
 $
-where $U_"entangle" = product_(k=1)^n E_k$ is the product of all entanglement gates, and $F_n$ is the $n$-qubit QFT.
+where $U_"entangle" = product_(k=1)^n E_k$ is the product of all entanglement gates, and $F_n$ is the $n$-qubit QFT applied along each spatial dimension.
 
 Key advantages of this approach:
 - Captures diagonal features and cross-dimensional patterns common in natural images
-- Maintains $O(n log n)$ computational complexity (same as standard QFT)
+- Maintains $O(n log n)$ computational complexity in the number $n$ of qubits per spatial dimension (equivalently $O(N log N)$ for linear image size $N = 2^n$), matching the standard QFT
 - Adds only $O(n)$ additional learnable parameters (one phase per qubit pair)
 - Reduces to standard 2D QFT when all entanglement phases $phi_k = 0$
 
