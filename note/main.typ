@@ -332,7 +332,7 @@ where $U_"entangle" = product_(k=1)^n E_k$ is the product of all entanglement ga
 Key advantages of this approach:
 - Captures diagonal features and cross-dimensional patterns common in natural images
 - Maintains $O(n log n)$ computational complexity in the number $n$ of qubits per spatial dimension (equivalently $O(N log N)$ for linear image size $N = 2^n$), matching the standard QFT
-- Adds only $O(n)$ additional learnable parameters (one phase per qubit pair)
+- Adds exactly $n$ additional real-valued learnable parameters $phi_k$ (one phase per qubit pair), i.e., $O(n)$ in $n$
 - Reduces to standard 2D QFT when all entanglement phases $phi_k = 0$
 
 == Alternative Basis: Time Evolving Block Decimation (TEBD)
