@@ -225,6 +225,116 @@ In this diagram, $M_k = mat(1, 1; 1, e^(i pi \/ 2^(k-1)))$ connects the two qubi
 
 Direct evaluation of this tensor network takes $O(n log^2 n)$ operations. By respecting the fact that the _controlled phase_ operation is a diagonal matrix, we can merge these operations and further reduce the complexity to $O(n log(n))$.
 
+== Entangled Fourier Basis: Adding XY Correlation
+In the standard 2D Fourier transform, the $x$ and $y$ coordinates are processed independently. For an image of size $2^n times 2^n$ (i.e., square images with $m = n$), we apply QFT on the $n$ row qubits and separately on the $n$ column qubits. This independence assumption is often suboptimal for natural images where spatial correlations exist between rows and columns.
+
+We propose an _entangled QFT basis_ that introduces controlled-phase gates between x and y qubits after each layer of the QFT circuit. For the square case $m = n$, we use a _one-to-one_ entanglement structure where each x qubit $x_k$ is coupled with the corresponding y qubit $y_k$. This creates correlation between the two spatial dimensions:
+
+#figure(canvas({
+  import draw: *
+  let n = 8
+  // x_n block
+  ngate((-3, 0), 4, "x_n", text:[$bold(x)$], gap-y: 0.8, width: 0.7)
+
+  ngate((7.0, 1.2), 1, "Hx1", text:[$H$], gap-y: 0.8, width: 0.5)
+  line("x_n.o0", "Hx1.i0")
+  line("Hx1.o0", (8.8, 1.2))
+  cphase(6.2, 1.2, 0.4, 1, name: "CP11")
+  cphase(5.4, 1.2, -0.4, 2, name: "CP12")
+  cphase(4.6, 1.2, -1.2, 3, name: "CP13")
+
+  ngate((3.2, 0.4), 1, "Hx2", text:[$H$], gap-y: 0.8, width: 0.5)
+  line("Hx2.o0", "CP11ctrl2")
+  line("CP11ctrl2", (8.8, 0.4))
+  line("x_n.o1", "Hx2.i0")
+  cphase(2.4, 0.4, -0.4, 1, name: "CP21")
+  cphase(1.6, 0.4, -1.2, 2, name: "CP22")
+
+  ngate((0.2, -0.4), 1, "Hx3", text:[$H$], gap-y: 0.8, width: 0.5)
+  line("Hx3.o0", "CP21ctrl2")
+  line("CP21ctrl2", "CP12ctrl2")
+  line("CP12ctrl2", (8.8, -0.4))
+  line("x_n.o2", "Hx3.i0")
+  cphase(-0.6, -0.4, -1.2, 1, name: "CP31")
+
+  ngate((-2.0, -1.2), 1, "Hx4", text:[$H$], gap-y: 0.8, width: 0.5)
+  line("Hx4.o0", "CP31ctrl2")
+  line("CP31ctrl2", "CP22ctrl2")
+  line("CP22ctrl2", "CP13ctrl2")
+  line("CP13ctrl2", (8.8, -1.2))
+  line("x_n.o3", "Hx4.i0")
+
+  // y_n block - same structure as x_n
+  ngate((-3, -3.2), 4, "y_n", text:[$bold(y)$], gap-y: 0.8, width: 0.7)
+
+  ngate((7.0, -2.0), 1, "Hy1", text:[$H$], gap-y: 0.8, width: 0.5)
+  line("y_n.o0", "Hy1.i0")
+  line("Hy1.o0", (8.8, -2.0))
+  cphase(6.2, -2.0, -2.8, 1, name: "CPy11")
+  cphase(5.4, -2.0, -3.6, 2, name: "CPy12")
+  cphase(4.6, -2.0, -4.4, 3, name: "CPy13")
+
+  ngate((3.2, -2.8), 1, "Hy2", text:[$H$], gap-y: 0.8, width: 0.5)
+  line("Hy2.o0", "CPy11ctrl2")
+  line("CPy11ctrl2", (8.8, -2.8))
+  line("y_n.o1", "Hy2.i0")
+  cphase(2.4, -2.8, -3.6, 1, name: "CPy21")
+  cphase(1.6, -2.8, -4.4, 2, name: "CPy22")
+
+  ngate((0.2, -3.6), 1, "Hy3", text:[$H$], gap-y: 0.8, width: 0.5)
+  line("Hy3.o0", "CPy21ctrl2")
+  line("CPy21ctrl2", "CPy12ctrl2")
+  line("CPy12ctrl2", (8.8, -3.6))
+  line("y_n.o2", "Hy3.i0")
+  cphase(-0.6, -3.6, -4.4, 1, name: "CPy31")
+
+  ngate((-2.0, -4.4), 1, "Hy4", text:[$H$], gap-y: 0.8, width: 0.5)
+  line("Hy4.o0", "CPy31ctrl2")
+  line("CPy31ctrl2", "CPy22ctrl2")
+  line("CPy22ctrl2", "CPy13ctrl2")
+  line("CPy13ctrl2", (8.8, -4.4))
+  line("y_n.o3", "Hy4.i0")
+
+  // Entanglement gates - placed right after each H gate
+  // E4: connects x3 (y=-1.2) with y3 (y=-4.4) - right after Hx4/Hy4
+  circle((-1.4, -1.2), radius: 0.08, fill: black)
+  circle((-1.4, -4.4), radius: 0.08, fill: black)
+  line((-1.4, -1.2), (-1.4, -4.4))
+  content((-1.4, -2.8), [$E_4$], anchor: "west", padding: 0.1)
+
+  // E3: connects x2 (y=-0.4) with y2 (y=-3.6) - right after Hx3/Hy3
+  circle((0.8, -0.4), radius: 0.08, fill: black)
+  circle((0.8, -3.6), radius: 0.08, fill: black)
+  line((0.8, -0.4), (0.8, -3.6))
+  content((0.8, -2.0), [$E_3$], anchor: "west", padding: 0.1)
+
+  // E2: connects x1 (y=0.4) with y1 (y=-2.8) - right after Hx2/Hy2
+  circle((3.8, 0.4), radius: 0.08, fill: black)
+  circle((3.8, -2.8), radius: 0.08, fill: black)
+  line((3.8, 0.4), (3.8, -2.8))
+  content((3.8, -1.2), [$E_2$], anchor: "west", padding: 0.1)
+
+  // E1: connects x0 (y=1.2) with y0 (y=-2.0) - right after Hx1/Hy1
+  circle((7.6, 1.2), radius: 0.08, fill: black)
+  circle((7.6, -2.0), radius: 0.08, fill: black)
+  line((7.6, 1.2), (7.6, -2.0))
+  content((7.6, -0.4), [$E_1$], anchor: "west", padding: 0.1)
+}))
+
+The entanglement gates $E_k = "diag"(1, 1, 1, e^(i phi_k))$ are parameterized controlled-phase gates that couple the $k$-th qubit from the x-axis with the $k$-th qubit from the y-axis. For a square $n times n$ qubit system with one-to-one coupling, we add exactly $n$ entanglement gates, one after each Hadamard layer.
+
+The total transformation becomes:
+$
+  cal(T)_"entangled" = U_"entangle" dot (F_n times.o F_n)
+$
+where $U_"entangle" = product_(k=1)^n E_k$ is the product of all entanglement gates, and $F_n$ is the $n$-qubit QFT.
+
+Key advantages of this approach:
+- Captures diagonal features and cross-dimensional patterns common in natural images
+- Maintains $O(n log n)$ computational complexity (same as standard QFT)
+- Adds only $O(n)$ additional learnable parameters (one phase per qubit pair)
+- Reduces to standard 2D QFT when all entanglement phases $phi_k = 0$
+
 == Learning a better Fourier basis
 Observing that in this representation, tensor parameters can be tuned without affecting the computational complexity, e.g. the parameters in $M_k$ and $H$. Can we find a transformation better than the Fourier basis? Or is Fourier basis already optimal for image processing?
 
