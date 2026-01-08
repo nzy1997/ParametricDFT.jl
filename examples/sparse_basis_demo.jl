@@ -38,7 +38,7 @@ const STEPS_PER_IMAGE = 50          # Gradient descent steps per image
 const COMPRESSION_RATIO = 0.9       # Keep only 10% of coefficients
 
 # Output paths
-const OUTPUT_DIR = joinpath(@__DIR__, "SparseBasicDemo")
+const OUTPUT_DIR = joinpath(@__DIR__, "SparseBasisDemo")
 const BASIS_PATH = joinpath(OUTPUT_DIR, "mnist_basis.json")
 const COMPRESSED_PATH = joinpath(OUTPUT_DIR, "compressed_image.json")
 
