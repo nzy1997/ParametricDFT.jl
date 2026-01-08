@@ -1,0 +1,11 @@
+# Generated output directories (from running examples)
+LineMakima/
+MNIST-small/
+MNIST-fashion-large/
+TomAndJerry/
+SparseBasisDemo/
+results/
+
+# Output logs
+*.log
+

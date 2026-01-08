@@ -20,6 +20,7 @@ using Images
 using ImageQualityIndexes
 using Random
 using Statistics
+using FFTW
 
 # ================================================================================
 # Configuration
@@ -56,6 +57,48 @@ function pad_mnist_image(raw_img::AbstractMatrix)
     # Center the 28×28 image in the 32×32 canvas (2 pixels padding on each side)
     padded[3:30, 3:30] = Float64.(raw_img)
     return padded
+end
+
+"""
+    fft_compress(img, ratio)
+
+Compress an image using a simple FFT-based coefficient truncation scheme.
+
+# Arguments
+- `img::AbstractMatrix`: Real-valued 2D array representing a grayscale image.
+  Typical inputs are normalized to `[0, 1]` or `[0, 255]`, but any real-valued
+  intensities are accepted. The array is treated as a 2D signal and transformed
+  using a 2D FFT.
+- `ratio::Float64`: Compression ratio in the range `[0.0, 1.0]`. A value of
+  `0.0` keeps all frequency coefficients (no compression), while `1.0` keeps
+  only a single largest-magnitude coefficient (maximum compression). Intermediate
+  values keep a fraction `1 - ratio` of the coefficients with largest magnitude.
+
+# Returns
+- `AbstractMatrix{Float64}`: Reconstructed image obtained by applying the
+  inverse FFT to the truncated spectrum. The returned matrix has the same
+  dimensions as `img`. Any small imaginary parts produced by numerical error
+  are discarded by taking the real component.
+
+# Algorithm
+The function computes the 2D FFT of the input image and shifts the zero
+frequency component to the center of the spectrum. It then keeps the
+`1 - ratio` fraction of coefficients with the largest magnitude, sets all
+other coefficients to zero, shifts the spectrum back, and applies the inverse
+FFT to obtain a compressed reconstruction in the spatial domain.
+"""
+function fft_compress(img::AbstractMatrix, ratio::Float64)
+    freq = fftshift(fft(img))
+    total = length(freq)
+    keep = max(1, round(Int, total * (1 - ratio)))
+    
+    # Keep largest coefficients by magnitude
+    flat = vec(freq)
+    idx = partialsortperm(abs.(flat), 1:keep, rev=true)
+    compressed = zeros(ComplexF64, size(freq))
+    compressed[idx] = freq[idx]
+    
+    return real.(ifft(ifftshift(compressed)))
 end
 
 """
@@ -274,6 +317,10 @@ function main()
     recovered_default = recover(default_basis, compressed_default)
     display_comparison(test_image, recovered_default, "Standard QFT (Default Basis):")
     
+    # Compare with classical FFT
+    recovered_fft = fft_compress(test_image, COMPRESSION_RATIO)
+    display_comparison(test_image, recovered_fft, "Classical FFT (FFTW):")
+    
     # ============================================================================
     # Save Images
     # ============================================================================
@@ -297,6 +344,11 @@ function main()
     Images.save(default_path, Gray.(clamp.(recovered_default, 0.0, 1.0)))
     println("  Saved: recovered_default.png")
     
+    # Save recovered image (classical FFT)
+    fft_path = joinpath(OUTPUT_DIR, "recovered_fft.png")
+    Images.save(fft_path, Gray.(clamp.(recovered_fft, 0.0, 1.0)))
+    println("  Saved: recovered_fft.png")
+    
     # ============================================================================
     # Summary
     # ============================================================================
@@ -319,9 +371,10 @@ function main()
     - original_digit_$test_label.png  : Original test image
     - recovered_trained.png     : Recovered with trained basis
     - recovered_default.png     : Recovered with default basis
+    - recovered_fft.png         : Recovered with classical FFT
     
     Key insight: The trained basis should produce better reconstruction
-    quality compared to the default QFT basis for this dataset.
+    quality compared to both the default QFT basis and classical FFT.
     """)
     
     println("="^70)
