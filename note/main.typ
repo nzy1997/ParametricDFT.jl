@@ -335,6 +335,154 @@ Key advantages of this approach:
 - Adds only $O(n)$ additional learnable parameters (one phase per qubit pair)
 - Reduces to standard 2D QFT when all entanglement phases $phi_k = 0$
 
+== Alternative Basis: Time Evolving Block Decimation (TEBD)
+Time Evolving Block Decimation (TEBD) is a tensor network ansatz originally developed for simulating 1D quantum many-body systems. It employs a _brickwork_ pattern of nearest-neighbor two-qubit gates applied in alternating layers. For image processing on a $2^n times 2^n$ grid, TEBD can be adapted by treating the $n$ row qubits and $n$ column qubits as two coupled 1D chains.
+
+#figure(canvas({
+  import draw: *
+  let n = 4
+  let dy = 0.8
+  // Input tensor
+  ngate((-1.5, -(n - 1) * dy / 2), n, "x_n", text:[$bold(x)$], gap-y: dy, width: 0.7)
+  // Draw qubit lines from input to output
+  for i in range(n){
+    line("x_n.o" + str(i), (7.5, -i * dy), stroke: gray)
+    content((7.9, -i * dy), [$q_#i$])
+  }
+  // Layer 1: even pairs (q0-q1, q2-q3)
+  ngate((0.6, -0.5 * dy), 2, "U1", text:[$U_1$], gap-y: dy, width: 0.7)
+  ngate((0.6, -2.5 * dy), 2, "U2", text:[$U_2$], gap-y: dy, width: 0.7)
+  // Layer 2: odd pairs (q1-q2)
+  ngate((2.0, -1.5 * dy), 2, "U3", text:[$U_3$], gap-y: dy, width: 0.7)
+  // Layer 3: even pairs again
+  ngate((3.4, -0.5 * dy), 2, "U4", text:[$U_4$], gap-y: dy, width: 0.7)
+  ngate((3.4, -2.5 * dy), 2, "U5", text:[$U_5$], gap-y: dy, width: 0.7)
+  // Layer 4: odd pairs
+  ngate((4.8, -1.5 * dy), 2, "U6", text:[$U_6$], gap-y: dy, width: 0.7)
+  // Layer 5: even pairs
+  ngate((6.2, -0.5 * dy), 2, "U7", text:[$U_7$], gap-y: dy, width: 0.7)
+  ngate((6.2, -2.5 * dy), 2, "U8", text:[$U_8$], gap-y: dy, width: 0.7)
+}), caption: [TEBD brickwork circuit for $n=4$ qubits with $L=5$ layers: alternating layers of nearest-neighbor two-qubit gates $U_k$.])
+
+In this diagram, each $U_k$ is a parameterized $4 times 4$ unitary matrix acting on two adjacent qubits. Common parameterization choices for $U_k$ include:
+
++ *Full $U(4)$ unitary*: The most general form with 16 complex parameters constrained by unitarity ($U U^dagger = I$). This lies on the unitary manifold $U(4)$.
+
++ *Hardware-efficient ansatz*: Decompose each two-qubit gate as single-qubit rotations followed by an entangling gate:
+  $
+    U_k = (R_z (phi_1) R_y (theta_1) times.o R_z (phi_2) R_y (theta_2)) dot "CZ" dot (R_z (phi_3) R_y (theta_3) times.o R_z (phi_4) R_y (theta_4))
+  $
+  where $R_y (theta) = exp(-i theta Y / 2)$, $R_z (phi) = exp(-i phi Z / 2)$, and CZ is the controlled-Z gate. This uses 8 real parameters per gate.
+
++ *XX+YY+ZZ interaction*: Inspired by Hamiltonian simulation:
+  $
+    U_k = exp(i(alpha_k X X + beta_k Y Y + gamma_k Z Z))
+  $
+  with only 3 real parameters $(alpha_k, beta_k, gamma_k)$ controlling the entanglement strength.
+
+Direct evaluation of this tensor network takes $O(n L dot 4^2) = O(n L)$ operations for $L$ layers. The parameter space consists of approximately $(n-1) dot L / 2$ total gates. The total parameter manifold is:
+$
+  cal(M)_"TEBD" = product_(k=1)^(|"gates"|) U(4)
+$
+
+For Riemannian optimization, we optimize on this product of unitary manifolds using the same gradient descent approach as the QFT basis.
+
+== Alternative Basis: Multi-scale Entanglement Renormalization Ansatz (MERA)
+The Multi-scale Entanglement Renormalization Ansatz (MERA) is a hierarchical tensor network that naturally captures _multi-scale correlations_. It consists of alternating layers of _disentanglers_ (two-qubit unitaries) and _isometries_ (coarse-graining maps), forming a tree-like structure. For $n = 2^k$ qubits, MERA has $k$ layers, with each layer reducing the number of effective qubits by half.
+
+#let isogate(pos, n, name, text_content: none, gap-y: 1, width: 0.9, padding-y: 0.25) = {
+  import draw: *
+  // Horizontal isometry: 2 inputs on left, 1 output on right
+  // Shape: trapezoid wider on left, narrower on right
+  let height-in = gap-y * (n - 1) + 2 * padding-y
+  let height-out = padding-y * 2
+  
+  group(name: name, {
+    // Trapezoid: left side tall (2 inputs), right side short (1 output)
+    line(
+      (rel: (-width/2, -height-in/2), to: pos),
+      (rel: (width/2, -height-out/2), to: pos),
+      (rel: (width/2, height-out/2), to: pos),
+      (rel: (-width/2, height-in/2), to: pos),
+      close: true, fill: white, stroke: black
+    )
+    if text_content != none {
+      content(pos, text_content)
+    }
+    // Input anchors on left (2 inputs)
+    for i in range(n) {
+      let y = height-in/2 - padding-y - i * gap-y
+      anchor("i" + str(i), (rel: (-width/2, y), to: pos))
+    }
+    // Output anchor on right (1 output, centered)
+    anchor("o0", (rel: (width/2, 0), to: pos))
+  })
+}
+
+#figure(canvas({
+  import draw: *
+  let n = 4
+  let dy = 0.8
+  // Input tensor
+  ngate((-2.0, -(n - 1) * dy / 2), n, "x_n", text:[$bold(x)$], gap-y: dy, width: 0.7)
+  // Qubit labels on left
+  for i in range(n){
+    content((-2.8, -i * dy), [$q_#i$])
+  }
+  // Layer 1: Disentanglers on pairs (q0-q1, q2-q3)
+  ngate((0.0, -0.5 * dy), 2, "D1", text:[$D_1$], gap-y: dy, width: 0.7)
+  ngate((0.0, -2.5 * dy), 2, "D2", text:[$D_2$], gap-y: dy, width: 0.7)
+  // Horizontal lines: input to D1, D2
+  line("x_n.o0", "D1.i0", stroke: gray)
+  line("x_n.o1", "D1.i1", stroke: gray)
+  line("x_n.o2", "D2.i0", stroke: gray)
+  line("x_n.o3", "D2.i1", stroke: gray)
+  // Layer 1: Isometries (2->1 coarse-graining)
+  isogate((2.0, -0.5 * dy), 2, "W1", text_content: [$W_1$], gap-y: dy, width: 0.9)
+  isogate((2.0, -2.5 * dy), 2, "W2", text_content: [$W_2$], gap-y: dy, width: 0.9)
+  // Lines: D1, D2 to isometries (horizontal)
+  line("D1.o0", "W1.i0", stroke: gray)
+  line("D1.o1", "W1.i1", stroke: gray)
+  line("D2.o0", "W2.i0", stroke: gray)
+  line("D2.o1", "W2.i1", stroke: gray)
+  // Layer 2: Disentangler on coarse-grained qubits
+  ngate((4.2, -1.5 * dy), 2, "D3", text:[$D_3$], gap-y: 2 * dy, width: 0.7)
+  // Lines from isometries to D3 (merge towards center)
+  line("W1.o0", "D3.i0", stroke: gray)
+  line("W2.o0", "D3.i1", stroke: gray)
+  // Layer 2: Final isometry
+  isogate((6.0, -1.5 * dy), 2, "W3", text_content: [$W_3$], gap-y: 2 * dy, width: 0.9)
+  // Lines: D3 to final isometry
+  line("D3.o0", "W3.i0", stroke: gray)
+  line("D3.o1", "W3.i1", stroke: gray)
+  // Output line
+  line("W3.o0", (8.0, -1.5 * dy), stroke: gray)
+  content((8.4, -1.5 * dy), [$tilde(q)$])
+  // Layer labels
+  content((0.0, 1.0), text(9pt)[Disentangle])
+  content((2.0, 1.0), text(9pt)[Coarse-grain])
+  content((5.1, 1.0), text(9pt)[Layer 2])
+}), caption: [MERA circuit for $n=4$ qubits: disentanglers $D_k$ (rectangles) remove short-range entanglement, isometries $W_k$ (trapezoids) perform 2-to-1 coarse-graining. Each layer halves the number of effective qubits.])
+
+In this diagram, there are two types of parameterized gates:
+
++ *Disentanglers* $D_k in U(4)$: Parameterized $4 times 4$ unitary matrices acting on two adjacent qubits before coarse-graining. Same parameterization options as TEBD gates (full $U(4)$, hardware-efficient, or XX+YY+ZZ).
+
++ *Isometries* $W_k: CC^4 -> CC^2$: Parameterized $2 times 4$ matrices that map two qubits to one qubit (coarse-graining). They satisfy the isometry constraint $W W^dagger = I_2$, lying on the Stiefel manifold $"St"(2, 4)$. Parameterization options include:
+  - *Full Stiefel*: Any $2 times 4$ matrix with orthonormal rows, 8 real parameters
+  - *Structured*: $W = mat(cos theta, sin theta e^(i phi_1), 0, 0; 0, 0, cos psi, sin psi e^(i phi_2))$ with 4 real parameters (block-diagonal structure)
+
+Direct evaluation of this tensor network takes $O(n)$ operations total, since each layer processes $O(2^(k-l))$ qubits at level $l$ and there are $k = log_2 n$ layers. For $n = 2^k$ input qubits, the parameter count is:
+- Layer $l$: $2^(k-l-1)$ disentanglers + $2^(k-l-1)$ isometries
+- Total: $sum_(l=0)^(k-1) 2^(k-l-1) = n - 1$ disentanglers and $n - 1$ isometries
+
+The total parameter manifold is:
+$
+  cal(M)_"MERA" = (product_(k=1)^(n-1) U(4)) times (product_(k=1)^(n-1) "St"(2, 4))
+$
+
+For Riemannian optimization, we optimize on this product of unitary and Stiefel manifolds. The hierarchical structure naturally captures multi-scale features (edges → textures → objects), with only $O(log n)$ depth for $n$ qubits.
+
 == Learning a better Fourier basis
 Observing that in this representation, tensor parameters can be tuned without affecting the computational complexity, e.g. the parameters in $M_k$ and $H$. Can we find a transformation better than the Fourier basis? Or is Fourier basis already optimal for image processing?
 
