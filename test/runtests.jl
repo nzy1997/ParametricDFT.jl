@@ -6,6 +6,9 @@ using LinearAlgebra
 using Manifolds, Random
 using RecursiveArrayTools
 using Yao
+using JSON3
+
+@testset "ParametricDFT.jl" begin
 
 @testset "qft" begin
     Random.seed!(1234)
@@ -62,3 +65,11 @@ end
     # Also verify the norm is preserved (unitary property)
     @test isapprox(norm(fft_result), norm(pic), rtol=1e-10)
 end
+
+# Include additional test files for new features
+include("basis_tests.jl")
+include("training_tests.jl")
+include("serialization_tests.jl")
+include("compression_tests.jl")
+
+end  # @testset "ParametricDFT.jl"
