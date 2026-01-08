@@ -380,7 +380,7 @@ In this diagram, each $U_k$ is a parameterized $4 times 4$ unitary matrix acting
   $
   with only 3 real parameters $(alpha_k, beta_k, gamma_k)$ controlling the entanglement strength.
 
-Direct evaluation of this tensor network takes $O(n L dot 4^2) = O(n L)$ operations for $L$ layers. The parameter space consists of $lfloor L/2 rfloor lfloorn/2 rfloor + lceil L/2 rceil lfloorn-1/2 rfloor$ two-qubit gates (approximately $(n/2) dot L$ gates for large $n$). The total parameter manifold is:
+Direct evaluation of this tensor network takes $O(n L dot 4^2) = O(n L)$ operations for $L$ layers. The parameter space consists of $floor(L\/2) floor(n\/2) + ceil(L\/2) floor((n-1)\/2)$ two-qubit gates (approximately $(n\/2) dot L$ gates for large $n$). The total parameter manifold is:
 $
   cal(M)_"TEBD" = product_(k=1)^(|"gates"|) U(4)
 $

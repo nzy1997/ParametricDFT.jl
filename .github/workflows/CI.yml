@@ -43,6 +43,15 @@ jobs:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+  typst:
+    name: Typst Notes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Typst
+        uses: typst-community/setup-typst@v4
+      - name: Compile Typst document
+        run: typst compile note/main.typ note/main.pdf
   docs:
     name: Documentation
     runs-on: ubuntu-latest
