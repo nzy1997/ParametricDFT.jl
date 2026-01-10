@@ -23,6 +23,12 @@ export AbstractSparseBasis, QFTBasis
 export forward_transform, inverse_transform, image_size, num_parameters, basis_hash
 export get_manifold
 
+# Entangled QFT exports
+export entangled_qft_code, entanglement_gate
+export get_entangle_tensor_indices, extract_entangle_phases
+export EntangledQFTBasis
+export num_entangle_parameters, get_entangle_phases
+
 # Training exports
 export train_basis
 
@@ -35,6 +41,7 @@ export recover, save_compressed, load_compressed, compression_stats
 
 include("qft.jl")
 include("basis.jl")
+include("entangled_qft.jl")
 include("training.jl")
 include("serialization.jl")
 include("compression.jl")

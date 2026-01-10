@@ -21,8 +21,25 @@ struct BasisJSON
     hash::String
 end
 
+"""
+    EntangledBasisJSON
+
+Internal struct for JSON serialization of EntangledQFTBasis.
+"""
+struct EntangledBasisJSON
+    type::String
+    version::String
+    m::Int
+    n::Int
+    n_entangle::Int
+    entangle_phases::Vector{Float64}
+    tensors::Vector{Vector{Vector{Float64}}}  # Each tensor as [[real, imag], ...]
+    hash::String
+end
+
 # Define StructTypes for JSON3 serialization
 StructTypes.StructType(::Type{BasisJSON}) = StructTypes.Struct()
+StructTypes.StructType(::Type{EntangledBasisJSON}) = StructTypes.Struct()
 
 # ============================================================================
 # Save Functions
@@ -79,6 +96,35 @@ function _basis_to_json(basis::QFTBasis)
     )
 end
 
+"""
+    _basis_to_json(basis::EntangledQFTBasis)
+
+Convert an EntangledQFTBasis to JSON-serializable format.
+"""
+function _basis_to_json(basis::EntangledQFTBasis)
+    # Convert tensors to serializable format
+    serialized_tensors = Vector{Vector{Vector{Float64}}}()
+    
+    for tensor in basis.tensors
+        tensor_data = Vector{Vector{Float64}}()
+        for val in tensor
+            push!(tensor_data, [real(val), imag(val)])
+        end
+        push!(serialized_tensors, tensor_data)
+    end
+    
+    return EntangledBasisJSON(
+        "EntangledQFTBasis",
+        "1.0",
+        basis.m,
+        basis.n,
+        basis.n_entangle,
+        basis.entangle_phases,
+        serialized_tensors,
+        basis_hash(basis)
+    )
+end
+
 # ============================================================================
 # Load Functions
 # ============================================================================
@@ -102,14 +148,24 @@ freq = forward_transform(basis, image)
 """
 function load_basis(path::String)
     json_str = read(path, String)
-    json_data = JSON3.read(json_str, BasisJSON)
-    return _json_to_basis(json_data)
+    
+    # First, peek at the type to determine which struct to use
+    json_obj = JSON3.read(json_str)
+    basis_type = get(json_obj, :type, "QFTBasis")
+    
+    if basis_type == "EntangledQFTBasis"
+        json_data = JSON3.read(json_str, EntangledBasisJSON)
+        return _json_to_entangled_basis(json_data)
+    else
+        json_data = JSON3.read(json_str, BasisJSON)
+        return _json_to_basis(json_data)
+    end
 end
 
 """
     _json_to_basis(json_data::BasisJSON)
 
-Convert JSON data back to a basis object.
+Convert JSON data back to a QFTBasis object.
 """
 function _json_to_basis(json_data::BasisJSON)
     if json_data.type != "QFTBasis"
@@ -151,6 +207,53 @@ function _json_to_basis(json_data::BasisJSON)
     return loaded_basis
 end
 
+"""
+    _json_to_entangled_basis(json_data::EntangledBasisJSON)
+
+Convert JSON data back to an EntangledQFTBasis object.
+"""
+function _json_to_entangled_basis(json_data::EntangledBasisJSON)
+    if json_data.type != "EntangledQFTBasis"
+        error("Unknown basis type: $(json_data.type)")
+    end
+    
+    if json_data.version != "1.0"
+        @warn "Basis version $(json_data.version) may not be fully compatible with current version 1.0"
+    end
+    
+    m, n = json_data.m, json_data.n
+    n_entangle = json_data.n_entangle
+    entangle_phases = json_data.entangle_phases
+    
+    # Reconstruct tensors from serialized format
+    # We need to know the original tensor shapes from the entangled QFT code
+    optcode, template_tensors, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases)
+    inverse_code, _, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, inverse=true)
+    
+    tensors = Vector{Any}()
+    for (i, tensor_data) in enumerate(json_data.tensors)
+        # Get the shape from template
+        template_shape = size(template_tensors[i])
+        
+        # Reconstruct complex values
+        complex_vals = [Complex{Float64}(pair[1], pair[2]) for pair in tensor_data]
+        
+        # Reshape to original dimensions
+        tensor = reshape(complex_vals, template_shape)
+        push!(tensors, tensor)
+    end
+    
+    # Verify hash matches
+    loaded_basis = EntangledQFTBasis(m, n, tensors, optcode, inverse_code, n_entangle, Float64.(entangle_phases))
+    loaded_hash = basis_hash(loaded_basis)
+    
+    if loaded_hash != json_data.hash
+        @warn "Basis hash mismatch. File hash: $(json_data.hash), computed hash: $(loaded_hash). The basis may have been corrupted."
+    end
+    
+    return loaded_basis
+end
+
 # ============================================================================
 # Utility Functions
 # ============================================================================
@@ -176,6 +279,28 @@ function basis_to_dict(basis::QFTBasis)
 end
 
 """
+    basis_to_dict(basis::EntangledQFTBasis) -> Dict
+
+Convert an EntangledQFTBasis to a dictionary for custom serialization.
+
+# Returns
+- `Dict`: Dictionary representation of the basis
+"""
+function basis_to_dict(basis::EntangledQFTBasis)
+    json_data = _basis_to_json(basis)
+    return Dict(
+        "type" => json_data.type,
+        "version" => json_data.version,
+        "m" => json_data.m,
+        "n" => json_data.n,
+        "n_entangle" => json_data.n_entangle,
+        "entangle_phases" => json_data.entangle_phases,
+        "tensors" => json_data.tensors,
+        "hash" => json_data.hash
+    )
+end
+
+"""
     dict_to_basis(d::Dict) -> AbstractSparseBasis
 
 Convert a dictionary back to a basis.
@@ -187,14 +312,30 @@ Convert a dictionary back to a basis.
 - `AbstractSparseBasis`: The reconstructed basis
 """
 function dict_to_basis(d::Dict)
-    json_data = BasisJSON(
-        d["type"],
-        d["version"],
-        d["m"],
-        d["n"],
-        d["tensors"],
-        d["hash"]
-    )
-    return _json_to_basis(json_data)
+    basis_type = get(d, "type", "QFTBasis")
+    
+    if basis_type == "EntangledQFTBasis"
+        json_data = EntangledBasisJSON(
+            d["type"],
+            d["version"],
+            d["m"],
+            d["n"],
+            d["n_entangle"],
+            d["entangle_phases"],
+            d["tensors"],
+            d["hash"]
+        )
+        return _json_to_entangled_basis(json_data)
+    else
+        json_data = BasisJSON(
+            d["type"],
+            d["version"],
+            d["m"],
+            d["n"],
+            d["tensors"],
+            d["hash"]
+        )
+        return _json_to_basis(json_data)
+    end
 end
 

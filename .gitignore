@@ -20,4 +20,4 @@ docker-compose.override.yml
 *.png
 *.jpg
 *.log
-*.pid
+*.pidexamples/EntangledBasisDemo/
