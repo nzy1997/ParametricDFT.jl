@@ -157,8 +157,8 @@ function load_basis(path::String)
         json_data = JSON3.read(json_str, EntangledBasisJSON)
         return _json_to_entangled_basis(json_data)
     else
-        json_data = JSON3.read(json_str, BasisJSON)
-        return _json_to_basis(json_data)
+    json_data = JSON3.read(json_str, BasisJSON)
+    return _json_to_basis(json_data)
     end
 end
 
@@ -327,15 +327,15 @@ function dict_to_basis(d::Dict)
         )
         return _json_to_entangled_basis(json_data)
     else
-        json_data = BasisJSON(
-            d["type"],
-            d["version"],
-            d["m"],
-            d["n"],
-            d["tensors"],
-            d["hash"]
-        )
-        return _json_to_basis(json_data)
+    json_data = BasisJSON(
+        d["type"],
+        d["version"],
+        d["m"],
+        d["n"],
+        d["tensors"],
+        d["hash"]
+    )
+    return _json_to_basis(json_data)
     end
 end
 

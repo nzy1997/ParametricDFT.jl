@@ -8,23 +8,36 @@
 """
     entanglement_gate(phi::Real)
 
-Create a 2-qubit entanglement gate matrix E with learnable phase phi.
-The gate has the form:
+Create the tensor network representation of a 2-qubit controlled-phase gate E
+with learnable phase phi.
+
+**Full gate form (4×4 matrix in computational basis):**
     E = diag(1, 1, 1, e^(i*phi))
 
-This is a controlled-phase gate that multiplies a phase e^(i*phi) when both
-qubits are in state |1⟩. It has the same structure as the M gate in the QFT
-circuit, but with a learnable phase parameter instead of the fixed QFT phases.
+This applies phase e^(i*phi) only when both qubits are in state |1⟩.
+
+**Tensor network form (2×2 matrix):**
+    E_tensor = [1  0; 0  e^(i*phi)]
+
+In the einsum tensor network decomposition, controlled-phase gates are 
+represented as 2×2 matrices acting on the bond indices connecting the 
+control and target qubits. This function returns the tensor form, not 
+the full 4×4 gate matrix.
+
+This gate has the same structure as the M gate in the QFT circuit, but with
+a learnable phase parameter instead of the fixed QFT phases (2π/2^k).
 
 # Arguments
 - `phi::Real`: Phase parameter (in radians)
 
 # Returns
-- `Matrix{ComplexF64}`: 2×2 diagonal matrix representing the gate in tensor form
+- `Matrix{ComplexF64}`: 2×2 matrix in tensor network form
 """
 function entanglement_gate(phi::Real)
-    # In tensor network form, this is a diagonal 2×2 matrix
-    # representing the controlled-phase gate action on the |11⟩ component
+    # Tensor network form of controlled-phase gate
+    # Note: This is NOT the full 4×4 gate matrix, but the tensor decomposition
+    # used in einsum contractions. The full gate diag(1,1,1,e^(iφ)) decomposes
+    # to this 2×2 form when contracted over the qubit indices.
     return ComplexF64[1 0; 0 exp(im * phi)]
 end
 
@@ -35,11 +48,16 @@ Generate an optimized tensor network representation of the entangled QFT circuit
 
 The entangled QFT extends the standard 2D QFT by adding entanglement gates E_k
 between corresponding row and column qubits (x_k, y_k). Each entanglement gate
-E_k has the same form as the M gate in the standard QFT:
+E_k is a controlled-phase gate with the same structure as the M gate in QFT:
 
+**Full gate form (4×4 matrix):**
     E_k = diag(1, 1, 1, e^(i*phi_k))
 
-acting on qubits (x_{n-k}, y_{n-k}), where phi_k is a learnable phase parameter.
+**Tensor network form (2×2 matrix):**
+    E_k_tensor = [1 0; 0 e^(i*phi_k)]
+
+The gate acts on qubits (x_{n-k}, y_{n-k}), where phi_k is a learnable phase
+parameter. In the tensor network, these are represented as 2×2 matrices.
 
 For a square 2^n × 2^n image (m = n), we add exactly n entanglement gates,
 one for each pair of corresponding row/column qubits.
@@ -133,6 +151,9 @@ In the tensor network representation from yao2einsum, controlled-phase gates
 have the form [1, 1; 1, e^(i*phi)] (not diagonal). The entanglement gates
 are the last n_entangle such tensors after sorting (Hadamards first, then phase gates).
 
+After training, tensors may drift slightly from the exact pattern, so we use
+tolerance-based magnitude checks.
+
 # Arguments
 - `tensors::Vector`: Circuit tensors
 - `n_entangle::Int`: Number of entanglement gates
@@ -142,12 +163,17 @@ are the last n_entangle such tensors after sorting (Hadamards first, then phase 
 """
 function get_entangle_tensor_indices(tensors, n_entangle::Int)
     # Controlled-phase gates in tensor network form have pattern [1, 1; 1, e^(i*phi)]
-    # This is different from the gate matrix form; it's the tensor decomposition
-    is_ctrl_phase(x) = size(x) == (2, 2) && 
-                       isapprox(x[1,1], 1) && 
-                       isapprox(x[1,2], 1) && 
-                       isapprox(x[2,1], 1) && 
-                       abs(x[2,2]) ≈ 1
+    # After training, complex values may drift slightly, so check magnitudes with tolerance.
+    # We use a moderate tolerance (0.15) to account for optimization drift while still
+    # distinguishing from Hadamard-like gates (which have elements ≈ 0.707).
+    function is_ctrl_phase(x)
+        size(x) != (2, 2) && return false
+        tol = 0.15
+        return isapprox(abs(x[1,1]), 1, atol=tol) && 
+               isapprox(abs(x[1,2]), 1, atol=tol) && 
+               isapprox(abs(x[2,1]), 1, atol=tol) && 
+               isapprox(abs(x[2,2]), 1, atol=tol)
+    end
     
     ctrl_phase_indices = findall(is_ctrl_phase, tensors)
     # The last n_entangle controlled-phase tensors are the entanglement gates

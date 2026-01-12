@@ -360,19 +360,25 @@ function train_basis(
     # Construct final basis with best parameters
     final_tensors = point2tensors(best_theta, M)
     
-    # After training, tensors are fully optimized (not just phase parameters).
-    # The entangle_phases field stores the initial phases used for construction.
-    # For trained bases, we could try to extract effective phases from the trained
-    # tensors, but since all tensor elements are now free parameters, we just
-    # record the initial phases that were used.
-    initial_phases = entangle_phases === nothing ? zeros(n_entangle) : Float64.(entangle_phases)
+    # Extract the effective entanglement phases from the trained tensors.
+    # During training, all tensor elements become free parameters, so we need to
+    # extract the phase angles from the (2,2) elements of the entanglement gate tensors.
+    entangle_indices = get_entangle_tensor_indices(final_tensors, n_entangle)
+    trained_phases = if !isempty(entangle_indices)
+        extract_entangle_phases(final_tensors, entangle_indices)
+    else
+        # Fallback to initial phases if extraction fails
+        entangle_phases === nothing ? zeros(n_entangle) : Float64.(entangle_phases)
+    end
     
     if verbose
         println("\n✓ Training completed. Best validation loss: $(round(best_val_loss, digits=6))")
-        println("  Initial entanglement phases: $(round.(initial_phases, digits=4))")
+        initial_phases_str = entangle_phases === nothing ? "zeros" : "$(round.(entangle_phases, digits=4))"
+        println("  Initial entanglement phases: $initial_phases_str")
+        println("  Trained entanglement phases: $(round.(trained_phases, digits=4))")
     end
     
-    return EntangledQFTBasis(m, n, final_tensors, optcode, inverse_code, n_entangle, initial_phases)
+    return EntangledQFTBasis(m, n, final_tensors, optcode, inverse_code, n_entangle, trained_phases)
 end
 
 # ============================================================================

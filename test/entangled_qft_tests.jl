@@ -353,3 +353,119 @@ end
     end
 end
 
+@testset "Tensor Network Structure" begin
+    
+    @testset "standard QFT tensor structure" begin
+        m, n = 3, 3
+        optcode, tensors = ParametricDFT.qft_code(m, n)
+        
+        # Count tensor types
+        H_mat = mat(H)
+        hadamard_count = count(t -> t ≈ H_mat, tensors)
+        phase_gate_count = count(t -> size(t) == (2, 2) && !(t ≈ H_mat), tensors)
+        
+        @test hadamard_count == m + n  # One Hadamard per qubit
+        @test phase_gate_count > 0     # Should have phase gates
+        @test length(tensors) == hadamard_count + phase_gate_count
+    end
+    
+    @testset "entangled QFT has more tensors" begin
+        m, n = 3, 3
+        _, tensors_std = ParametricDFT.qft_code(m, n)
+        _, tensors_ent, n_entangle = ParametricDFT.entangled_qft_code(m, n)
+        
+        # Entangled QFT should have extra tensors for entanglement gates
+        @test length(tensors_ent) >= length(tensors_std)
+        @test n_entangle == min(m, n)
+    end
+    
+    @testset "tensor types in entangled QFT" begin
+        m, n = 3, 3
+        phases = [π/4, π/3, π/6]
+        _, tensors, n_entangle = ParametricDFT.entangled_qft_code(m, n; entangle_phases=phases)
+        
+        H_mat = mat(H)
+        hadamard_count = count(t -> t ≈ H_mat, tensors)
+        
+        # Should have m + n Hadamard gates
+        @test hadamard_count == m + n
+        
+        # All tensors should be 2×2
+        @test all(t -> size(t) == (2, 2), tensors)
+    end
+    
+    @testset "entangle gate identification after training simulation" begin
+        # Simulate training by slightly perturbing tensors
+        m, n = 2, 2
+        _, tensors, n_entangle = ParametricDFT.entangled_qft_code(m, n)
+        
+        # Find entangle indices in original tensors
+        indices_before = ParametricDFT.get_entangle_tensor_indices(tensors, n_entangle)
+        @test length(indices_before) == n_entangle
+        
+        # Simulate perturbation (small noise to tensor values, keeping structure)
+        perturbed_tensors = copy(tensors)
+        for idx in indices_before
+            t = perturbed_tensors[idx]
+            # Add small perturbation but keep the structure
+            perturbed_tensors[idx] = t .* (1 .+ 0.01 * randn(ComplexF64, size(t)))
+        end
+        
+        # Should still find the same indices (robust to small perturbations)
+        indices_after = ParametricDFT.get_entangle_tensor_indices(perturbed_tensors, n_entangle)
+        @test length(indices_after) == n_entangle
+        @test indices_after == indices_before
+    end
+    
+    @testset "phase extraction accuracy" begin
+        m, n = 4, 4
+        # Use phases in (-π, π] range since angle() returns values in this range
+        test_phases = [0.0, π/2, π, -π/2]  # -π/2 is equivalent to 3π/2
+        _, tensors, n_entangle = ParametricDFT.entangled_qft_code(m, n; entangle_phases=test_phases)
+        
+        indices = ParametricDFT.get_entangle_tensor_indices(tensors, n_entangle)
+        extracted = ParametricDFT.extract_entangle_phases(tensors, indices)
+        
+        @test length(extracted) == length(test_phases)
+        @test isapprox(extracted, test_phases, atol=1e-10)
+        
+        # Also test that phases differing by 2π are equivalent
+        test_phases_wrapped = [0.0, π/2, π, 3π/2]  # 3π/2 should extract as -π/2
+        _, tensors2, _ = ParametricDFT.entangled_qft_code(m, n; entangle_phases=test_phases_wrapped)
+        indices2 = ParametricDFT.get_entangle_tensor_indices(tensors2, n_entangle)
+        extracted2 = ParametricDFT.extract_entangle_phases(tensors2, indices2)
+        
+        # Check phase equivalence modulo 2π
+        for (ext, orig) in zip(extracted2, test_phases_wrapped)
+            # exp(i*ext) should equal exp(i*orig)
+            @test isapprox(exp(im * ext), exp(im * orig), atol=1e-10)
+        end
+    end
+    
+    @testset "tensor count comparison" begin
+        # Compare parameter counts across different sizes
+        for (m, n) in [(2, 2), (3, 3), (4, 4), (2, 3)]
+            _, tensors_std = ParametricDFT.qft_code(m, n)
+            _, tensors_ent, n_ent = ParametricDFT.entangled_qft_code(m, n)
+            
+            params_std = sum(prod(size(t)) for t in tensors_std)
+            params_ent = sum(prod(size(t)) for t in tensors_ent)
+            
+            # Entangled should have at least as many parameters
+            @test params_ent >= params_std
+            
+            # Number of entanglement gates should be min(m, n)
+            @test n_ent == min(m, n)
+        end
+    end
+    
+    @testset "einsum contraction code" begin
+        m, n = 3, 3
+        optcode_std, _ = ParametricDFT.qft_code(m, n)
+        optcode_ent, _, _ = ParametricDFT.entangled_qft_code(m, n)
+        
+        # Both should be valid einsum codes
+        @test optcode_std isa OMEinsum.AbstractEinsum
+        @test optcode_ent isa OMEinsum.AbstractEinsum
+    end
+end
