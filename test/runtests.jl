@@ -68,6 +68,7 @@ end
 
 # Include additional test files for new features
 include("basis_tests.jl")
+include("entangled_qft_tests.jl")
 include("training_tests.jl")
 include("serialization_tests.jl")
 include("compression_tests.jl")

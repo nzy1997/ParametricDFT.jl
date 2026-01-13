@@ -1,15 +1,19 @@
 [deps]
 ADTypes = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
 ImageQualityIndexes = "2996bd0c-7a13-11e9-2da2-2f5ce47296a9"
 Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"
+MLDatasets = "eb30cadb-4394-5ae3-aed4-317e484a6458"
 ManifoldDiff = "af67fdf4-a580-4b9f-bbec-742ef357defd"
 Manopt = "0fc0a36d-df90-57f3-8f93-d78a9fc72bb5"
-MLDatasets = "eb30cadb-4394-5ae3-aed4-317e484a6458"
+OMEinsum = "ebe7aa44-baf0-506c-a96f-8464559b3922"
 ParametricDFT = "cc2eb9de-5297-4754-b0bd-fdc80c6df40d"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+Yao = "5872b779-8223-5990-8dd0-5abbb0748c8c"
 
 [sources]
 ParametricDFT = {path = "/workspace"}
