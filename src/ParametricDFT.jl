@@ -26,6 +26,10 @@ export point2tensors, tensors2point, generate_manifold
 export entangled_qft_code, entanglement_gate
 export get_entangle_tensor_indices, extract_entangle_phases
 
+# TEBD circuit exports
+export tebd_code, tebd_gate, TEBDCircuitSpec
+export get_tebd_gate_indices, extract_tebd_phases
+
 # Sparse basis exports
 export AbstractSparseBasis, QFTBasis, EntangledQFTBasis
 export forward_transform, inverse_transform, image_size, num_parameters, basis_hash
@@ -49,6 +53,8 @@ include("loss.jl")
 include("qft.jl")
 # 3. Entangled QFT circuit (standalone circuit code)
 include("entangled_qft.jl")
+# 3b. TEBD circuit (standalone circuit code)
+include("tebd.jl")
 # 4. Basis implementations (uses qft_code and entangled_qft_code)
 include("basis.jl")
 # 5. Training (uses basis types and loss functions)
