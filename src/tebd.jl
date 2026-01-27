@@ -1,13 +1,13 @@
 # ============================================================================
 # TEBD (Time-Evolving Block Decimation) Circuit Construction
 # ============================================================================
-# This file provides the TEBD circuit construction with 2D chain topology.
+# This file provides the TEBD circuit construction with 2D ring topology.
 # The circuit has two layers:
 #   1. Hadamard layer on all m+n qubits (creates frequency/superposition basis)
-#   2. Two separate chains of controlled-phase gates:
-#      - Row chain: (x1,x2), (x2,x3), ..., (x_{m-1},x_m) for m-1 gates
-#      - Column chain: (y1,y2), (y2,y3), ..., (y_{n-1},y_n) for n-1 gates
-# This creates a 2D separable transform suitable for image processing.
+#   2. Two separate rings of controlled-phase gates:
+#      - Row ring: (x1,x2), (x2,x3), ..., (x_{m-1},x_m), (x_m,x1) for m gates
+#      - Column ring: (y1,y2), (y2,y3), ..., (y_{n-1},y_n), (y_n,y1) for n gates
+# This creates a 2D separable transform with periodic boundary conditions, suitable for image processing.
 
 """
     tebd_gate(theta::Real)
