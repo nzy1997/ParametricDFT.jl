@@ -80,9 +80,10 @@ n_entangle(spec::EntangledQFTCircuitSpec) = length(spec.entangle_phases)
 """
     TEBDCircuitSpec - Specification for 2D TEBD circuits (already defined in tebd.jl)
     
-The TEBD circuit has m row qubits and n column qubits with:
-- Row chain: (x1,x2), (x2,x3), ..., (x_{m-1},x_m) for m-1 gates
-- Column chain: (y1,y2), (y2,y3), ..., (y_{n-1},y_n) for n-1 gates
+The TEBD circuit has m row qubits and n column qubits with a ring topology:
+- Row ring: (x₁, x₂), (x₂, x₃), …, (x_{m-1}, x_m), (x_m, x₁)  → m two-qubit gates
+- Column ring: (y₁, y₂), (y₂, y₃), …, (y_{n-1}, y_n), (y_n, y₁) → n two-qubit gates
+This matches the TEBDCircuitSpec defined in `tebd.jl`.
 """
 # TEBDCircuitSpec is already defined in tebd.jl with:
 #   n_row_qubits, n_col_qubits, phases, title
