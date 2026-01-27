@@ -37,9 +37,27 @@ struct EntangledBasisJSON
     hash::String
 end
 
+"""
+    TEBDBasisJSON
+
+Internal struct for JSON serialization of TEBDBasis.
+"""
+struct TEBDBasisJSON
+    type::String
+    version::String
+    m::Int
+    n::Int
+    n_row_gates::Int
+    n_col_gates::Int
+    phases::Vector{Float64}
+    tensors::Vector{Vector{Vector{Float64}}}  # Each tensor as [[real, imag], ...]
+    hash::String
+end
+
 # Define StructTypes for JSON3 serialization
 StructTypes.StructType(::Type{BasisJSON}) = StructTypes.Struct()
 StructTypes.StructType(::Type{EntangledBasisJSON}) = StructTypes.Struct()
+StructTypes.StructType(::Type{TEBDBasisJSON}) = StructTypes.Struct()
 
 # ============================================================================
 # Save Functions
@@ -125,6 +143,36 @@ function _basis_to_json(basis::EntangledQFTBasis)
     )
 end
 
+"""
+    _basis_to_json(basis::TEBDBasis)
+
+Convert a TEBDBasis to JSON-serializable format.
+"""
+function _basis_to_json(basis::TEBDBasis)
+    # Convert tensors to serializable format
+    serialized_tensors = Vector{Vector{Vector{Float64}}}()
+    
+    for tensor in basis.tensors
+        tensor_data = Vector{Vector{Float64}}()
+        for val in tensor
+            push!(tensor_data, [real(val), imag(val)])
+        end
+        push!(serialized_tensors, tensor_data)
+    end
+    
+    return TEBDBasisJSON(
+        "TEBDBasis",
+        "2.0",  # Version 2.0 for 2D topology
+        basis.m,
+        basis.n,
+        basis.n_row_gates,
+        basis.n_col_gates,
+        basis.phases,
+        serialized_tensors,
+        basis_hash(basis)
+    )
+end
+
 # ============================================================================
 # Load Functions
 # ============================================================================
@@ -156,9 +204,12 @@ function load_basis(path::String)
     if basis_type == "EntangledQFTBasis"
         json_data = JSON3.read(json_str, EntangledBasisJSON)
         return _json_to_entangled_basis(json_data)
+    elseif basis_type == "TEBDBasis"
+        json_data = JSON3.read(json_str, TEBDBasisJSON)
+        return _json_to_tebd_basis(json_data)
     else
-    json_data = JSON3.read(json_str, BasisJSON)
-    return _json_to_basis(json_data)
+        json_data = JSON3.read(json_str, BasisJSON)
+        return _json_to_basis(json_data)
     end
 end
 
@@ -254,6 +305,54 @@ function _json_to_entangled_basis(json_data::EntangledBasisJSON)
     return loaded_basis
 end
 
+"""
+    _json_to_tebd_basis(json_data::TEBDBasisJSON)
+
+Convert JSON data back to a TEBDBasis object.
+"""
+function _json_to_tebd_basis(json_data::TEBDBasisJSON)
+    if json_data.type != "TEBDBasis"
+        error("Unknown basis type: $(json_data.type)")
+    end
+    
+    if json_data.version != "2.0"
+        @warn "Basis version $(json_data.version) may not be fully compatible with current version 2.0"
+    end
+    
+    m = json_data.m
+    n = json_data.n
+    n_row_gates = json_data.n_row_gates
+    n_col_gates = json_data.n_col_gates
+    phases = json_data.phases
+    
+    # Reconstruct tensors from serialized format
+    optcode, template_tensors, _, _ = tebd_code(m, n; phases=phases)
+    inverse_code, _, _, _ = tebd_code(m, n; phases=phases, inverse=true)
+    
+    tensors = Vector{Any}()
+    for (i, tensor_data) in enumerate(json_data.tensors)
+        # Get the shape from template
+        template_shape = size(template_tensors[i])
+        
+        # Reconstruct complex values
+        complex_vals = [Complex{Float64}(pair[1], pair[2]) for pair in tensor_data]
+        
+        # Reshape to original dimensions
+        tensor = reshape(complex_vals, template_shape)
+        push!(tensors, tensor)
+    end
+    
+    # Verify hash matches
+    loaded_basis = TEBDBasis(m, n, tensors, optcode, inverse_code, n_row_gates, n_col_gates, Float64.(phases))
+    loaded_hash = basis_hash(loaded_basis)
+    
+    if loaded_hash != json_data.hash
+        @warn "Basis hash mismatch. File hash: $(json_data.hash), computed hash: $(loaded_hash). The basis may have been corrupted."
+    end
+    
+    return loaded_basis
+end
+
 # ============================================================================
 # Utility Functions
 # ============================================================================
@@ -301,6 +400,29 @@ function basis_to_dict(basis::EntangledQFTBasis)
 end
 
 """
+    basis_to_dict(basis::TEBDBasis) -> Dict
+
+Convert a TEBDBasis to a dictionary for custom serialization.
+
+# Returns
+- `Dict`: Dictionary representation of the basis
+"""
+function basis_to_dict(basis::TEBDBasis)
+    json_data = _basis_to_json(basis)
+    return Dict(
+        "type" => json_data.type,
+        "version" => json_data.version,
+        "m" => json_data.m,
+        "n" => json_data.n,
+        "n_row_gates" => json_data.n_row_gates,
+        "n_col_gates" => json_data.n_col_gates,
+        "phases" => json_data.phases,
+        "tensors" => json_data.tensors,
+        "hash" => json_data.hash
+    )
+end
+
+"""
     dict_to_basis(d::Dict) -> AbstractSparseBasis
 
 Convert a dictionary back to a basis.
@@ -326,16 +448,29 @@ function dict_to_basis(d::Dict)
             d["hash"]
         )
         return _json_to_entangled_basis(json_data)
+    elseif basis_type == "TEBDBasis"
+        json_data = TEBDBasisJSON(
+            d["type"],
+            d["version"],
+            d["m"],
+            d["n"],
+            d["n_row_gates"],
+            d["n_col_gates"],
+            d["phases"],
+            d["tensors"],
+            d["hash"]
+        )
+        return _json_to_tebd_basis(json_data)
     else
-    json_data = BasisJSON(
-        d["type"],
-        d["version"],
-        d["m"],
-        d["n"],
-        d["tensors"],
-        d["hash"]
-    )
-    return _json_to_basis(json_data)
+        json_data = BasisJSON(
+            d["type"],
+            d["version"],
+            d["m"],
+            d["n"],
+            d["tensors"],
+            d["hash"]
+        )
+        return _json_to_basis(json_data)
     end
 end
 

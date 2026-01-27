@@ -31,10 +31,11 @@ export tebd_code, tebd_gate, TEBDCircuitSpec
 export get_tebd_gate_indices, extract_tebd_phases
 
 # Sparse basis exports
-export AbstractSparseBasis, QFTBasis, EntangledQFTBasis
+export AbstractSparseBasis, QFTBasis, EntangledQFTBasis, TEBDBasis
 export forward_transform, inverse_transform, image_size, num_parameters, basis_hash
 export get_manifold
 export num_entangle_parameters, get_entangle_phases
+export num_gates, get_phases
 
 # Training exports
 export train_basis
