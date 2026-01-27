@@ -586,8 +586,8 @@ Construct a TEBDBasis with custom trained tensors.
 - `m::Int`: Number of row qubits
 - `n::Int`: Number of column qubits
 - `tensors::Vector`: Pre-trained circuit parameters
-- `n_row_gates::Int`: Number of row chain gates
-- `n_col_gates::Int`: Number of column chain gates
+- `n_row_gates::Int`: Number of row ring gates
+- `n_col_gates::Int`: Number of column ring gates
 
 # Returns
 - `TEBDBasis`: Basis with custom parameters
