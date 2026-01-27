@@ -81,9 +81,9 @@ Generate a circuit diagram for TEBD with ring topology.
 """
 function plot_tebd_circuit(n::Int; phases=nothing, title="TEBD Circuit", output_path=nothing)
     if phases === nothing
-        phases = zeros(n + 1)
+        phases = zeros(n)
     end
-    n_gates = n + 1
+    n_gates = n
     
     # Calculate dimensions
     width = max(600, 150 + n_gates * 80)
@@ -106,24 +106,20 @@ function plot_tebd_circuit(n::Int; phases=nothing, title="TEBD Circuit", output_
     # Draw TEBD gates
     x_pos = x_start + GATE_SPACING
     
-    # Gate 1: First-Last wrap-around (1-n)
-    y1 = -1 * QUBIT_SPACING
-    yn = -n * QUBIT_SPACING
-    draw_tebd_gate!(ax, x_pos, y1, yn, "T₁", phases[1]; is_wrap=true)
-    x_pos += GATE_SPACING * 1.3
-    
-    # Gates 2 to n: Sequential nearest-neighbor (1-2, 2-3, ..., n-1-n)
+    # Gates 1 to n-1: Sequential nearest-neighbor (1-2, 2-3, ..., n-1-n)
     for i in 1:(n-1)
         y_i = -i * QUBIT_SPACING
         y_j = -(i+1) * QUBIT_SPACING
-        gate_label = "T$(i+1)"
-        draw_tebd_gate!(ax, x_pos, y_i, y_j, gate_label, phases[i+1]; is_wrap=false)
+        gate_label = "T$i"
+        draw_tebd_gate!(ax, x_pos, y_i, y_j, gate_label, phases[i]; is_wrap=false)
         x_pos += GATE_SPACING
     end
     
-    # Gate n+1: Last-First wrap-around (n-1)
+    # Gate n: Last-First wrap-around (n-1) to close the ring
     x_pos += GATE_SPACING * 0.3
-    draw_tebd_gate!(ax, x_pos, yn, y1, "T$(n+1)", phases[n+1]; is_wrap=true)
+    y1 = -1 * QUBIT_SPACING
+    yn = -n * QUBIT_SPACING
+    draw_tebd_gate!(ax, x_pos, yn, y1, "T$n", phases[n]; is_wrap=true)
     
     # Legend
     draw_tebd_legend!(ax, x_end + 0.5, -0.3)
@@ -200,7 +196,7 @@ function plot_tebd_ring(n::Int; output_path=nothing)
     end
     
     # Connection labels
-    text!(ax, 0, -radius - 0.5, text="Ring: T₁(1,n) → T₂(1,2) → ... → Tₙ(n-1,n) → Tₙ₊₁(n,1)", 
+    text!(ax, 0, -radius - 0.5, text="Ring: T₁(1,2) → T₂(2,3) → ... → Tₙ₋₁(n-1,n) → Tₙ(n,1)", 
           align=(:center, :top), fontsize=11, color=COLORS.label)
     
     xlims!(ax, -radius - 1, radius + 1)
@@ -259,7 +255,7 @@ function main()
     
     # 3. TEBD with custom phases
     println("\n3. TEBD Circuit (5 qubits, custom phases)")
-    custom_phases = [π/4, π/3, π/2, π/6, π/5, π/8]
+    custom_phases = [π/4, π/3, π/2, π/6, π/5]  # 5 phases for 5 qubits
     plot_tebd_circuit(5; phases=custom_phases, 
         title="TEBD Circuit (5 qubits, trained phases)",
         output_path=joinpath(output_dir, "tebd_5qubit_trained.png"))

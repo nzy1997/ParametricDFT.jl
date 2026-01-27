@@ -32,16 +32,15 @@ end
 Generate an optimized tensor network representation of a TEBD circuit with ring topology.
 
 The TEBD circuit applies 2-qubit gates in a ring pattern:
-- Gate 1: connects qubit 1 and qubit n (first-last wrap-around)
-- Gates 2 to n: connects (1,2), (2,3), ..., (n-1,n)
-- Gate n+1: connects qubit n and qubit 1 (last-first wrap-around)
+- Gates 1 to n-1: connects (1,2), (2,3), ..., (n-1,n)
+- Gate n: connects qubit n and qubit 1 (wrap-around to close the ring)
 
-This creates a symmetric ring topology with periodic boundary conditions.
+This creates a ring topology with periodic boundary conditions using exactly n gates.
 
 # Arguments
 - `n::Int`: Number of qubits
 - `phases::Union{Nothing, Vector{<:Real}}`: Initial phases for TEBD gates.
-  If nothing, defaults to zeros. Length must equal n+1 (one for each edge in the ring).
+  If nothing, defaults to zeros. Length must equal n (one for each edge in the ring).
 - `inverse::Bool`: If true, generate inverse transform code
 
 # Returns
@@ -55,38 +54,30 @@ This creates a symmetric ring topology with periodic boundary conditions.
 optcode, tensors, n_gates = tebd_code(4)
 
 # Create with custom initial phases
-phases = rand(5) * 2π  # 5 gates for 4 qubits (ring topology)
+phases = rand(4) * 2π  # 4 gates for 4 qubits (ring topology)
 optcode, tensors, n_gates = tebd_code(4; phases=phases)
 ```
 """
 function tebd_code(n::Int; phases::Union{Nothing, Vector{<:Real}}=nothing, inverse=false)
-    # Number of gates in ring: n edges (1-2, 2-3, ..., n-1-n, n-1) 
-    # Plus initial 1-n connection = n + 1 total gates
-    n_gates = n + 1
+    # Number of gates in ring: n edges (1-2, 2-3, ..., n-1-n, n-1)
+    n_gates = n
     
     # Default phases to zeros if not provided
     if phases === nothing
         phases = zeros(n_gates)
     end
-    @assert length(phases) == n_gates "phases must have length n+1 = $n_gates for ring topology"
+    @assert length(phases) == n_gates "phases must have length n = $n_gates for ring topology"
     
     # Build TEBD circuit with ring topology
     qc = chain(n)
     
-    gate_idx = 1
-    
-    # Gate 1: First qubit to Last qubit (1-n wrap-around)
-    push!(qc, control(n, 1, n => shift(phases[gate_idx])))
-    gate_idx += 1
-    
-    # Gates 2 to n: Sequential nearest-neighbor connections (1-2, 2-3, ..., n-1-n)
+    # Gates 1 to n-1: Sequential nearest-neighbor connections (1-2, 2-3, ..., n-1-n)
     for i in 1:(n-1)
-        push!(qc, control(n, i, i+1 => shift(phases[gate_idx])))
-        gate_idx += 1
+        push!(qc, control(n, i, i+1 => shift(phases[i])))
     end
     
-    # Gate n+1: Last qubit to First qubit (n-1 wrap-around)
-    push!(qc, control(n, n, 1 => shift(phases[gate_idx])))
+    # Gate n: Last qubit to First qubit (n-1 wrap-around to close the ring)
+    push!(qc, control(n, n, 1 => shift(phases[n])))
     
     # Convert to tensor network
     tn = yao2einsum(qc; optimizer=nothing)
@@ -169,7 +160,7 @@ end
 # Convenience constructor
 function TEBDCircuitSpec(n::Int; phases=nothing, title="TEBD Circuit")
     if phases === nothing
-        phases = zeros(n + 1)
+        phases = zeros(n)
     end
     TEBDCircuitSpec(n, Float64.(phases), title)
 end
