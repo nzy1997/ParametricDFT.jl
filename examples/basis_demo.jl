@@ -235,7 +235,7 @@ function main()
     
     println("  Standard QFT:     $(num_parameters(standard_qft)) parameters")
     println("  Entangled QFT:    $(num_parameters(entangled_qft)) parameters ($(entangled_qft.n_entangle) entangle gates)")
-    println("  TEBD:             $(num_parameters(tebd_default)) parameters ($(num_gates(tebd_default)) chain gates)")
+    println("  TEBD:             $(num_parameters(tebd_default)) parameters ($(num_gates(tebd_default)) ring gates)")
     
     # ============================================================================
     # Step 3: Train All Bases
