@@ -6,10 +6,18 @@
 #   2. Entangled QFT Basis (untrained and trained)
 #   3. TEBD Basis (untrained and trained)
 #
-# The demo trains all bases on MNIST, compares compression quality, and outputs
-# a comprehensive comparison table.
+# The demo trains all bases on a configurable dataset, compares compression 
+# quality, and outputs a comprehensive comparison table.
 #
-# Run with: julia --project=examples examples/basis_demo.jl
+# Run with: 
+#   julia --project=examples examples/basis_demo.jl              # Default: MNIST
+#   julia --project=examples examples/basis_demo.jl mnist        # MNIST dataset
+#   julia --project=examples examples/basis_demo.jl quickdraw    # Quick Draw dataset
+#
+# Quick Draw dataset requires downloading numpy files first:
+#   mkdir -p data/quickdraw
+#   curl -LO 'https://storage.googleapis.com/quickdraw_dataset/full/numpy_bitmap/cat.npy'
+#   (repeat for other categories: dog, airplane, apple, bicycle)
 # ================================================================================
 
 ENV["DATADEPS_ALWAYS_ACCEPT"] = "true"
@@ -22,11 +30,18 @@ using Random
 using Statistics
 using Printf
 using FFTW
+using NPZ
 
 # ================================================================================
-# Configuration
+# Dataset Configuration
 # ================================================================================
 
+# Parse command line argument for dataset selection
+const DATASET = length(ARGS) > 0 ? lowercase(ARGS[1]) : "mnist"
+@assert DATASET in ["mnist", "quickdraw"] "Unknown dataset: $DATASET. Use 'mnist' or 'quickdraw'"
+
+# Configuration based on dataset
+# Both datasets use 28x28 images, padded to 32x32
 const M_QUBITS = 5           # 2^5 = 32 rows
 const N_QUBITS = 5           # 2^5 = 32 columns
 const IMG_SIZE = 32
@@ -40,18 +55,57 @@ const NUM_TEST_IMAGES = 5
 # Compression ratios to test
 const COMPRESSION_RATIOS = [0.95, 0.90, 0.85, 0.80]  # Keep 5%, 10%, 15%, 20%
 
-# Output directory
-const OUTPUT_DIR = joinpath(@__DIR__, "BasisDemo")
+# Output directory (dataset-specific)
+const OUTPUT_DIR = joinpath(@__DIR__, DATASET == "mnist" ? "BasisDemo" : "BasisDemo_QuickDraw")
+
+# Quick Draw configuration
+const QUICKDRAW_CATEGORIES = ["cat", "dog", "airplane", "apple", "bicycle"]
+const QUICKDRAW_DATA_DIR = joinpath(@__DIR__, "..", "data", "quickdraw")
 
 # ================================================================================
 # Utility Functions
 # ================================================================================
 
-"""Pad 28×28 MNIST image to 32×32."""
-function pad_mnist_image(raw_img::AbstractMatrix)
+"""Pad 28×28 image to 32×32 (center-padded)."""
+function pad_image(raw_img::AbstractMatrix)
     padded = zeros(Float64, IMG_SIZE, IMG_SIZE)
     padded[3:30, 3:30] = Float64.(raw_img)
     return padded
+end
+
+# Alias for backward compatibility
+const pad_mnist_image = pad_image
+
+"""Load Quick Draw dataset from numpy files."""
+function load_quickdraw_data(; categories=QUICKDRAW_CATEGORIES, max_per_category=nothing)
+    all_images = Matrix{Float64}[]
+    all_labels = String[]
+    
+    for category in categories
+        filepath = joinpath(QUICKDRAW_DATA_DIR, "$(category).npy")
+        if !isfile(filepath)
+            @warn "Quick Draw file not found: $filepath. Skipping category: $category"
+            continue
+        end
+        
+        # Load numpy array (N x 784, UInt8)
+        data = npzread(filepath)
+        n_images = size(data, 1)
+        
+        # Limit per category if specified
+        n_to_load = max_per_category !== nothing ? min(n_images, max_per_category) : n_images
+        
+        for i in 1:n_to_load
+            # Reshape to 28x28 and normalize to [0, 1]
+            img = reshape(Float64.(data[i, :]), 28, 28) ./ 255.0
+            push!(all_images, img)
+            push!(all_labels, category)
+        end
+        
+        @info "Loaded $n_to_load images from $category"
+    end
+    
+    return all_images, all_labels
 end
 
 """Compute quality metrics between original and recovered images."""
@@ -186,6 +240,7 @@ end
 function main()
     println("="^100)
     println("       Unified Basis Demo: QFT, Entangled QFT, and TEBD Comparison")
+    println("       Dataset: $(uppercase(DATASET))")
     println("="^100)
     
     # Create output directory
@@ -195,27 +250,74 @@ function main()
     end
     
     # ============================================================================
-    # Step 1: Load MNIST Dataset
+    # Step 1: Load Dataset
     # ============================================================================
     
     println("\n" * "="^80)
-    println("Step 1: Loading MNIST Dataset")
+    println("Step 1: Loading $(uppercase(DATASET)) Dataset")
     println("="^80)
     
-    mnist_train = MNIST(split=:train)
-    mnist_test = MNIST(split=:test)
-    
-    println("  Training pool: $(size(mnist_train.features, 3)) images")
-    println("  Test pool: $(size(mnist_test.features, 3)) images")
-    
-    # Prepare datasets
-    Random.seed!(42)
-    train_indices = randperm(size(mnist_train.features, 3))[1:NUM_TRAINING_IMAGES]
-    test_indices = randperm(size(mnist_test.features, 3))[1:NUM_TEST_IMAGES]
-    
-    training_images = [pad_mnist_image(mnist_train.features[:, :, i]) for i in train_indices]
-    test_images = [pad_mnist_image(mnist_test.features[:, :, i]) for i in test_indices]
-    test_labels = [mnist_test.targets[i] for i in test_indices]
+    training_images, test_images, test_labels = if DATASET == "mnist"
+        # Load MNIST
+        mnist_train = MNIST(split=:train)
+        mnist_test = MNIST(split=:test)
+        
+        println("  Training pool: $(size(mnist_train.features, 3)) images")
+        println("  Test pool: $(size(mnist_test.features, 3)) images")
+        
+        # Prepare datasets
+        Random.seed!(42)
+        train_indices = randperm(size(mnist_train.features, 3))[1:NUM_TRAINING_IMAGES]
+        test_indices = randperm(size(mnist_test.features, 3))[1:NUM_TEST_IMAGES]
+        
+        train_imgs = [pad_image(mnist_train.features[:, :, i]) for i in train_indices]
+        test_imgs = [pad_image(mnist_test.features[:, :, i]) for i in test_indices]
+        labels = [string(mnist_test.targets[i]) for i in test_indices]
+        
+        (train_imgs, test_imgs, labels)
+    else
+        # Load Quick Draw
+        println("  Loading Quick Draw categories: $(QUICKDRAW_CATEGORIES)")
+        println("  Data directory: $(QUICKDRAW_DATA_DIR)")
+        
+        # Check if data exists
+        if !isdir(QUICKDRAW_DATA_DIR)
+            error("""
+            Quick Draw data directory not found: $QUICKDRAW_DATA_DIR
+            
+            Please download the Quick Draw numpy files first:
+              mkdir -p data/quickdraw
+              cd data/quickdraw
+              curl -LO 'https://storage.googleapis.com/quickdraw_dataset/full/numpy_bitmap/cat.npy'
+              curl -LO 'https://storage.googleapis.com/quickdraw_dataset/full/numpy_bitmap/dog.npy'
+              curl -LO 'https://storage.googleapis.com/quickdraw_dataset/full/numpy_bitmap/airplane.npy'
+              curl -LO 'https://storage.googleapis.com/quickdraw_dataset/full/numpy_bitmap/apple.npy'
+              curl -LO 'https://storage.googleapis.com/quickdraw_dataset/full/numpy_bitmap/bicycle.npy'
+            """)
+        end
+        
+        # Load all Quick Draw images
+        all_images, all_labels = load_quickdraw_data(max_per_category=2000)
+        
+        println("  Total images loaded: $(length(all_images))")
+        
+        # Split into train/test (use different categories or random split)
+        Random.seed!(42)
+        indices = randperm(length(all_images))
+        
+        # Take more images for training diversity
+        n_train = min(NUM_TRAINING_IMAGES, length(indices) ÷ 2)
+        n_test = min(NUM_TEST_IMAGES, length(indices) ÷ 2)
+        
+        train_indices = indices[1:n_train]
+        test_indices = indices[end-n_test+1:end]
+        
+        train_imgs = [pad_image(all_images[i]) for i in train_indices]
+        test_imgs = [pad_image(all_images[i]) for i in test_indices]
+        labels = [all_labels[i] for i in test_indices]
+        
+        (train_imgs, test_imgs, labels)
+    end
     
     println("  Prepared $(length(training_images)) training images")
     println("  Prepared $(length(test_images)) test images")
@@ -398,9 +500,9 @@ function main()
     sample_ratio = 0.90  # 10% kept
     
     # Save original
-    original_path = joinpath(OUTPUT_DIR, "original_digit_$(sample_label).png")
+    original_path = joinpath(OUTPUT_DIR, "original_$(sample_label).png")
     Images.save(original_path, Gray.(sample_img))
-    println("  ✓ original_digit_$(sample_label).png")
+    println("  ✓ original_$(sample_label).png")
     
     # Save recovered images for each basis
     for (basis_name, basis) in bases
@@ -444,11 +546,13 @@ function main()
         end
     end
     
+    dataset_name = DATASET == "mnist" ? "MNIST" : "Quick Draw"
     summary_text = """
     
-    ✅ Comparison completed on MNIST dataset
+    ✅ Comparison completed on $dataset_name dataset
     
     Configuration:
+    ├─ Dataset:             $dataset_name
     ├─ Training images:     $NUM_TRAINING_IMAGES
     ├─ Test images:         $NUM_TEST_IMAGES  
     ├─ Image size:          $(IMG_SIZE)×$(IMG_SIZE)
@@ -479,7 +583,7 @@ function main()
     ├─ trained_qft.json              : Trained QFT basis
     ├─ trained_entangled_qft.json    : Trained Entangled QFT basis  
     ├─ trained_tebd.json             : Trained TEBD basis
-    ├─ original_digit_$(sample_label).png          : Original test image
+    ├─ original_$(sample_label).png          : Original test image
     └─ recovered_*.png               : Recovered images for each basis
     """
     
@@ -588,26 +692,27 @@ function main()
     overfit_warning = tebd_overfit ? """
 ## ⚠️ WARNING: TEBD Overfitting Detected
 
-The trained TEBD shows high PSNR on MNIST but **does not generalize** to other image types:
+The trained TEBD shows high PSNR on $dataset_name but **does not generalize** to other image types:
 
 | Image Type | Trained TEBD | Standard QFT |
 |------------|--------------|--------------|
-| MNIST (10% kept) | $(round(mnist_tebd_psnr, digits=2)) dB | $(round(results[("Standard QFT", 0.90)].psnr, digits=2)) dB |
+| $dataset_name (10% kept) | $(round(mnist_tebd_psnr, digits=2)) dB | $(round(results[("Standard QFT", 0.90)].psnr, digits=2)) dB |
 | Synthetic (10% kept) | $(round(synth_tebd_psnr, digits=2)) dB | $(round(synth_qft_psnr, digits=2)) dB |
 
-**Conclusion:** The TEBD has overfit to MNIST-like images. Use Standard/Trained QFT for general compression.
+**Conclusion:** The TEBD has overfit to $dataset_name images. Use Standard/Trained QFT for general compression.
 
 ---
 
 """ : ""
     
     md_content = """
-# Basis Comparison Summary
+# Basis Comparison Summary ($dataset_name)
 
 $overfit_warning## Configuration
 
 | Parameter | Value |
 |-----------|-------|
+| Dataset | $dataset_name |
 | Training images | $NUM_TRAINING_IMAGES |
 | Test images | $NUM_TEST_IMAGES |
 | Image size | $(IMG_SIZE)×$(IMG_SIZE) |
@@ -622,7 +727,7 @@ $overfit_warning## Configuration
 | Entangled QFT | $(M_QUBITS) + $(N_QUBITS) qubits + $(min(M_QUBITS, N_QUBITS)) entangle gates |
 | TEBD | $(M_QUBITS) + $(N_QUBITS) qubits (2D ring: $(M_QUBITS) row + $(N_QUBITS) col gates) |
 
-## Results (MNIST Test Set)
+## Results ($dataset_name Test Set)
 
 ### 🏆 Best at 10% kept: **$best_basis** (PSNR: $(round(best_psnr, digits=2)) dB)$(tebd_overfit ? " ⚠️ (overfit)" : "")
 
@@ -678,7 +783,7 @@ $(round.(trained_tebd.phases, digits=4))
 - `trained_qft.json` - Trained QFT basis
 - `trained_entangled_qft.json` - Trained Entangled QFT basis
 - `trained_tebd.json` - Trained TEBD basis$(tebd_overfit ? " ⚠️ (overfit)" : "")
-- `original_digit_$(sample_label).png` - Original test image
+- `original_$(sample_label).png` - Original test image
 - `recovered_*.png` - Recovered images for each basis
 """
     
