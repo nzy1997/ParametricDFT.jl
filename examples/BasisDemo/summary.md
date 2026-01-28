@@ -1,18 +1,15 @@
-# Basis Comparison Summary
+# Basis Comparison Summary (MNIST)
 
-## ⚠️ IMPORTANT: TEBD Results May Be Misleading
+## ⚠️ WARNING: TEBD Overfitting Detected
 
-**Issue #20 Investigation Results:**
+The trained TEBD shows high PSNR on MNIST but **does not generalize** to other image types:
 
-The trained TEBD shows extraordinarily high PSNR on MNIST test images, but this is due to **overfitting to the MNIST domain**, not a genuine improvement in compression quality. Evidence:
+| Image Type | Trained TEBD | Standard QFT |
+|------------|--------------|--------------|
+| MNIST (10% kept) | 27.59 dB | 20.18 dB |
+| Synthetic (10% kept) | 13.33 dB | 23.95 dB |
 
-| Image Type | TEBD (10% kept) | QFT (10% kept) | Winner |
-|------------|-----------------|----------------|--------|
-| MNIST digits | 33.18 dB | 21.21 dB | TEBD ✗ (overfit) |
-| Synthetic images | 13.28 dB | 23.88 dB | QFT ✓ |
-| Random noise | 7.76 dB | 12.60 dB | QFT ✓ |
-
-**Conclusion:** The TEBD transform has learned to specifically concentrate energy for MNIST-like images (28×28 digits padded to 32×32 in a specific position). This does NOT generalize to other image types.
+**Conclusion:** The TEBD has overfit to MNIST images. Use Standard/Trained QFT for general compression.
 
 ---
 
@@ -20,6 +17,7 @@ The trained TEBD shows extraordinarily high PSNR on MNIST test images, but this 
 
 | Parameter | Value |
 |-----------|-------|
+| Dataset | MNIST |
 | Training images | 20 |
 | Test images | 5 |
 | Image size | 32×32 |
@@ -34,9 +32,9 @@ The trained TEBD shows extraordinarily high PSNR on MNIST test images, but this 
 | Entangled QFT | 5 + 5 qubits + 5 entangle gates |
 | TEBD | 5 + 5 qubits (2D ring: 5 row + 5 col gates) |
 
-## Results (MNIST Only - Overfitting Warning)
+## Results (MNIST Test Set)
 
-### ⚠️ Best at 10% kept: **Trained TEBD** (PSNR: 27.59 dB) - BUT THIS IS OVERFIT
+### 🏆 Best at 10% kept: **Trained TEBD** (PSNR: 27.59 dB) ⚠️ (overfit)
 
 ### Compression Quality Comparison (PSNR in dB)
 
@@ -74,6 +72,15 @@ The trained TEBD shows extraordinarily high PSNR on MNIST test images, but this 
 | Trained TEBD | 0.010882 | 0.001966 | 0.000285 | 0.000015 |
 | Classical FFT | 0.019664 | 0.009912 | 0.006132 | 0.004230 |
 
+## Generalization Test (Synthetic Images)
+
+| Basis | 10% kept | 20% kept |
+|-------|----------|----------|
+| Standard QFT | 23.95 dB | 26.07 dB |
+| Trained QFT | 23.88 dB | 26.33 dB |
+| Trained TEBD | 13.33 dB | 20.97 dB |
+| Classical FFT | 23.91 dB | 25.98 dB |
+
 ## Learned Parameters
 
 ### Entanglement Phases
@@ -86,32 +93,10 @@ The trained TEBD shows extraordinarily high PSNR on MNIST test images, but this 
 [0.0476, -0.0012, -0.0771, -0.0186, 0.0204, 0.0571, -0.1754, 0.0583, 0.1169, -0.0122]
 ```
 
-## Generalization Test Results (Issue #20 Verification)
-
-Run `julia --project=examples examples/verify_tebd.jl` to reproduce these tests.
-
-### Key Findings
-
-1. **Train/Test Split**: ✓ No overlap (different MNIST splits)
-2. **Compression Zeroing**: ✓ Coefficients correctly zeroed
-3. **Transform Unitarity**: ✓ Perfect reconstruction without compression
-4. **Reproducibility**: ✓ Results are deterministic
-5. **Generalization**: ✗ **FAILS** - TEBD does not generalize to non-MNIST images
-
-### Recommendations
-
-1. **Do not use the trained TEBD for general image compression** - it only works well on MNIST-like images
-2. **The standard QFT or Trained QFT are better choices** for general-purpose compression
-3. **To fix TEBD overfitting**, consider:
-   - Training on diverse image datasets
-   - Adding regularization (e.g., weight decay on phases)
-   - Using data augmentation (rotations, translations, scaling)
-   - Longer training with larger batch sizes
-
 ## Output Files
 
 - `trained_qft.json` - Trained QFT basis
 - `trained_entangled_qft.json` - Trained Entangled QFT basis
-- `trained_tebd.json` - Trained TEBD basis (overfit warning)
-- `original_digit_5.png` - Original test image
+- `trained_tebd.json` - Trained TEBD basis ⚠️ (overfit)
+- `original_5.png` - Original test image
 - `recovered_*.png` - Recovered images for each basis

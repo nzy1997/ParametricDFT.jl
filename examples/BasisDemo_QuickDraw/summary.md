@@ -66,6 +66,7 @@
 | Standard QFT | 23.95 dB | 26.07 dB |
 | Trained QFT | 23.25 dB | 26.67 dB |
 | Trained TEBD | 22.63 dB | 26.46 dB |
+| Classical FFT | 23.91 dB | 25.98 dB |
 
 ## Learned Parameters
 
