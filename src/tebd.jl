@@ -142,10 +142,12 @@ function get_tebd_gate_indices(tensors, n_gates::Int)
     function is_ctrl_phase(x)
         size(x) != (2, 2) && return false
         tol = 0.15
-        return isapprox(abs(x[1,1]), 1, atol=tol) && 
-               isapprox(abs(x[1,2]), 1, atol=tol) && 
-               isapprox(abs(x[2,1]), 1, atol=tol) && 
-               isapprox(abs(x[2,2]), 1, atol=tol)
+        # TEBD gates are diagonal in tensor form: [1 0; 0 exp(im * theta)]
+        # So we expect diagonal entries with |·| ≈ 1 and off-diagonals ≈ 0.
+        return isapprox(abs(x[1,1]), 1, atol=tol) &&
+               isapprox(abs(x[2,2]), 1, atol=tol) &&
+               isapprox(x[1,2], 0, atol=tol) &&
+               isapprox(x[2,1], 0, atol=tol)
     end
     
     ctrl_phase_indices = findall(is_ctrl_phase, tensors)
