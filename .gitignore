@@ -23,3 +23,7 @@ docker-compose.override.yml
 *.pidexamples/EntangledBasisDemo/
 examples/SparseBasisDemo/
 logs/
+node_modules
+
+# Quick Draw dataset (large files)
+data/quickdraw/*.npy

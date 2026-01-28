@@ -498,3 +498,314 @@ function Base.:(==)(a::EntangledQFTBasis, b::EntangledQFTBasis)
     return a.m == b.m && a.n == b.n && a.n_entangle == b.n_entangle && all(a.tensors .≈ b.tensors)
 end
 
+
+# ============================================================================
+# TEBD Basis Implementation
+# ============================================================================
+
+"""
+    TEBDBasis <: AbstractSparseBasis
+
+Time-Evolving Block Decimation (TEBD) basis with 2D ring topology.
+
+This basis uses m row qubits and n column qubits with two separate rings:
+- Row ring: (x1,x2), (x2,x3), ..., (x_{m-1},x_m), (x_m,x1) for m gates
+- Column ring: (y1,y2), (y2,y3), ..., (y_{n-1},y_n), (y_n,y1) for n gates
+
+# Fields
+- `m::Int`: Number of row qubits (row dimension = 2^m)
+- `n::Int`: Number of column qubits (col dimension = 2^n)
+- `tensors::Vector`: Circuit parameters (TEBD gate tensors)
+- `optcode::AbstractEinsum`: Optimized einsum code for forward transform
+- `inverse_code::AbstractEinsum`: Optimized einsum code for inverse transform
+- `n_row_gates::Int`: Number of row ring phase gates (= m)
+- `n_col_gates::Int`: Number of column ring phase gates (= n)
+- `phases::Vector{Float64}`: Phase parameters for TEBD gates
+
+# Example
+```julia
+# Create default TEBD basis for 8×8 images (m=3, n=3)
+basis = TEBDBasis(3, 3)
+
+# Create with custom initial phases (6 gates total: 3 row ring + 3 col ring)
+phases = rand(6) * 2π
+basis = TEBDBasis(3, 3; phases=phases)
+
+# Transform an image
+freq = forward_transform(basis, image)
+
+# Inverse transform
+reconstructed = inverse_transform(basis, freq)
+```
+"""
+struct TEBDBasis <: AbstractSparseBasis
+    m::Int
+    n::Int
+    tensors::Vector
+    optcode::OMEinsum.AbstractEinsum
+    inverse_code::OMEinsum.AbstractEinsum
+    n_row_gates::Int
+    n_col_gates::Int
+    phases::Vector{Float64}
+end
+
+"""
+    TEBDBasis(m::Int, n::Int; phases=nothing)
+
+Construct a TEBDBasis with default or custom phases.
+
+# Arguments
+- `m::Int`: Number of row qubits (row dimension = 2^m)
+- `n::Int`: Number of column qubits (col dimension = 2^n)
+- `phases::Union{Nothing, Vector{<:Real}}`: Initial phases for TEBD gates.
+  If nothing, defaults to zeros. Length must be m+n for ring topology.
+
+# Returns
+- `TEBDBasis`: Basis with TEBD circuit parameters
+"""
+function TEBDBasis(m::Int, n::Int; phases::Union{Nothing, Vector{<:Real}}=nothing)
+    n_row = m  # Row ring has m gates
+    n_col = n  # Col ring has n gates
+    n_gates = n_row + n_col
+    if phases === nothing
+        phases = zeros(n_gates)
+    end
+    
+    optcode, tensors, _, _ = tebd_code(m, n; phases=phases)
+    inverse_code, _, _, _ = tebd_code(m, n; phases=phases, inverse=true)
+    
+    return TEBDBasis(m, n, tensors, optcode, inverse_code, n_row, n_col, Float64.(phases))
+end
+
+"""
+    TEBDBasis(m::Int, n::Int, tensors::Vector, n_row_gates::Int, n_col_gates::Int)
+
+Construct a TEBDBasis with custom trained tensors.
+
+# Arguments
+- `m::Int`: Number of row qubits
+- `n::Int`: Number of column qubits
+- `tensors::Vector`: Pre-trained circuit parameters
+- `n_row_gates::Int`: Number of row ring gates
+- `n_col_gates::Int`: Number of column ring gates
+
+# Returns
+- `TEBDBasis`: Basis with custom parameters
+"""
+function TEBDBasis(m::Int, n::Int, tensors::Vector, n_row_gates::Int, n_col_gates::Int)
+    optcode, _, _, _ = tebd_code(m, n)
+    inverse_code, _, _, _ = tebd_code(m, n; inverse=true)
+    
+    # Extract phases from tensors
+    n_gates = n_row_gates + n_col_gates
+    gate_indices = get_tebd_gate_indices(tensors, n_gates)
+    phases = extract_tebd_phases(tensors, gate_indices)
+    
+    return TEBDBasis(m, n, tensors, optcode, inverse_code, n_row_gates, n_col_gates, phases)
+end
+
+# ============================================================================
+# Interface Implementation for TEBDBasis
+# ============================================================================
+
+"""
+    forward_transform(basis::TEBDBasis, data::AbstractVector)
+
+Apply forward TEBD transform to a vector.
+
+# Arguments
+- `basis::TEBDBasis`: The basis to use for transformation
+- `data::AbstractVector`: Input vector (must have length 2^(m+n))
+
+# Returns
+- Transformed representation (Complex vector of same length)
+"""
+function forward_transform(basis::TEBDBasis, data::AbstractVector)
+    total = basis.m + basis.n
+    expected_size = 2^total
+    @assert length(data) == expected_size "Data length must be 2^(m+n) = $(expected_size), got $(length(data))"
+    
+    data_complex = Complex{Float64}.(data)
+    
+    return vec(basis.optcode(basis.tensors..., reshape(data_complex, fill(2, total)...)))
+end
+
+"""
+    forward_transform(basis::TEBDBasis, image::AbstractMatrix)
+
+Apply forward TEBD transform to an image.
+
+# Arguments
+- `basis::TEBDBasis`: The basis to use for transformation
+- `image::AbstractMatrix`: Input image (must be 2^m × 2^n)
+
+# Returns
+- Transformed representation as matrix (same shape as input)
+"""
+function forward_transform(basis::TEBDBasis, image::AbstractMatrix)
+    m, n = basis.m, basis.n
+    expected_size = (2^m, 2^n)
+    @assert size(image) == expected_size "Image must be $(expected_size), got $(size(image))"
+    
+    total = m + n
+    img_complex = Complex{Float64}.(vec(image))
+    result = vec(basis.optcode(basis.tensors..., reshape(img_complex, fill(2, total)...)))
+    
+    return reshape(result, size(image))
+end
+
+"""
+    inverse_transform(basis::TEBDBasis, freq_domain::AbstractVector)
+
+Apply inverse TEBD transform to convert back to original domain.
+
+# Arguments
+- `basis::TEBDBasis`: The basis to use for transformation
+- `freq_domain::AbstractVector`: Frequency domain data (length 2^(m+n))
+
+# Returns
+- Reconstructed data (Complex vector of same length)
+"""
+function inverse_transform(basis::TEBDBasis, freq_domain::AbstractVector)
+    total = basis.m + basis.n
+    expected_size = 2^total
+    @assert length(freq_domain) == expected_size "Frequency domain length must be 2^(m+n) = $(expected_size), got $(length(freq_domain))"
+    
+    return vec(basis.inverse_code(conj.(basis.tensors)..., reshape(freq_domain, fill(2, total)...)))
+end
+
+"""
+    inverse_transform(basis::TEBDBasis, freq_domain::AbstractMatrix)
+
+Apply inverse TEBD transform to a matrix.
+
+# Arguments
+- `basis::TEBDBasis`: The basis to use for transformation
+- `freq_domain::AbstractMatrix`: Frequency domain data (must be 2^m × 2^n)
+
+# Returns
+- Reconstructed data as matrix (same shape as input)
+"""
+function inverse_transform(basis::TEBDBasis, freq_domain::AbstractMatrix)
+    m, n = basis.m, basis.n
+    expected_size = (2^m, 2^n)
+    @assert size(freq_domain) == expected_size "Frequency domain must be $(expected_size), got $(size(freq_domain))"
+    
+    total = m + n
+    freq_vec = Complex{Float64}.(vec(freq_domain))
+    result = vec(basis.inverse_code(conj.(basis.tensors)..., reshape(freq_vec, fill(2, total)...)))
+    
+    return reshape(result, size(freq_domain))
+end
+
+"""
+    image_size(basis::TEBDBasis)
+
+Return the supported image dimensions for this basis.
+
+# Returns
+- `Tuple{Int,Int}`: (height, width) = (2^m, 2^n)
+"""
+function image_size(basis::TEBDBasis)
+    return (2^basis.m, 2^basis.n)
+end
+
+"""
+    num_parameters(basis::TEBDBasis)
+
+Return the total number of learnable parameters in the basis.
+
+# Returns
+- `Int`: Total parameter count
+"""
+function num_parameters(basis::TEBDBasis)
+    total = 0
+    for tensor in basis.tensors
+        total += length(tensor)
+    end
+    return total
+end
+
+"""
+    num_gates(basis::TEBDBasis)
+
+Return the total number of TEBD gates.
+
+# Returns
+- `Int`: Number of gates (= m + n for ring topology)
+"""
+function num_gates(basis::TEBDBasis)
+    return basis.n_row_gates + basis.n_col_gates
+end
+
+"""
+    get_phases(basis::TEBDBasis)
+
+Get the current phase parameters.
+
+# Returns
+- `Vector{Float64}`: Phase parameters for each TEBD gate
+"""
+function get_phases(basis::TEBDBasis)
+    return copy(basis.phases)
+end
+
+"""
+    basis_hash(basis::TEBDBasis)
+
+Compute a unique hash identifying this basis configuration and parameters.
+
+# Returns
+- `String`: SHA-256 hash of the basis parameters
+"""
+function basis_hash(basis::TEBDBasis)
+    data = IOBuffer()
+    n_gates = basis.n_row_gates + basis.n_col_gates
+    write(data, "TEBDBasis:m=$(basis.m):n=$(basis.n):n_row=$(basis.n_row_gates):n_col=$(basis.n_col_gates):")
+    for tensor in basis.tensors
+        for val in tensor
+            write(data, "$(real(val)),$(imag(val));")
+        end
+    end
+    return bytes2hex(sha256(take!(data)))
+end
+
+"""
+    get_manifold(basis::TEBDBasis)
+
+Get the product manifold for Riemannian optimization of basis parameters.
+
+# Returns
+- `ProductManifold`: Manifold structure for the tensors
+"""
+function get_manifold(basis::TEBDBasis)
+    return generate_manifold(basis.tensors)
+end
+
+# ============================================================================
+# Utility Functions for TEBDBasis
+# ============================================================================
+
+"""
+    Base.show(io::IO, basis::TEBDBasis)
+
+Pretty print the TEBDBasis.
+"""
+function Base.show(io::IO, basis::TEBDBasis)
+    h, w = image_size(basis)
+    params = num_parameters(basis)
+    n_g = num_gates(basis)
+    total_qubits = basis.m + basis.n
+    print(io, "TEBDBasis($(basis.m)×$(basis.n) qubits, $(h)×$(w) images, $params parameters, $n_g gates)")
+end
+
+"""
+    Base.:(==)(a::TEBDBasis, b::TEBDBasis)
+
+Check equality of two TEBDBasis objects.
+"""
+function Base.:(==)(a::TEBDBasis, b::TEBDBasis)
+    return a.m == b.m && a.n == b.n && 
+           a.n_row_gates == b.n_row_gates && a.n_col_gates == b.n_col_gates && 
+           all(a.tensors .≈ b.tensors)
+end
