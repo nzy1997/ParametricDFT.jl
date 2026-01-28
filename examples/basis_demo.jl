@@ -648,9 +648,22 @@ function main()
             )
         end
         
+        # Also test Classical FFT
+        mse_vals, psnr_vals = Float64[], Float64[]
+        for img in synthetic_images
+            recovered = fft_compress(img, ratio)
+            metrics = compute_metrics(img, recovered)
+            push!(mse_vals, metrics.mse)
+            push!(psnr_vals, metrics.psnr)
+        end
+        generalization_results[("Classical FFT", ratio)] = (
+            mse=mean(mse_vals), psnr=mean(psnr_vals),
+            mse_std=std(mse_vals), psnr_std=std(psnr_vals)
+        )
+        
         kept_pct = round(Int, (1-ratio)*100)
         println("\n  $kept_pct% kept:")
-        for basis_name in ["Standard QFT", "Trained QFT", "Trained TEBD"]
+        for basis_name in ["Standard QFT", "Trained QFT", "Trained TEBD", "Classical FFT"]
             r = generalization_results[(basis_name, ratio)]
             @printf("    %-20s PSNR: %.2f ± %.2f dB\n", basis_name, r.psnr, r.psnr_std)
         end
@@ -765,6 +778,7 @@ $(join([
 | Standard QFT | $(round(generalization_results[("Standard QFT", 0.90)].psnr, digits=2)) dB | $(round(generalization_results[("Standard QFT", 0.80)].psnr, digits=2)) dB |
 | Trained QFT | $(round(generalization_results[("Trained QFT", 0.90)].psnr, digits=2)) dB | $(round(generalization_results[("Trained QFT", 0.80)].psnr, digits=2)) dB |
 | Trained TEBD | $(round(generalization_results[("Trained TEBD", 0.90)].psnr, digits=2)) dB | $(round(generalization_results[("Trained TEBD", 0.80)].psnr, digits=2)) dB |
+| Classical FFT | $(round(generalization_results[("Classical FFT", 0.90)].psnr, digits=2)) dB | $(round(generalization_results[("Classical FFT", 0.80)].psnr, digits=2)) dB |
 
 ## Learned Parameters
 
