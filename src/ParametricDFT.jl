@@ -27,7 +27,7 @@ export entangled_qft_code, entanglement_gate
 export get_entangle_tensor_indices, extract_entangle_phases
 
 # TEBD circuit exports
-export tebd_code, tebd_gate, TEBDCircuitSpec
+export tebd_code
 export get_tebd_gate_indices, extract_tebd_phases
 
 # Sparse basis exports

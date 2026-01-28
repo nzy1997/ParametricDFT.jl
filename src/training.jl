@@ -277,7 +277,8 @@ Train a TEBDBasis on a dataset of images using Riemannian gradient descent.
 # Keyword Arguments
 - `m::Int`: Number of row qubits (image height = 2^m)
 - `n::Int`: Number of column qubits (image width = 2^n)
-- `phases::Union{Nothing, Vector{<:Real}}`: Initial phases for TEBD gates (default: zeros)
+- `phases::Union{Nothing, Vector{<:Real}}`: Initial phases for TEBD gates.
+  If nothing, uses small random values (randn * 0.1) to break symmetry.
   Length must be m+n for ring topology.
 - `loss`, `epochs`, `steps_per_image`, `validation_split`, `shuffle`, 
   `early_stopping_patience`, `verbose`: Same as QFTBasis
@@ -314,6 +315,13 @@ function train_basis(
     n_row_gates = m  # Row ring has m gates
     n_col_gates = n  # Col ring has n gates
     n_gates = n_row_gates + n_col_gates
+    
+    # Initialize phases: use small random values if not provided
+    # Zero phases create a symmetric point where gradients are zero,
+    # preventing the optimizer from learning. Small random values break symmetry.
+    if phases === nothing
+        phases = randn(n_gates) * 0.1
+    end
     
     # Initialize circuit
     optcode, initial_tensors, _, _ = tebd_code(m, n; phases=phases)

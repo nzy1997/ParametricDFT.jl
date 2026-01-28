@@ -10,27 +10,6 @@
 # This creates a 2D separable transform with periodic boundary conditions, suitable for image processing.
 
 """
-    tebd_gate(theta::Real)
-
-Create a parametric 2-qubit TEBD gate tensor.
-
-The gate is a controlled-phase gate with the form:
-    E = diag(1, 1, 1, e^(i*theta))
-
-In tensor network form (2×2 matrix):
-    E_tensor = [1 0; 0 e^(i*theta)]
-
-# Arguments
-- `theta::Real`: Phase parameter (in radians)
-
-# Returns
-- `Matrix{ComplexF64}`: 2×2 matrix in tensor network form
-"""
-function tebd_gate(theta::Real)
-    return ComplexF64[1 0; 0 exp(im * theta)]
-end
-
-"""
     tebd_code(m::Int, n::Int; phases=nothing, inverse=false)
 
 Generate an optimized tensor network representation of a 2D TEBD circuit with ring topology.
@@ -196,34 +175,3 @@ n_col_gates(n::Int) = n
 Calculate total number of phase gates for m×n TEBD circuit.
 """
 n_total_gates(m::Int, n::Int) = n_row_gates(m) + n_col_gates(n)
-
-"""
-    TEBDCircuitSpec
-
-Specification for a 2D TEBD circuit to be visualized.
-
-The TEBD circuit has m row qubits and n column qubits with:
-- Row ring: (x1,x2), (x2,x3), ..., (x_{m-1},x_m), (x_m,x1) for m gates
-- Column ring: (y1,y2), (y2,y3), ..., (y_{n-1},y_n), (y_n,y1) for n gates
-"""
-struct TEBDCircuitSpec
-    n_row_qubits::Int
-    n_col_qubits::Int
-    phases::Vector{Float64}
-    title::String
-end
-
-# Helper methods for TEBDCircuitSpec
-n_row_gates(spec::TEBDCircuitSpec) = n_row_gates(spec.n_row_qubits)
-n_col_gates(spec::TEBDCircuitSpec) = n_col_gates(spec.n_col_qubits)
-n_total_gates(spec::TEBDCircuitSpec) = n_total_gates(spec.n_row_qubits, spec.n_col_qubits)
-total_qubits(spec::TEBDCircuitSpec) = spec.n_row_qubits + spec.n_col_qubits
-
-# Convenience constructor
-function TEBDCircuitSpec(m::Int, n::Int; phases=nothing, title="TEBD Circuit")
-    n_gates = n_total_gates(m, n)
-    if phases === nothing
-        phases = zeros(n_gates)
-    end
-    TEBDCircuitSpec(m, n, Float64.(phases), title)
-end

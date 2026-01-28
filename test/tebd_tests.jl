@@ -94,23 +94,6 @@ using Yao: mat, H
         @test isapprox(norm(result), norm(state), rtol=1e-10)
     end
     
-    @testset "tebd_gate function" begin
-        # Test zero phase
-        gate_zero = ParametricDFT.tebd_gate(0.0)
-        @test gate_zero ≈ [1 0; 0 1]
-        
-        # Test π phase
-        gate_pi = ParametricDFT.tebd_gate(π)
-        @test gate_pi[1,1] ≈ 1
-        @test gate_pi[2,2] ≈ -1
-        
-        # Test arbitrary phase
-        theta = 0.5
-        gate = ParametricDFT.tebd_gate(theta)
-        @test gate[1,1] ≈ 1
-        @test gate[2,2] ≈ exp(im * theta)
-    end
-    
     @testset "get_tebd_gate_indices" begin
         m, n = 3, 3
         n_gates = m + n
@@ -223,47 +206,6 @@ end
         indices_after = ParametricDFT.get_tebd_gate_indices(perturbed_tensors, n_gates)
         @test length(indices_after) == n_gates
         @test indices_after == indices_before
-    end
-end
-
-@testset "TEBDCircuitSpec" begin
-    
-    @testset "default construction" begin
-        spec = TEBDCircuitSpec(3, 3)
-        @test spec.n_row_qubits == 3
-        @test spec.n_col_qubits == 3
-        @test length(spec.phases) == 6  # 3 + 3 = 6 for ring topology
-        @test all(spec.phases .== 0)
-        @test spec.title == "TEBD Circuit"
-    end
-    
-    @testset "custom phases" begin
-        phases = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
-        spec = TEBDCircuitSpec(3, 3; phases=phases)
-        @test spec.phases ≈ phases
-    end
-    
-    @testset "custom title" begin
-        spec = TEBDCircuitSpec(3, 3; title="Custom TEBD")
-        @test spec.title == "Custom TEBD"
-    end
-    
-    @testset "various sizes" begin
-        for (m, n) in [(2, 2), (3, 4), (4, 3), (5, 5)]
-            n_gates = m + n  # Ring topology
-            spec = TEBDCircuitSpec(m, n)
-            @test spec.n_row_qubits == m
-            @test spec.n_col_qubits == n
-            @test length(spec.phases) == n_gates
-        end
-    end
-    
-    @testset "helper functions" begin
-        spec = TEBDCircuitSpec(4, 5)
-        @test ParametricDFT.n_row_gates(spec) == 4
-        @test ParametricDFT.n_col_gates(spec) == 5
-        @test ParametricDFT.n_total_gates(spec) == 9
-        @test ParametricDFT.total_qubits(spec) == 9
     end
 end
 

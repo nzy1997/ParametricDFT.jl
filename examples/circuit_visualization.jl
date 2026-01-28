@@ -78,15 +78,28 @@ total_qubits(spec::EntangledQFTCircuitSpec) = spec.n_row_qubits + spec.n_col_qub
 n_entangle(spec::EntangledQFTCircuitSpec) = length(spec.entangle_phases)
 
 """
-    TEBDCircuitSpec - Specification for 2D TEBD circuits (already defined in tebd.jl)
+    TEBDCircuitSpec - Specification for 2D TEBD circuits
     
 The TEBD circuit has m row qubits and n column qubits with a ring topology:
 - Row ring: (x₁, x₂), (x₂, x₃), …, (x_{m-1}, x_m), (x_m, x₁)  → m two-qubit gates
 - Column ring: (y₁, y₂), (y₂, y₃), …, (y_{n-1}, y_n), (y_n, y₁) → n two-qubit gates
-This matches the TEBDCircuitSpec defined in `tebd.jl`.
 """
-# TEBDCircuitSpec is already defined in tebd.jl with:
-#   n_row_qubits, n_col_qubits, phases, title
+struct TEBDCircuitSpec <: AbstractCircuitSpec
+    n_row_qubits::Int
+    n_col_qubits::Int
+    phases::Vector{Float64}
+    title::String
+end
+
+function TEBDCircuitSpec(m::Int, n::Int; phases=nothing, title="TEBD Circuit")
+    n_gates = m + n  # Ring topology: m row gates + n column gates
+    if phases === nothing
+        phases = zeros(n_gates)
+    end
+    TEBDCircuitSpec(m, n, Float64.(phases), title)
+end
+
+total_qubits(spec::TEBDCircuitSpec) = spec.n_row_qubits + spec.n_col_qubits
 
 # ================================================================================
 # Drawing Primitives
