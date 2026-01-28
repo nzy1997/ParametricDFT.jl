@@ -486,16 +486,125 @@ function main()
     println(summary_text)
     
     # ============================================================================
+    # Step 8: Generalization Test (Non-MNIST Images)
+    # ============================================================================
+    
+    println("\n" * "="^80)
+    println("Step 8: Generalization Test (Detecting Overfitting)")
+    println("="^80)
+    
+    # Create synthetic test images
+    function create_synthetic_image(seed::Int)
+        Random.seed!(seed)
+        # Create a gradient pattern
+        x = range(0, 1, length=IMG_SIZE)
+        y = range(0, 1, length=IMG_SIZE)
+        gradient = [0.3 * xi + 0.3 * yi for xi in x, yi in y]
+        # Add some structure (circles)
+        for _ in 1:3
+            cx, cy = rand(1:IMG_SIZE), rand(1:IMG_SIZE)
+            r = rand(3:8)
+            for i in 1:IMG_SIZE, j in 1:IMG_SIZE
+                if (i - cx)^2 + (j - cy)^2 < r^2
+                    gradient[i, j] = clamp(gradient[i, j] + 0.3, 0, 1)
+                end
+            end
+        end
+        # Add noise
+        noise = randn(IMG_SIZE, IMG_SIZE) * 0.05
+        return clamp.(gradient .+ noise, 0, 1)
+    end
+    
+    synthetic_images = [create_synthetic_image(i + 1000) for i in 1:20]
+    generalization_results = Dict{Tuple{String, Float64}, NamedTuple}()
+    
+    println("\nTesting generalization on 20 synthetic images (gradients + circles)...")
+    
+    test_bases = Dict(
+        "Standard QFT" => standard_qft,
+        "Trained QFT" => trained_qft,
+        "Trained TEBD" => trained_tebd,
+    )
+    
+    for ratio in [0.90, 0.80]  # Test 10% and 20% kept
+        for (basis_name, basis) in test_bases
+            mse_vals, psnr_vals = Float64[], Float64[]
+            
+            for img in synthetic_images
+                compressed = compress(basis, img; ratio=ratio)
+                recovered = recover(basis, compressed)
+                metrics = compute_metrics(img, recovered)
+                push!(mse_vals, metrics.mse)
+                push!(psnr_vals, metrics.psnr)
+            end
+            
+            generalization_results[(basis_name, ratio)] = (
+                mse=mean(mse_vals), psnr=mean(psnr_vals),
+                mse_std=std(mse_vals), psnr_std=std(psnr_vals)
+            )
+        end
+        
+        kept_pct = round(Int, (1-ratio)*100)
+        println("\n  $kept_pct% kept:")
+        for basis_name in ["Standard QFT", "Trained QFT", "Trained TEBD"]
+            r = generalization_results[(basis_name, ratio)]
+            @printf("    %-20s PSNR: %.2f ± %.2f dB\n", basis_name, r.psnr, r.psnr_std)
+        end
+    end
+    
+    # Check for overfitting
+    mnist_tebd_psnr = results[("Trained TEBD", 0.90)].psnr
+    synth_tebd_psnr = generalization_results[("Trained TEBD", 0.90)].psnr
+    synth_qft_psnr = generalization_results[("Standard QFT", 0.90)].psnr
+    
+    println("\n" * "-"^80)
+    println("⚠️  GENERALIZATION CHECK (10% kept):")
+    println("-"^80)
+    @printf("  TEBD on MNIST:     %.2f dB\n", mnist_tebd_psnr)
+    @printf("  TEBD on Synthetic: %.2f dB\n", synth_tebd_psnr)
+    @printf("  QFT on Synthetic:  %.2f dB\n", synth_qft_psnr)
+    
+    if synth_tebd_psnr < synth_qft_psnr - 3.0
+        println("\n  ⚠️  WARNING: TEBD performs significantly worse than QFT on non-MNIST images!")
+        println("  ⚠️  This indicates OVERFITTING to the MNIST training data.")
+        println("  ⚠️  The high MNIST PSNR does NOT indicate general compression quality.")
+    elseif synth_tebd_psnr > synth_qft_psnr + 1.0
+        println("\n  ✓ TEBD generalizes well to synthetic images.")
+    else
+        println("\n  ✓ TEBD performs comparably to QFT on synthetic images.")
+    end
+    println("-"^80)
+
+    # ============================================================================
     # Step 10: Write Summary to Markdown File
     # ============================================================================
     
     summary_path = joinpath(OUTPUT_DIR, "summary.md")
     
+    # Check if TEBD is overfit
+    tebd_overfit = synth_tebd_psnr < synth_qft_psnr - 3.0
+    
     # Build markdown content
+    overfit_warning = tebd_overfit ? """
+## ⚠️ WARNING: TEBD Overfitting Detected
+
+The trained TEBD shows high PSNR on MNIST but **does not generalize** to other image types:
+
+| Image Type | Trained TEBD | Standard QFT |
+|------------|--------------|--------------|
+| MNIST (10% kept) | $(round(mnist_tebd_psnr, digits=2)) dB | $(round(results[("Standard QFT", 0.90)].psnr, digits=2)) dB |
+| Synthetic (10% kept) | $(round(synth_tebd_psnr, digits=2)) dB | $(round(synth_qft_psnr, digits=2)) dB |
+
+**Conclusion:** The TEBD has overfit to MNIST-like images. Use Standard/Trained QFT for general compression.
+
+---
+
+""" : ""
+    
     md_content = """
 # Basis Comparison Summary
 
-## Configuration
+$overfit_warning## Configuration
 
 | Parameter | Value |
 |-----------|-------|
@@ -513,9 +622,9 @@ function main()
 | Entangled QFT | $(M_QUBITS) + $(N_QUBITS) qubits + $(min(M_QUBITS, N_QUBITS)) entangle gates |
 | TEBD | $(M_QUBITS) + $(N_QUBITS) qubits (2D ring: $(M_QUBITS) row + $(N_QUBITS) col gates) |
 
-## Results
+## Results (MNIST Test Set)
 
-### 🏆 Best at 10% kept: **$best_basis** (PSNR: $(round(best_psnr, digits=2)) dB)
+### 🏆 Best at 10% kept: **$best_basis** (PSNR: $(round(best_psnr, digits=2)) dB)$(tebd_overfit ? " ⚠️ (overfit)" : "")
 
 ### Compression Quality Comparison (PSNR in dB)
 
@@ -544,6 +653,14 @@ $(join([
     for name in basis_names
 ], "\n"))
 
+## Generalization Test (Synthetic Images)
+
+| Basis | 10% kept | 20% kept |
+|-------|----------|----------|
+| Standard QFT | $(round(generalization_results[("Standard QFT", 0.90)].psnr, digits=2)) dB | $(round(generalization_results[("Standard QFT", 0.80)].psnr, digits=2)) dB |
+| Trained QFT | $(round(generalization_results[("Trained QFT", 0.90)].psnr, digits=2)) dB | $(round(generalization_results[("Trained QFT", 0.80)].psnr, digits=2)) dB |
+| Trained TEBD | $(round(generalization_results[("Trained TEBD", 0.90)].psnr, digits=2)) dB | $(round(generalization_results[("Trained TEBD", 0.80)].psnr, digits=2)) dB |
+
 ## Learned Parameters
 
 ### Entanglement Phases
@@ -560,7 +677,7 @@ $(round.(trained_tebd.phases, digits=4))
 
 - `trained_qft.json` - Trained QFT basis
 - `trained_entangled_qft.json` - Trained Entangled QFT basis
-- `trained_tebd.json` - Trained TEBD basis
+- `trained_tebd.json` - Trained TEBD basis$(tebd_overfit ? " ⚠️ (overfit)" : "")
 - `original_digit_$(sample_label).png` - Original test image
 - `recovered_*.png` - Recovered images for each basis
 """

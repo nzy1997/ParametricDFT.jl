@@ -1,5 +1,21 @@
 # Basis Comparison Summary
 
+## ⚠️ IMPORTANT: TEBD Results May Be Misleading
+
+**Issue #20 Investigation Results:**
+
+The trained TEBD shows extraordinarily high PSNR on MNIST test images, but this is due to **overfitting to the MNIST domain**, not a genuine improvement in compression quality. Evidence:
+
+| Image Type | TEBD (10% kept) | QFT (10% kept) | Winner |
+|------------|-----------------|----------------|--------|
+| MNIST digits | 33.18 dB | 21.21 dB | TEBD ✗ (overfit) |
+| Synthetic images | 13.28 dB | 23.88 dB | QFT ✓ |
+| Random noise | 7.76 dB | 12.60 dB | QFT ✓ |
+
+**Conclusion:** The TEBD transform has learned to specifically concentrate energy for MNIST-like images (28×28 digits padded to 32×32 in a specific position). This does NOT generalize to other image types.
+
+---
+
 ## Configuration
 
 | Parameter | Value |
@@ -18,9 +34,9 @@
 | Entangled QFT | 5 + 5 qubits + 5 entangle gates |
 | TEBD | 5 + 5 qubits (2D ring: 5 row + 5 col gates) |
 
-## Results
+## Results (MNIST Only - Overfitting Warning)
 
-### 🏆 Best at 10% kept: **Trained TEBD** (PSNR: 27.59 dB)
+### ⚠️ Best at 10% kept: **Trained TEBD** (PSNR: 27.59 dB) - BUT THIS IS OVERFIT
 
 ### Compression Quality Comparison (PSNR in dB)
 
@@ -70,10 +86,32 @@
 [0.0476, -0.0012, -0.0771, -0.0186, 0.0204, 0.0571, -0.1754, 0.0583, 0.1169, -0.0122]
 ```
 
+## Generalization Test Results (Issue #20 Verification)
+
+Run `julia --project=examples examples/verify_tebd.jl` to reproduce these tests.
+
+### Key Findings
+
+1. **Train/Test Split**: ✓ No overlap (different MNIST splits)
+2. **Compression Zeroing**: ✓ Coefficients correctly zeroed
+3. **Transform Unitarity**: ✓ Perfect reconstruction without compression
+4. **Reproducibility**: ✓ Results are deterministic
+5. **Generalization**: ✗ **FAILS** - TEBD does not generalize to non-MNIST images
+
+### Recommendations
+
+1. **Do not use the trained TEBD for general image compression** - it only works well on MNIST-like images
+2. **The standard QFT or Trained QFT are better choices** for general-purpose compression
+3. **To fix TEBD overfitting**, consider:
+   - Training on diverse image datasets
+   - Adding regularization (e.g., weight decay on phases)
+   - Using data augmentation (rotations, translations, scaling)
+   - Longer training with larger batch sizes
+
 ## Output Files
 
 - `trained_qft.json` - Trained QFT basis
 - `trained_entangled_qft.json` - Trained Entangled QFT basis
-- `trained_tebd.json` - Trained TEBD basis
+- `trained_tebd.json` - Trained TEBD basis (overfit warning)
 - `original_digit_5.png` - Original test image
 - `recovered_*.png` - Recovered images for each basis
