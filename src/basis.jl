@@ -593,13 +593,15 @@ Construct a TEBDBasis with custom trained tensors.
 - `TEBDBasis`: Basis with custom parameters
 """
 function TEBDBasis(m::Int, n::Int, tensors::Vector, n_row_gates::Int, n_col_gates::Int)
-    optcode, _, _, _ = tebd_code(m, n)
-    inverse_code, _, _, _ = tebd_code(m, n; inverse=true)
-    
-    # Extract phases from tensors
+    # Extract phases from tensors FIRST
     n_gates = n_row_gates + n_col_gates
     gate_indices = get_tebd_gate_indices(tensors, n_gates)
     phases = extract_tebd_phases(tensors, gate_indices)
+    
+    # Generate optcode and inverse_code with the extracted phases
+    # This ensures the circuit operators match the trained tensor parameters
+    optcode, _, _, _ = tebd_code(m, n; phases=phases)
+    inverse_code, _, _, _ = tebd_code(m, n; phases=phases, inverse=true)
     
     return TEBDBasis(m, n, tensors, optcode, inverse_code, n_row_gates, n_col_gates, phases)
 end
