@@ -33,6 +33,7 @@ struct EntangledBasisJSON
     n::Int
     n_entangle::Int
     entangle_phases::Vector{Float64}
+    entangle_position::String
     tensors::Vector{Vector{Vector{Float64}}}  # Each tensor as [[real, imag], ...]
     hash::String
 end
@@ -133,11 +134,12 @@ function _basis_to_json(basis::EntangledQFTBasis)
     
     return EntangledBasisJSON(
         "EntangledQFTBasis",
-        "1.0",
+        "1.1",
         basis.m,
         basis.n,
         basis.n_entangle,
         basis.entangle_phases,
+        string(basis.entangle_position),
         serialized_tensors,
         basis_hash(basis)
     )
@@ -202,7 +204,18 @@ function load_basis(path::String)
     basis_type = get(json_obj, :type, "QFTBasis")
     
     if basis_type == "EntangledQFTBasis"
-        json_data = JSON3.read(json_str, EntangledBasisJSON)
+        # Manually construct to handle backward compatibility (entangle_position may be absent)
+        json_data = EntangledBasisJSON(
+            string(json_obj.type),
+            string(json_obj.version),
+            Int(json_obj.m),
+            Int(json_obj.n),
+            Int(json_obj.n_entangle),
+            Float64.(collect(json_obj.entangle_phases)),
+            string(get(json_obj, :entangle_position, "back")),
+            [Vector{Float64}[Float64.(collect(pair)) for pair in tensor] for tensor in json_obj.tensors],
+            string(json_obj.hash)
+        )
         return _json_to_entangled_basis(json_data)
     elseif basis_type == "TEBDBasis"
         json_data = JSON3.read(json_str, TEBDBasisJSON)
@@ -267,41 +280,38 @@ function _json_to_entangled_basis(json_data::EntangledBasisJSON)
     if json_data.type != "EntangledQFTBasis"
         error("Unknown basis type: $(json_data.type)")
     end
-    
-    if json_data.version != "1.0"
-        @warn "Basis version $(json_data.version) may not be fully compatible with current version 1.0"
-    end
-    
+
     m, n = json_data.m, json_data.n
     n_entangle = json_data.n_entangle
     entangle_phases = json_data.entangle_phases
-    
+    entangle_position = Symbol(json_data.entangle_position)
+
     # Reconstruct tensors from serialized format
     # We need to know the original tensor shapes from the entangled QFT code
-    optcode, template_tensors, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases)
-    inverse_code, _, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, inverse=true)
-    
+    optcode, template_tensors, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, entangle_position=entangle_position)
+    inverse_code, _, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, inverse=true, entangle_position=entangle_position)
+
     tensors = Vector{Any}()
     for (i, tensor_data) in enumerate(json_data.tensors)
         # Get the shape from template
         template_shape = size(template_tensors[i])
-        
+
         # Reconstruct complex values
         complex_vals = [Complex{Float64}(pair[1], pair[2]) for pair in tensor_data]
-        
+
         # Reshape to original dimensions
         tensor = reshape(complex_vals, template_shape)
         push!(tensors, tensor)
     end
-    
+
     # Verify hash matches
-    loaded_basis = EntangledQFTBasis(m, n, tensors, optcode, inverse_code, n_entangle, Float64.(entangle_phases))
+    loaded_basis = EntangledQFTBasis(m, n, tensors, optcode, inverse_code, n_entangle, Float64.(entangle_phases), entangle_position)
     loaded_hash = basis_hash(loaded_basis)
-    
+
     if loaded_hash != json_data.hash
         @warn "Basis hash mismatch. File hash: $(json_data.hash), computed hash: $(loaded_hash). The basis may have been corrupted."
     end
-    
+
     return loaded_basis
 end
 
@@ -394,6 +404,7 @@ function basis_to_dict(basis::EntangledQFTBasis)
         "n" => json_data.n,
         "n_entangle" => json_data.n_entangle,
         "entangle_phases" => json_data.entangle_phases,
+        "entangle_position" => json_data.entangle_position,
         "tensors" => json_data.tensors,
         "hash" => json_data.hash
     )
@@ -444,6 +455,7 @@ function dict_to_basis(d::Dict)
             d["n"],
             d["n_entangle"],
             d["entangle_phases"],
+            get(d, "entangle_position", "back"),
             d["tensors"],
             d["hash"]
         )
