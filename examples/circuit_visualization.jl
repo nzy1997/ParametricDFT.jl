@@ -63,15 +63,16 @@ struct EntangledQFTCircuitSpec <: AbstractCircuitSpec
     n_row_qubits::Int
     n_col_qubits::Int
     entangle_phases::Vector{Float64}
+    entangle_position::Symbol
     title::String
 end
 
-function EntangledQFTCircuitSpec(m::Int, n::Int; phases=nothing, title="Entangled QFT Circuit")
+function EntangledQFTCircuitSpec(m::Int, n::Int; phases=nothing, entangle_position::Symbol=:back, title="Entangled QFT Circuit")
     n_ent = min(m, n)
     if phases === nothing
         phases = zeros(n_ent)
     end
-    EntangledQFTCircuitSpec(m, n, Float64.(phases), title)
+    EntangledQFTCircuitSpec(m, n, Float64.(phases), entangle_position, title)
 end
 
 total_qubits(spec::EntangledQFTCircuitSpec) = spec.n_row_qubits + spec.n_col_qubits
@@ -172,6 +173,79 @@ function draw_qft_layer!(ax, x_start, n_qubits, y_offset)
     return x_pos
 end
 
+"""Draw interleaved row and column QFT with E_k placed after row H but before col H.
+
+For :middle mode, the circuit is built step by step:
+- For each step j:
+  1. Row H(j) (if j <= m)
+  2. E_k right after row H (k = m-j+1, if valid)
+  3. Row M gates for qubit j (if j <= m)
+  4. Col H(m+j) (if j <= n)
+  5. Col M gates for qubit j (if j <= n)
+
+E_k connects row qubit (m-k+1) with col qubit (m+n-k+1).
+E_k is applied at step j = m-k+1, right after row H(j) but before col H.
+"""
+function draw_qft_layer_interleaved!(ax, x_start, m, n, phases)
+    x_pos = x_start
+    n_ent = min(m, n)
+
+    for j in 1:max(m, n)
+        # Step 1: Row H(j) (if j <= m)
+        if j <= m
+            y_row = -j * QUBIT_SPACING
+            draw_gate!(ax, x_pos, y_row, "H"; color=COLORS.hadamard)
+            x_pos += GATE_SPACING
+        end
+
+        # Step 2: E_k right after row H(j), before col H
+        # E_k's row qubit is (m-k+1) = j, so k = m-j+1
+        if j <= m
+            k = m - j + 1
+            if k >= 1 && k <= n_ent
+                x_idx = m - k + 1  # = j
+                y_idx = n - k + 1
+                y_x = -x_idx * QUBIT_SPACING
+                y_y = -(m + y_idx) * QUBIT_SPACING
+                phase = k <= length(phases) ? phases[k] : 0.0
+                draw_two_qubit_gate!(ax, x_pos, y_x, y_y, "E$k", phase; color=COLORS.entangle_gate)
+                x_pos += GATE_SPACING * 1.2
+            end
+        end
+
+        # Step 3: Row M gates for qubit j (if j <= m)
+        if j <= m
+            y_row = -j * QUBIT_SPACING
+            for target in (j+1):m
+                y_target = -target * QUBIT_SPACING
+                mk = target - j + 1
+                draw_controlled_gate!(ax, x_pos, y_row, y_target, "M$mk"; color=COLORS.phase_gate)
+                x_pos += GATE_SPACING
+            end
+        end
+
+        # Step 4: Col H(m+j) (if j <= n)
+        if j <= n
+            y_col = -(m + j) * QUBIT_SPACING
+            draw_gate!(ax, x_pos, y_col, "H"; color=COLORS.hadamard)
+            x_pos += GATE_SPACING
+        end
+
+        # Step 5: Col M gates for qubit j (if j <= n)
+        if j <= n
+            y_col = -(m + j) * QUBIT_SPACING
+            for target in (j+1):n
+                y_target = -(m + target) * QUBIT_SPACING
+                mk = target - j + 1
+                draw_controlled_gate!(ax, x_pos, y_col, y_target, "M$mk"; color=COLORS.phase_gate)
+                x_pos += GATE_SPACING
+            end
+        end
+    end
+
+    return x_pos
+end
+
 """Draw entanglement gates between corresponding row and column qubits."""
 function draw_entangle_layer!(ax, x_start, m, n, phases)
     x_pos = x_start
@@ -259,29 +333,44 @@ function plot_circuit(spec::QFTCircuitSpec; output_path=nothing)
     return fig
 end
 
-"""Plot an Entangled QFT circuit."""
+"""Plot an Entangled QFT circuit. Gate order depends on entangle_position."""
 function plot_circuit(spec::EntangledQFTCircuitSpec; output_path=nothing)
     m = spec.n_row_qubits
     n = spec.n_col_qubits
     total = m + n
     n_ent_gates = n_entangle(spec)
-    
+    pos = spec.entangle_position
+
     n_m_gates = div(m * (m - 1), 2)
     n_n_gates = div(n * (n - 1), 2)
     total_gates = m + n_m_gates + n + n_n_gates + n_ent_gates
-    
-    width = max(700, 150 + total_gates * 55)
+
+    # For :middle, row and column QFT are interleaved together with E gates
+    if pos == :middle
+        # Interleaved: row H + row M gates + col H + col M gates + E gates (all mixed)
+        width = max(700, 150 + (total_gates + n_ent_gates * 2) * 55)
+    else
+        width = max(700, 150 + total_gates * 55)
+    end
     height = 120 + total * 70
-    
+
     fig = Figure(size=(width, height), backgroundcolor=:white)
-    ax = Axis(fig[1, 1], title=spec.title, titlesize=20, aspect=DataAspect())
+    pos_label = pos == :back ? "E after QFT" : pos == :front ? "E before QFT" : "E interleaved"
+    ax = Axis(fig[1, 1], title="$(spec.title) [$pos_label]", titlesize=20, aspect=DataAspect())
     hidedecorations!(ax)
     hidespines!(ax)
-    
+
     x_start = 1.5
-    x_qft_end = x_start + (m + n_m_gates + 1) * GATE_SPACING
-    x_end = x_qft_end + (n_ent_gates + 1) * GATE_SPACING
-    
+    if pos == :middle
+        # Interleaved row and col QFT with E gates mixed in
+        # Total gates: m H + n_m_gates M + n H + n_n_gates M + n_ent_gates E
+        x_end = x_start + (m + n_m_gates + n + n_n_gates + n_ent_gates + 2) * GATE_SPACING + n_ent_gates * 0.2 * GATE_SPACING
+        x_qft_end = x_end  # Not used for :middle, but keep for consistency
+    else
+        x_qft_end = x_start + (m + n_m_gates + 1) * GATE_SPACING
+        x_end = x_qft_end + (n_ent_gates + 1) * GATE_SPACING
+    end
+
     # Draw qubits
     for q in 1:m
         y = -q * QUBIT_SPACING
@@ -292,37 +381,55 @@ function plot_circuit(spec::EntangledQFTCircuitSpec; output_path=nothing)
         draw_qubit!(ax, y, x_start, x_end, "|y$q⟩", "kᵧ$q")
     end
     y_sep = -(m + 0.5) * QUBIT_SPACING
-    lines!(ax, [x_start, x_end], [y_sep, y_sep], 
+    lines!(ax, [x_start, x_end], [y_sep, y_sep],
            color=COLORS.label, linewidth=1, linestyle=:dash)
-    
-    # Draw QFT gates
-    x_pos = x_start + GATE_SPACING
-    draw_qft_layer!(ax, x_pos, m, 0)
-    draw_qft_layer!(ax, x_pos, n, -m * QUBIT_SPACING)
-    
-    # Separator line before entanglement
-    x_sep = x_qft_end - GATE_SPACING/2
-    lines!(ax, [x_sep, x_sep], [0, -(total + 0.3) * QUBIT_SPACING], 
-           color=COLORS.label, linewidth=1, linestyle=:dot)
-    
-    # Draw entanglement gates
-    draw_entangle_layer!(ax, x_qft_end, m, n, spec.entangle_phases)
-    
+
+    if pos == :front
+        # Draw entanglement gates first, then QFT
+        x_pos = x_start + GATE_SPACING
+        x_pos = draw_entangle_layer!(ax, x_pos, m, n, spec.entangle_phases)
+
+        # Separator
+        x_sep = x_pos - GATE_SPACING/2
+        lines!(ax, [x_sep, x_sep], [0, -(total + 0.3) * QUBIT_SPACING],
+               color=COLORS.label, linewidth=1, linestyle=:dot)
+
+        draw_qft_layer!(ax, x_pos, m, 0)
+        draw_qft_layer!(ax, x_pos, n, -m * QUBIT_SPACING)
+    elseif pos == :middle
+        # Row and column QFT interleaved together with E_k gates
+        x_pos = x_start + GATE_SPACING
+        x_pos = draw_qft_layer_interleaved!(ax, x_pos, m, n, spec.entangle_phases)
+    else  # :back
+        # QFT first, then entanglement
+        x_pos = x_start + GATE_SPACING
+        draw_qft_layer!(ax, x_pos, m, 0)
+        draw_qft_layer!(ax, x_pos, n, -m * QUBIT_SPACING)
+
+        # Separator line before entanglement
+        x_sep = x_qft_end - GATE_SPACING/2
+        lines!(ax, [x_sep, x_sep], [0, -(total + 0.3) * QUBIT_SPACING],
+               color=COLORS.label, linewidth=1, linestyle=:dot)
+
+        # Draw entanglement gates
+        draw_entangle_layer!(ax, x_qft_end, m, n, spec.entangle_phases)
+    end
+
     # Legend
     draw_legend!(ax, x_end + 1.0, -0.3, [
         (COLORS.hadamard, "H", "Hadamard"),
-        (COLORS.phase_gate, "M", "Phase (2π/2ᵏ)"),
-        (COLORS.entangle_gate, "E", "Entangle (φ)")
+        (COLORS.phase_gate, "M", "Phase (2π/2^k)"),
+        (COLORS.entangle_gate, "E", "Entangle (phi)")
     ])
-    
+
     xlims!(ax, x_start - 1.5, x_end + 3.5)
     ylims!(ax, -(total + 0.5) * QUBIT_SPACING, 0.7 * QUBIT_SPACING)
-    
+
     if output_path !== nothing
         save(output_path, fig)
         println("  Saved: $output_path")
     end
-    
+
     return fig
 end
 
@@ -708,6 +815,37 @@ function main()
         title="Entangled QFT (3×3, trained)");
         output_path=joinpath(output_dir, "entangled_qft_3x3_trained.png"))
     
+    # Entangled QFT with different entangle positions
+    println("4a. Entangled QFT (3×3, E before QFT)")
+    plot_circuit(EntangledQFTCircuitSpec(3, 3; phases=[π/4, π/3, π/6], 
+        entangle_position=:front, title="Entangled QFT (3×3)");
+        output_path=joinpath(output_dir, "entangled_qft_3x3_front.png"))
+    
+    println("4b. Entangled QFT (3×3, E after QFT)")
+    plot_circuit(EntangledQFTCircuitSpec(3, 3; phases=[π/4, π/3, π/6], 
+        entangle_position=:back, title="Entangled QFT (3×3)");
+        output_path=joinpath(output_dir, "entangled_qft_3x3_back.png"))
+    
+    println("4c. Entangled QFT (5×5, E before QFT)")
+    plot_circuit(EntangledQFTCircuitSpec(5, 5; phases=[π/4, π/3, π/6, π/5, π/8], 
+        entangle_position=:front, title="Entangled QFT (5×5)");
+        output_path=joinpath(output_dir, "entangled_qft_5x5_front.png"))
+    
+    println("4d. Entangled QFT (5×5, E after QFT)")
+    plot_circuit(EntangledQFTCircuitSpec(5, 5; phases=[π/4, π/3, π/6, π/5, π/8], 
+        entangle_position=:back, title="Entangled QFT (5×5)");
+        output_path=joinpath(output_dir, "entangled_qft_5x5_back.png"))
+    
+    println("4e. Entangled QFT (3×3, E interleaved)")
+    plot_circuit(EntangledQFTCircuitSpec(3, 3; phases=[π/4, π/3, π/6],
+        entangle_position=:middle, title="Entangled QFT (3×3)");
+        output_path=joinpath(output_dir, "entangled_qft_3x3_middle.png"))
+
+    println("4f. Entangled QFT (5×5, E interleaved)")
+    plot_circuit(EntangledQFTCircuitSpec(5, 5; phases=[π/4, π/3, π/6, π/5, π/8],
+        entangle_position=:middle, title="Entangled QFT (5×5)");
+        output_path=joinpath(output_dir, "entangled_qft_5x5_middle.png"))
+
     # TEBD circuits (2D ring topology)
     println("5. TEBD Circuit (3×3 qubits)")
     plot_circuit(TEBDCircuitSpec(3, 3; title="TEBD Circuit (3×3 qubits, ring topology)");
@@ -746,7 +884,7 @@ function main()
     plot_comparison(3, 3; output_path=joinpath(output_dir, "comparison_3x3.png"))
     
     println("\n" * "="^60)
-    println("Done! Generated 11 circuit diagrams.")
+    println("Done! Generated 15 circuit diagrams.")
     println("="^60)
 end
 

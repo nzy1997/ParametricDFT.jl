@@ -332,7 +332,7 @@ function main()
     println("="^80)
     
     standard_qft = QFTBasis(M_QUBITS, N_QUBITS)
-    entangled_qft = EntangledQFTBasis(M_QUBITS, N_QUBITS)
+    entangled_qft = EntangledQFTBasis(M_QUBITS, N_QUBITS; entangle_position=:back)
     tebd_default = TEBDBasis(M_QUBITS, N_QUBITS)
     
     println("  Standard QFT:     $(num_parameters(standard_qft)) parameters")
@@ -371,6 +371,7 @@ function main()
     @time trained_entangled = train_basis(
         EntangledQFTBasis, training_images;
         m=M_QUBITS, n=N_QUBITS,
+        entangle_position=:back,
         loss=ParametricDFT.MSELoss(k),
         epochs=TRAINING_EPOCHS,
         steps_per_image=STEPS_PER_IMAGE,

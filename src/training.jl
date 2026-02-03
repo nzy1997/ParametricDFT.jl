@@ -220,6 +220,7 @@ function train_basis(
     dataset::Vector{<:AbstractMatrix};
     m::Int, n::Int,
     entangle_phases::Union{Nothing, Vector{<:Real}} = nothing,
+    entangle_position::Symbol = :back,
     loss::AbstractLoss = MSELoss(round(Int, 2^(m+n) * 0.1)),
     epochs::Int = 3,
     steps_per_image::Int = 200,
@@ -238,8 +239,8 @@ function train_basis(
     n_entangle = min(m, n)
     
     # Initialize circuit
-    optcode, initial_tensors, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases)
-    inverse_code, _, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, inverse=true)
+    optcode, initial_tensors, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, entangle_position=entangle_position)
+    inverse_code, _, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, inverse=true, entangle_position=entangle_position)
     
     final_tensors, _ = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
@@ -262,7 +263,7 @@ function train_basis(
         println("  Trained entanglement phases: $(round.(trained_phases, digits=4))")
     end
     
-    return EntangledQFTBasis(m, n, final_tensors, optcode, inverse_code, n_entangle, trained_phases)
+    return EntangledQFTBasis(m, n, final_tensors, optcode, inverse_code, n_entangle, trained_phases, entangle_position)
 end
 
 """

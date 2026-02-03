@@ -19,9 +19,9 @@ This applies phase e^(i*phi) only when both qubits are in state |1⟩.
 **Tensor network form (2×2 matrix):**
     E_tensor = [1  0; 0  e^(i*phi)]
 
-In the einsum tensor network decomposition, controlled-phase gates are 
-represented as 2×2 matrices acting on the bond indices connecting the 
-control and target qubits. This function returns the tensor form, not 
+In the einsum tensor network decomposition, controlled-phase gates are
+represented as 2×2 matrices acting on the bond indices connecting the
+control and target qubits. This function returns the tensor form, not
 the full 4×4 gate matrix.
 
 This gate has the same structure as the M gate in the QFT circuit, but with
@@ -42,12 +42,48 @@ function entanglement_gate(phi::Real)
 end
 
 """
-    entangled_qft_code(m::Int, n::Int; entangle_phases=nothing, inverse=false)
+    _build_manual_qft(n_qubits, qubit_offset, total_qubits)
+
+Build a manual QFT gate chain (without using EasyBuild.qft_circuit) that returns
+individual gate operations. This is needed for the `:middle` entangle_position mode
+where entanglement gates are interleaved with QFT Hadamard gates.
+
+The standard QFT for n qubits consists of:
+- For qubit j = 1, ..., n:
+  - H(j)
+  - For target k = j+1, ..., n: ctrl(k → j, phase=2π/2^(k-j+1))
+
+# Arguments
+- `n_qubits::Int`: Number of qubits in this QFT block
+- `qubit_offset::Int`: Offset to add to qubit indices (0 for row, m for col)
+- `total_qubits::Int`: Total number of qubits in the full circuit
+
+# Returns
+- `Vector{AbstractBlock}`: Individual gate operations in order
+"""
+function _build_manual_qft(n_qubits::Int, qubit_offset::Int, total_qubits::Int)
+    gates = AbstractBlock[]
+    for j in 1:n_qubits
+        q = qubit_offset + j
+        # Hadamard on qubit j
+        push!(gates, put(total_qubits, q => H))
+        # Controlled phase gates
+        for target in (j+1):n_qubits
+            k = target - j + 1
+            t = qubit_offset + target
+            push!(gates, control(total_qubits, t, q => shift(2π / 2^k)))
+        end
+    end
+    return gates
+end
+
+"""
+    entangled_qft_code(m::Int, n::Int; entangle_phases=nothing, inverse=false, entangle_position=:back)
 
 Generate an optimized tensor network representation of the entangled QFT circuit.
 
 The entangled QFT extends the standard 2D QFT by adding entanglement gates E_k
-between corresponding row and column qubits (x_k, y_k). Each entanglement gate
+between corresponding row and column qubits. Each entanglement gate
 E_k is a controlled-phase gate with the same structure as the M gate in QFT:
 
 **Full gate form (4×4 matrix):**
@@ -68,6 +104,12 @@ one for each pair of corresponding row/column qubits.
 - `entangle_phases::Union{Nothing, Vector{<:Real}}`: Initial phases for entanglement gates.
   If nothing, defaults to zeros (equivalent to standard QFT). Length must equal min(m, n).
 - `inverse::Bool`: If true, generate inverse transform code
+- `entangle_position::Symbol`: Where to place entanglement gates. One of:
+  - `:back` (default): QFT_row ⊗ QFT_col → Entangle
+  - `:front`: Entangle → QFT_row ⊗ QFT_col
+  - `:middle`: Row and column QFT interleaved, with E_k placed after the row H(j)
+    but BEFORE the column H(j). This produces a distinct result because E_k
+    (a diagonal controlled-phase gate) does not commute with Hadamard gates.
 
 # Returns
 - `optcode::AbstractEinsum`: Optimized einsum contraction code
@@ -82,62 +124,133 @@ optcode, tensors, n_entangle = entangled_qft_code(6, 6)
 # Create with custom initial phases
 phases = rand(6) * 2π
 optcode, tensors, n_entangle = entangled_qft_code(6, 6; entangle_phases=phases)
+
+# Create with entanglement at front
+optcode, tensors, n_entangle = entangled_qft_code(6, 6; entangle_position=:front)
+
+# Create with entanglement interleaved in middle
+optcode, tensors, n_entangle = entangled_qft_code(6, 6; entangle_position=:middle)
 ```
 """
-function entangled_qft_code(m::Int, n::Int; entangle_phases::Union{Nothing, Vector{<:Real}}=nothing, inverse=false)
+function entangled_qft_code(m::Int, n::Int; entangle_phases::Union{Nothing, Vector{<:Real}}=nothing, inverse=false, entangle_position::Symbol=:back)
+    @assert entangle_position in (:front, :middle, :back) "entangle_position must be :front, :middle, or :back, got :$entangle_position"
+
     # Number of entanglement gates = min(m, n) for one-to-one coupling
     n_entangle = min(m, n)
-    
+
     # Default phases to zeros if not provided
     if entangle_phases === nothing
         entangle_phases = zeros(n_entangle)
     end
     @assert length(entangle_phases) == n_entangle "entangle_phases must have length min(m, n) = $n_entangle"
-    
-    # Build standard QFT circuits for row and column qubits
-    qc1 = Yao.EasyBuild.qft_circuit(m)  # QFT on row qubits (1:m)
-    qc2 = Yao.EasyBuild.qft_circuit(n)  # QFT on column qubits (m+1:m+n)
-    
-    # Build entanglement layer: E_k connects x_{n-k} with y_{n-k}
-    # In our qubit ordering: row qubits are 1:m, column qubits are m+1:m+n
-    # E_k connects qubit (m - k + 1) with qubit (m + n - k + 1) for k = 1, ..., n_entangle
-    entangle_gates = chain(m + n)
-    for k in 1:n_entangle
-        # x_{n-k} corresponds to row qubit index (m - k + 1)
-        # y_{n-k} corresponds to col qubit index (m + n - k + 1)
-        x_qubit = m - k + 1
-        y_qubit = m + n - k + 1
-        # Controlled-phase gate: control on x_qubit, shift(phi) on y_qubit
-        push!(entangle_gates, control(m + n, x_qubit, y_qubit => shift(entangle_phases[k])))
+
+    total = m + n
+
+    if entangle_position == :middle
+        # Build circuit with row and column QFT interleaved together.
+        # E_k is placed right after the row H gate but BEFORE the column H gate.
+        # This produces a mathematically distinct result because E_k (a diagonal gate)
+        # does not commute with the Hadamard gate on its column qubit.
+        #
+        # For each step j = 1 to max(m, n):
+        #   1. Apply row H(j) (if j <= m)
+        #   2. Apply E_k if its row qubit just got H (k = m-j+1)
+        #   3. Apply row M gates for qubit j (if j <= m)
+        #   4. Apply col H(m+j) (if j <= n)
+        #   5. Apply col M gates for qubit j (if j <= n)
+        #
+        # E_k connects row qubit (m-k+1) with col qubit (m+n-k+1).
+        # E_k is applied at step j = m-k+1, right after row H(j).
+
+        qc = chain(total)
+
+        for j in 1:max(m, n)
+            # Step 1: Row H(j) (if j <= m)
+            if j <= m
+                push!(qc, put(total, j => H))
+            end
+
+            # Step 2: Apply E_k right after row H(j), before col H
+            # E_k's row qubit is (m-k+1) = j, so k = m-j+1
+            if j <= m
+                k = m - j + 1
+                if k >= 1 && k <= n_entangle
+                    x_qubit = m - k + 1  # = j
+                    y_qubit = m + n - k + 1
+                    push!(qc, control(total, x_qubit, y_qubit => shift(entangle_phases[k])))
+                end
+            end
+
+            # Step 3: Row M gates for qubit j (if j <= m)
+            if j <= m
+                for target in (j+1):m
+                    k_phase = target - j + 1
+                    push!(qc, control(total, target, j => shift(2π / 2^k_phase)))
+                end
+            end
+
+            # Step 4: Col H(m+j) (if j <= n)
+            if j <= n
+                push!(qc, put(total, m + j => H))
+            end
+
+            # Step 5: Col M gates for qubit j (if j <= n)
+            if j <= n
+                for target in (j+1):n
+                    k_phase = target - j + 1
+                    push!(qc, control(total, m + target, m + j => shift(2π / 2^k_phase)))
+                end
+            end
+        end
+    else
+        # :front or :back — use EasyBuild QFT and chain in appropriate order
+        qc1 = Yao.EasyBuild.qft_circuit(m)  # QFT on row qubits (1:m)
+        qc2 = Yao.EasyBuild.qft_circuit(n)  # QFT on column qubits (m+1:m+n)
+
+        # Build entanglement layer
+        entangle_gates = chain(total)
+        for k in 1:n_entangle
+            x_qubit = m - k + 1
+            y_qubit = m + n - k + 1
+            push!(entangle_gates, control(total, x_qubit, y_qubit => shift(entangle_phases[k])))
+        end
+
+        if entangle_position == :front
+            # Entangle → QFT_row ⊗ QFT_col
+            qc = chain(
+                entangle_gates,
+                subroutine(total, qc1, 1:m),
+                subroutine(total, qc2, m+1:m+n)
+            )
+        else  # :back
+            # QFT_row ⊗ QFT_col → Entangle (original default)
+            qc = chain(
+                subroutine(total, qc1, 1:m),
+                subroutine(total, qc2, m+1:m+n),
+                entangle_gates
+            )
+        end
     end
-    
-    # Full circuit: QFT_row ⊗ QFT_col followed by entanglement layer
-    qc = chain(
-        subroutine(m + n, qc1, 1:m),
-        subroutine(m + n, qc2, m+1:m+n),
-        entangle_gates
-    )
-    
+
     # Convert to tensor network
     tn = yao2einsum(qc; optimizer=nothing)
-    
+
     # Reorder tensors: Hadamard gates first, then M gates, then entanglement gates
     # Identify tensor types by their values
     is_hadamard(x) = x ≈ mat(H)
-    is_entangle(x) = size(x) == (2, 2) && x[1,1] ≈ 1 && x[2,1] ≈ 0 && x[1,2] ≈ 0 && abs(x[2,2]) ≈ 1
-    
+
     # Sort: Hadamard first, then others (M gates and entanglement gates)
     perm_vec = sortperm(tn.tensors, by=x -> !is_hadamard(x))
     ixs = tn.code.ixs[perm_vec]
     tensors = tn.tensors[perm_vec]
-    
+
     if inverse
-        code_reorder = DynamicEinCode([ixs..., tn.code.iy[m+n+1:end]], tn.code.iy[1:m+n])
+        code_reorder = DynamicEinCode([ixs..., tn.code.iy[total+1:end]], tn.code.iy[1:total])
     else
-        code_reorder = DynamicEinCode([ixs..., tn.code.iy[1:m+n]], tn.code.iy[m+n+1:end])
+        code_reorder = DynamicEinCode([ixs..., tn.code.iy[1:total]], tn.code.iy[total+1:end])
     end
     optcode = optimize_code(code_reorder, uniformsize(tn.code, 2), TreeSA())
-    
+
     return optcode, tensors, n_entangle
 end
 
@@ -169,12 +282,12 @@ function get_entangle_tensor_indices(tensors, n_entangle::Int)
     function is_ctrl_phase(x)
         size(x) != (2, 2) && return false
         tol = 0.15
-        return isapprox(abs(x[1,1]), 1, atol=tol) && 
-               isapprox(abs(x[1,2]), 1, atol=tol) && 
-               isapprox(abs(x[2,1]), 1, atol=tol) && 
+        return isapprox(abs(x[1,1]), 1, atol=tol) &&
+               isapprox(abs(x[1,2]), 1, atol=tol) &&
+               isapprox(abs(x[2,1]), 1, atol=tol) &&
                isapprox(abs(x[2,2]), 1, atol=tol)
     end
-    
+
     ctrl_phase_indices = findall(is_ctrl_phase, tensors)
     # The last n_entangle controlled-phase tensors are the entanglement gates
     if length(ctrl_phase_indices) >= n_entangle

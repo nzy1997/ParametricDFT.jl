@@ -283,10 +283,11 @@ struct EntangledQFTBasis <: AbstractSparseBasis
     inverse_code::OMEinsum.AbstractEinsum
     n_entangle::Int
     entangle_phases::Vector{Float64}
+    entangle_position::Symbol
 end
 
 """
-    EntangledQFTBasis(m::Int, n::Int; entangle_phases=nothing)
+    EntangledQFTBasis(m::Int, n::Int; entangle_phases=nothing, entangle_position=:back)
 
 Construct an EntangledQFTBasis with default or custom entanglement phases.
 
@@ -295,24 +296,25 @@ Construct an EntangledQFTBasis with default or custom entanglement phases.
 - `n::Int`: Number of qubits for columns (image width = 2^n)
 - `entangle_phases::Union{Nothing, Vector{<:Real}}`: Initial phases for entanglement gates.
   If nothing, defaults to zeros (equivalent to standard QFT initially).
+- `entangle_position::Symbol`: Where to place entanglement gates (:front, :middle, :back)
 
 # Returns
 - `EntangledQFTBasis`: Basis with entangled QFT circuit parameters
 """
-function EntangledQFTBasis(m::Int, n::Int; entangle_phases::Union{Nothing, Vector{<:Real}}=nothing)
+function EntangledQFTBasis(m::Int, n::Int; entangle_phases::Union{Nothing, Vector{<:Real}}=nothing, entangle_position::Symbol=:back)
     n_entangle = min(m, n)
     if entangle_phases === nothing
         entangle_phases = zeros(n_entangle)
     end
-    
-    optcode, tensors, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases)
-    inverse_code, _, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, inverse=true)
-    
-    return EntangledQFTBasis(m, n, tensors, optcode, inverse_code, n_entangle, Float64.(entangle_phases))
+
+    optcode, tensors, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, entangle_position=entangle_position)
+    inverse_code, _, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, inverse=true, entangle_position=entangle_position)
+
+    return EntangledQFTBasis(m, n, tensors, optcode, inverse_code, n_entangle, Float64.(entangle_phases), entangle_position)
 end
 
 """
-    EntangledQFTBasis(m::Int, n::Int, tensors::Vector, n_entangle::Int)
+    EntangledQFTBasis(m::Int, n::Int, tensors::Vector, n_entangle::Int; entangle_position=:back)
 
 Construct an EntangledQFTBasis with custom trained tensors.
 
@@ -321,19 +323,20 @@ Construct an EntangledQFTBasis with custom trained tensors.
 - `n::Int`: Number of qubits for columns
 - `tensors::Vector`: Pre-trained circuit parameters
 - `n_entangle::Int`: Number of entanglement gates
+- `entangle_position::Symbol`: Where entanglement gates are placed (:front, :middle, :back)
 
 # Returns
 - `EntangledQFTBasis`: Basis with custom parameters
 """
-function EntangledQFTBasis(m::Int, n::Int, tensors::Vector, n_entangle::Int)
-    optcode, _, _ = entangled_qft_code(m, n)
-    inverse_code, _, _ = entangled_qft_code(m, n; inverse=true)
-    
+function EntangledQFTBasis(m::Int, n::Int, tensors::Vector, n_entangle::Int; entangle_position::Symbol=:back)
+    optcode, _, _ = entangled_qft_code(m, n; entangle_position=entangle_position)
+    inverse_code, _, _ = entangled_qft_code(m, n; inverse=true, entangle_position=entangle_position)
+
     # Extract entanglement phases from tensors
     entangle_indices = get_entangle_tensor_indices(tensors, n_entangle)
     entangle_phases = extract_entangle_phases(tensors, entangle_indices)
-    
-    return EntangledQFTBasis(m, n, tensors, optcode, inverse_code, n_entangle, entangle_phases)
+
+    return EntangledQFTBasis(m, n, tensors, optcode, inverse_code, n_entangle, entangle_phases, entangle_position)
 end
 
 # ============================================================================
@@ -452,7 +455,7 @@ Compute a unique hash identifying this basis configuration and parameters.
 """
 function basis_hash(basis::EntangledQFTBasis)
     data = IOBuffer()
-    write(data, "EntangledQFTBasis:m=$(basis.m):n=$(basis.n):n_entangle=$(basis.n_entangle):")
+    write(data, "EntangledQFTBasis:m=$(basis.m):n=$(basis.n):n_entangle=$(basis.n_entangle):pos=$(basis.entangle_position):")
     for tensor in basis.tensors
         for val in tensor
             write(data, "$(real(val)),$(imag(val));")
@@ -486,7 +489,7 @@ function Base.show(io::IO, basis::EntangledQFTBasis)
     h, w = image_size(basis)
     params = num_parameters(basis)
     n_ent = num_entangle_parameters(basis)
-    print(io, "EntangledQFTBasis($(basis.m)×$(basis.n) qubits, $(h)×$(w) images, $params parameters, $n_ent entanglement gates)")
+    print(io, "EntangledQFTBasis($(basis.m)×$(basis.n) qubits, $(h)×$(w) images, $params parameters, $n_ent entanglement gates, position=$(basis.entangle_position))")
 end
 
 """
@@ -495,7 +498,7 @@ end
 Check equality of two EntangledQFTBasis objects.
 """
 function Base.:(==)(a::EntangledQFTBasis, b::EntangledQFTBasis)
-    return a.m == b.m && a.n == b.n && a.n_entangle == b.n_entangle && all(a.tensors .≈ b.tensors)
+    return a.m == b.m && a.n == b.n && a.n_entangle == b.n_entangle && a.entangle_position == b.entangle_position && all(a.tensors .≈ b.tensors)
 end
 
 
