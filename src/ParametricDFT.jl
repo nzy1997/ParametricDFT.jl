@@ -40,6 +40,8 @@ export num_gates, get_phases
 
 # Training exports
 export train_basis, save_loss_history, load_loss_history
+# Device abstraction exports
+export to_device
 
 # Visualization exports
 export TrainingHistory, plot_training_loss, plot_training_loss_steps,

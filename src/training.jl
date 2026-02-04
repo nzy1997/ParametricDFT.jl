@@ -5,6 +5,33 @@
 # from a dataset of images.
 
 # ============================================================================
+# Device Abstraction
+# ============================================================================
+
+"""
+    to_device(x, device::Symbol)
+
+Move array `x` to the specified device. Returns `x` unchanged for `:cpu`.
+For `:gpu`, requires CUDA.jl to be loaded (via the CUDAExt extension).
+"""
+to_device(x, ::Val{:cpu}) = x
+
+function to_device(x, device::Symbol)
+    if device === :cpu
+        return to_device(x, Val(:cpu))
+    elseif device === :gpu
+        # Check if the CUDAExt has added the Val{:gpu} method
+        if hasmethod(to_device, Tuple{typeof(x), Val{:gpu}})
+            return to_device(x, Val(:gpu))
+        else
+            error("GPU support requires CUDA.jl. Install and load CUDA.jl first: `using CUDA`")
+        end
+    else
+        error("Unknown device: $device. Supported: :cpu, :gpu")
+    end
+end
+
+# ============================================================================
 # Generic Internal Training Core
 # ============================================================================
 
@@ -12,12 +39,23 @@
     _train_basis_core(dataset, optcode, inverse_code, initial_tensors, m, n, loss,
                       epochs, steps_per_image, validation_split, shuffle,
                       early_stopping_patience, verbose, basis_name; extra_info="",
-                      save_loss_path=nothing)
+                      save_loss_path=nothing, optimizer=:gradient_descent,
+                      batch_size=1, device=:cpu)
 
 Core training loop shared by all basis types. Returns (final_tensors, best_val_loss, train_losses, val_losses, step_train_losses).
 
 If `save_loss_path` is provided, saves per-step training losses to a JSON file with
 `epoch`, `step`, and `loss` fields for each entry.
+
+# Supported optimizers
+- `:gradient_descent` (default): Riemannian gradient descent
+- `:conjugate_gradient`: Riemannian conjugate gradient descent
+- `:quasi_newton`: Riemannian L-BFGS quasi-Newton method
+
+# Batch and Device Support
+- `batch_size::Int = 1`: Number of images per batch. When > 1, the optimizer minimizes the
+  average loss over the batch instead of a single image. batch_size=1 recovers original behavior.
+- `device::Symbol = :cpu`: Device for computation. Use `:gpu` for GPU acceleration (requires CUDA.jl).
 """
 function _train_basis_core(
     dataset::Vector{<:AbstractMatrix},
@@ -34,36 +72,53 @@ function _train_basis_core(
     verbose::Bool,
     basis_name::String;
     extra_info::String = "",
-    save_loss_path::Union{Nothing, String} = nothing
+    save_loss_path::Union{Nothing, String} = nothing,
+    optimizer::Symbol = :gradient_descent,
+    batch_size::Int = 1,
+    device::Symbol = :cpu
 )
-    # Convert images to complex matrices
-    complex_dataset = [Complex{Float64}.(img) for img in dataset]
-    
+    # Convert images to complex matrices and move to device
+    complex_dataset = [to_device(Complex{Float64}.(img), device) for img in dataset]
+
     # Split into training and validation sets
     n_images = length(complex_dataset)
     n_validation = max(1, round(Int, n_images * validation_split))
-    
+
     indices = shuffle ? Random.shuffle(1:n_images) : collect(1:n_images)
     validation_indices = indices[1:n_validation]
     training_indices = indices[n_validation+1:end]
-    
+
     training_data = complex_dataset[training_indices]
     validation_data = complex_dataset[validation_indices]
-    
+
+    # Clamp batch_size to valid range
+    batch_size = clamp(batch_size, 1, length(training_data))
+    n_batches = ceil(Int, length(training_data) / batch_size)
+
     if verbose
+        optimizer_names = Dict(:gradient_descent => "Riemannian Gradient Descent",
+                               :conjugate_gradient => "Riemannian Conjugate Gradient",
+                               :quasi_newton => "Riemannian L-BFGS")
+        device_names = Dict(:cpu => "CPU", :gpu => "GPU (CUDA)")
         println("Training $basis_name:")
         println("  Image size: $(2^m)×$(2^n)")
         println("  Training images: $(length(training_data))")
         println("  Validation images: $(length(validation_data))")
         !isempty(extra_info) && println(extra_info)
+        println("  Optimizer: $(get(optimizer_names, optimizer, string(optimizer)))")
+        println("  Device: $(get(device_names, device, string(device)))")
+        println("  Batch size: $batch_size ($(n_batches) batches per epoch)")
         println("  Epochs: $epochs")
-        println("  Steps per image: $steps_per_image")
+        println("  Steps per batch: $steps_per_image")
     end
-    
+
+    # Move initial tensors to device for optimization
+    device_tensors = [to_device(t, device) for t in initial_tensors]
+
     # Initialize manifold
-    M = generate_manifold(initial_tensors)
-    current_theta = tensors2point(initial_tensors, M)
-    
+    M = generate_manifold(device_tensors)
+    current_theta = tensors2point(device_tensors, M)
+
     # Track best parameters
     best_theta = current_theta
     best_val_loss = Inf
@@ -86,24 +141,32 @@ function _train_basis_core(
 
         epoch_losses = Float64[]
 
-        # Train on each image
-        for (idx, img_matrix) in enumerate(training_data)
-            current_theta = _train_on_single_image(
-                img_matrix, current_theta, M, optcode, inverse_code,
-                m, n, loss, steps_per_image
+        # Train on batches
+        for batch_idx in 1:n_batches
+            start_idx = (batch_idx - 1) * batch_size + 1
+            end_idx = min(batch_idx * batch_size, length(training_data))
+            batch = training_data[start_idx:end_idx]
+
+            current_theta = _train_on_batch(
+                batch, current_theta, M, optcode, inverse_code,
+                m, n, loss, steps_per_image; optimizer=optimizer
             )
 
+            # Compute average loss over batch for tracking
             tensors = point2tensors(current_theta, M)
-            train_loss = loss_function(tensors, m, n, optcode, img_matrix, loss; inverse_code=inverse_code)
-            push!(epoch_losses, train_loss)
-            push!(step_train_losses, train_loss)
-            push!(loss_records, Dict{String, Any}("epoch" => epoch, "step" => idx, "loss" => train_loss))
+            batch_loss = sum(
+                loss_function(tensors, m, n, optcode, img, loss; inverse_code=inverse_code)
+                for img in batch
+            ) / length(batch)
+            push!(epoch_losses, batch_loss)
+            push!(step_train_losses, batch_loss)
+            push!(loss_records, Dict{String, Any}("epoch" => epoch, "step" => batch_idx, "loss" => batch_loss))
 
-            verbose && print("  [$idx/$(length(training_data))] loss: $(round(train_loss, digits=6))\r")
+            verbose && print("  [batch $batch_idx/$n_batches] loss: $(round(batch_loss, digits=6))\r")
         end
-        
+
         verbose && println()
-        
+
         # Compute validation loss
         tensors = point2tensors(current_theta, M)
         val_loss = _compute_validation_loss(validation_data, tensors, optcode, inverse_code, m, n, loss)
@@ -117,7 +180,7 @@ function _train_basis_core(
             println("  Avg train loss: $(round(avg_train_loss, digits=6))")
             println("  Validation loss: $(round(val_loss, digits=6))")
         end
-        
+
         # Check for improvement
         if val_loss < best_val_loss
             improvement = best_val_loss == Inf ? 100.0 : (best_val_loss - val_loss) / best_val_loss * 100
@@ -128,15 +191,17 @@ function _train_basis_core(
         else
             patience_counter += 1
             verbose && println("  ✗ No improvement (patience: $patience_counter/$early_stopping_patience)")
-            
+
             if patience_counter >= early_stopping_patience && epoch > 1
                 verbose && println("\nEarly stopping: validation loss not improving")
                 break
             end
         end
     end
-    
-    final_tensors = point2tensors(best_theta, M)
+
+    # Move final tensors back to CPU for serialization
+    final_tensors_raw = point2tensors(best_theta, M)
+    final_tensors = [Array(t) for t in final_tensors_raw]
     verbose && println("\n✓ Training completed. Best validation loss: $(round(best_val_loss, digits=6))")
 
     # Save loss history to JSON if path provided
@@ -155,7 +220,7 @@ end
 """
     train_basis(::Type{QFTBasis}, dataset::Vector{<:AbstractMatrix}; kwargs...)
 
-Train a QFTBasis on a dataset of images using Riemannian gradient descent.
+Train a QFTBasis on a dataset of images using Riemannian optimization.
 
 # Arguments
 - `::Type{QFTBasis}`: The basis type to train
@@ -166,12 +231,17 @@ Train a QFTBasis on a dataset of images using Riemannian gradient descent.
 - `n::Int`: Number of qubits for columns (image width = 2^n)
 - `loss::AbstractLoss = MSELoss(k)`: Loss function for training
 - `epochs::Int = 3`: Number of training epochs
-- `steps_per_image::Int = 200`: Gradient descent steps per image
+- `steps_per_image::Int = 200`: Optimization steps per batch
 - `validation_split::Float64 = 0.2`: Fraction of data for validation
 - `shuffle::Bool = true`: Whether to shuffle data each epoch
 - `early_stopping_patience::Int = 2`: Epochs without improvement before stopping
 - `verbose::Bool = true`: Whether to print training progress
 - `save_loss_path::Union{Nothing, String} = nothing`: Path to save training loss history as JSON
+- `optimizer::Symbol = :gradient_descent`: Riemannian optimizer to use.
+  Options: `:gradient_descent`, `:conjugate_gradient`, `:quasi_newton`
+- `batch_size::Int = 1`: Number of images per batch. The optimizer minimizes average loss over
+  the batch. batch_size=1 is equivalent to single-image training.
+- `device::Symbol = :cpu`: Computation device. Use `:gpu` for CUDA acceleration (requires CUDA.jl).
 
 # Returns
 - `Tuple{QFTBasis, NamedTuple}`: Trained basis and training history
@@ -183,6 +253,7 @@ Train a QFTBasis on a dataset of images using Riemannian gradient descent.
 images = [load_image(path) for path in image_paths]
 k = round(Int, 64 * 64 * 0.1)  # Keep 10% of coefficients
 basis, history = train_basis(QFTBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5,
+                             optimizer=:conjugate_gradient, batch_size=8,
                              save_loss_path="qft_loss.json")
 save_basis("trained_basis.json", basis)
 println("Final training loss: ", history.train_losses[end])
@@ -199,7 +270,10 @@ function train_basis(
     shuffle::Bool = true,
     early_stopping_patience::Int = 2,
     verbose::Bool = true,
-    save_loss_path::Union{Nothing, String} = nothing
+    save_loss_path::Union{Nothing, String} = nothing,
+    optimizer::Symbol = :gradient_descent,
+    batch_size::Int = 1,
+    device::Symbol = :cpu
 )
     @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
     @assert length(dataset) > 0 "Dataset must not be empty"
@@ -207,16 +281,17 @@ function train_basis(
     for (i, img) in enumerate(dataset)
         @assert size(img) == expected_size "Image $i has size $(size(img)), expected $expected_size"
     end
-    
+
     # Initialize circuit
     optcode, initial_tensors = qft_code(m, n)
     inverse_code, _ = qft_code(m, n; inverse=true)
-    
+
     final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, verbose, "QFTBasis";
-        save_loss_path=save_loss_path
+        save_loss_path=save_loss_path, optimizer=optimizer,
+        batch_size=batch_size, device=device
     )
 
     trained_basis = QFTBasis(m, n, final_tensors, optcode, inverse_code)
@@ -228,7 +303,7 @@ end
 """
     train_basis(::Type{EntangledQFTBasis}, dataset::Vector{<:AbstractMatrix}; kwargs...)
 
-Train an EntangledQFTBasis on a dataset of images using Riemannian gradient descent.
+Train an EntangledQFTBasis on a dataset of images using Riemannian optimization.
 
 # Arguments
 - `::Type{EntangledQFTBasis}`: The basis type to train
@@ -237,9 +312,13 @@ Train an EntangledQFTBasis on a dataset of images using Riemannian gradient desc
 # Keyword Arguments
 - `m::Int`, `n::Int`: Number of qubits for rows/columns
 - `entangle_phases::Union{Nothing, Vector{<:Real}}`: Initial phases (default: zeros)
-- `loss`, `epochs`, `steps_per_image`, `validation_split`, `shuffle`, 
+- `loss`, `epochs`, `steps_per_image`, `validation_split`, `shuffle`,
   `early_stopping_patience`, `verbose`: Same as QFTBasis
 - `save_loss_path::Union{Nothing, String} = nothing`: Path to save training loss history as JSON
+- `optimizer::Symbol = :gradient_descent`: Riemannian optimizer to use.
+  Options: `:gradient_descent`, `:conjugate_gradient`, `:quasi_newton`
+- `batch_size::Int = 1`: Number of images per batch for training
+- `device::Symbol = :cpu`: Computation device (`:cpu` or `:gpu`)
 
 # Returns
 - `Tuple{EntangledQFTBasis, NamedTuple}`: Trained basis and training history
@@ -249,7 +328,8 @@ Train an EntangledQFTBasis on a dataset of images using Riemannian gradient desc
 # Example
 ```julia
 k = round(Int, 64 * 64 * 0.1)
-basis, history = train_basis(EntangledQFTBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5)
+basis, history = train_basis(EntangledQFTBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5,
+                             optimizer=:conjugate_gradient, batch_size=8)
 phases = get_entangle_phases(basis)
 println("Training loss per epoch: ", history.train_losses)
 ```
@@ -267,7 +347,10 @@ function train_basis(
     shuffle::Bool = true,
     early_stopping_patience::Int = 2,
     verbose::Bool = true,
-    save_loss_path::Union{Nothing, String} = nothing
+    save_loss_path::Union{Nothing, String} = nothing,
+    optimizer::Symbol = :gradient_descent,
+    batch_size::Int = 1,
+    device::Symbol = :cpu
 )
     @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
     @assert length(dataset) > 0 "Dataset must not be empty"
@@ -287,7 +370,8 @@ function train_basis(
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, verbose, "EntangledQFTBasis";
         extra_info = "  Entanglement gates: $n_entangle",
-        save_loss_path=save_loss_path
+        save_loss_path=save_loss_path, optimizer=optimizer,
+        batch_size=batch_size, device=device
     )
 
     # Extract trained phases
@@ -313,7 +397,7 @@ end
 """
     train_basis(::Type{TEBDBasis}, dataset::Vector{<:AbstractMatrix}; kwargs...)
 
-Train a TEBDBasis on a dataset of images using Riemannian gradient descent.
+Train a TEBDBasis on a dataset of images using Riemannian optimization.
 
 # Arguments
 - `::Type{TEBDBasis}`: The basis type to train
@@ -325,9 +409,13 @@ Train a TEBDBasis on a dataset of images using Riemannian gradient descent.
 - `phases::Union{Nothing, Vector{<:Real}}`: Initial phases for TEBD gates.
   If nothing, uses small random values (randn * 0.1) to break symmetry.
   Length must be m+n for ring topology.
-- `loss`, `epochs`, `steps_per_image`, `validation_split`, `shuffle`, 
+- `loss`, `epochs`, `steps_per_image`, `validation_split`, `shuffle`,
   `early_stopping_patience`, `verbose`: Same as QFTBasis
 - `save_loss_path::Union{Nothing, String} = nothing`: Path to save training loss history as JSON
+- `optimizer::Symbol = :gradient_descent`: Riemannian optimizer to use.
+  Options: `:gradient_descent`, `:conjugate_gradient`, `:quasi_newton`
+- `batch_size::Int = 1`: Number of images per batch for training
+- `device::Symbol = :cpu`: Computation device (`:cpu` or `:gpu`)
 
 # Returns
 - `Tuple{TEBDBasis, NamedTuple}`: Trained basis and training history
@@ -337,7 +425,8 @@ Train a TEBDBasis on a dataset of images using Riemannian gradient descent.
 # Example
 ```julia
 k = round(Int, 64 * 64 * 0.1)  # Keep 10% of coefficients
-basis, history = train_basis(TEBDBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5)
+basis, history = train_basis(TEBDBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5,
+                             optimizer=:quasi_newton, batch_size=8, device=:gpu)
 println("Validation loss per epoch: ", history.val_losses)
 ```
 """
@@ -353,7 +442,10 @@ function train_basis(
     shuffle::Bool = true,
     early_stopping_patience::Int = 2,
     verbose::Bool = true,
-    save_loss_path::Union{Nothing, String} = nothing
+    save_loss_path::Union{Nothing, String} = nothing,
+    optimizer::Symbol = :gradient_descent,
+    batch_size::Int = 1,
+    device::Symbol = :cpu
 )
     @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
     @assert length(dataset) > 0 "Dataset must not be empty"
@@ -382,7 +474,8 @@ function train_basis(
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, verbose, "TEBDBasis";
         extra_info = "  Row qubits: $m, Col qubits: $n\n  Row ring gates: $n_row_gates, Col ring gates: $n_col_gates",
-        save_loss_path=save_loss_path
+        save_loss_path=save_loss_path, optimizer=optimizer,
+        batch_size=batch_size, device=device
     )
 
     # Extract trained phases
@@ -506,28 +599,47 @@ function load_loss_history(path::String)
 end
 
 """
-    _train_on_single_image(img_matrix, theta, M, optcode, inverse_code, m, n, loss, steps)
+    _train_on_batch(batch, theta, M, optcode, inverse_code, m, n, loss, steps; optimizer=:gradient_descent)
 
-Train on a single image using gradient descent.
+Train on a batch of images using the specified Riemannian optimizer.
+The optimizer minimizes the average loss over all images in the batch.
+
+When `batch` contains a single image, this is equivalent to single-image training.
+
+# Supported optimizers
+- `:gradient_descent` (default): Riemannian gradient descent
+- `:conjugate_gradient`: Riemannian conjugate gradient descent (often faster convergence)
+- `:quasi_newton`: Riemannian L-BFGS quasi-Newton method (quasi-Newton with limited memory)
 """
-function _train_on_single_image(
-    img_matrix::AbstractMatrix,
+function _train_on_batch(
+    batch::Vector{<:AbstractMatrix},
     theta,
     M::ProductManifold,
     optcode::OMEinsum.AbstractEinsum,
     inverse_code::OMEinsum.AbstractEinsum,
     m::Int, n::Int,
     loss::AbstractLoss,
-    steps::Int
+    steps::Int;
+    optimizer::Symbol = :gradient_descent
 )
-    f(M, p) = loss_function(point2tensors(p, M), m, n, optcode, img_matrix, loss; inverse_code=inverse_code)
+    n_imgs = length(batch)
+    f(M, p) = begin
+        ts = point2tensors(p, M)
+        sum(loss_function(ts, m, n, optcode, img, loss; inverse_code=inverse_code) for img in batch) / n_imgs
+    end
     grad_f(M, p) = ManifoldDiff.gradient(M, x -> f(M, x), p, RiemannianProjectionBackend(AutoZygote()))
-    
-    return gradient_descent(
-        M, f, grad_f, theta;
-        debug = [],
-        stopping_criterion = StopAfterIteration(steps) | StopWhenGradientNormLess(1e-5)
-    )
+
+    sc = StopAfterIteration(steps) | StopWhenGradientNormLess(1e-5)
+
+    if optimizer == :gradient_descent
+        return gradient_descent(M, f, grad_f, theta; debug=[], stopping_criterion=sc)
+    elseif optimizer == :conjugate_gradient
+        return conjugate_gradient_descent(M, f, grad_f, theta; stopping_criterion=sc)
+    elseif optimizer == :quasi_newton
+        return quasi_Newton(M, f, grad_f, theta; stopping_criterion=sc, memory_size=20)
+    else
+        error("Unknown optimizer: $optimizer. Supported: :gradient_descent, :conjugate_gradient, :quasi_newton")
+    end
 end
 
 """
