@@ -473,6 +473,39 @@ function save_loss_history(path::String, history::NamedTuple)
 end
 
 """
+    load_loss_history(path::String) -> TrainingHistory
+
+Load training loss history from a JSON file (saved by `save_loss_history` or `save_loss_path`)
+and return a `TrainingHistory` object that can be passed directly to plotting functions.
+
+# Arguments
+- `path::String`: Path to the JSON file
+
+# Returns
+- `TrainingHistory`: Object with `train_losses`, `val_losses`, `step_train_losses`, and `basis_name`
+
+# Example
+```julia
+using ParametricDFT
+history = load_loss_history("training_loss.json")
+fig = plot_training_loss(history)
+save("loss_curve.png", fig)
+```
+"""
+function load_loss_history(path::String)
+    json_str = read(path, String)
+    json_data = JSON3.read(json_str)
+
+    basis_name = String(json_data[:basis_name])
+
+    train_losses = Float64[entry[:train_loss] for entry in json_data[:epoch_losses]]
+    val_losses = Float64[entry[:val_loss] for entry in json_data[:epoch_losses]]
+    step_train_losses = Float64[entry[:loss] for entry in json_data[:step_losses]]
+
+    return TrainingHistory(train_losses, val_losses, step_train_losses, basis_name)
+end
+
+"""
     _train_on_single_image(img_matrix, theta, M, optcode, inverse_code, m, n, loss, steps)
 
 Train on a single image using gradient descent.

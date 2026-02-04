@@ -39,12 +39,12 @@ export num_entangle_parameters, get_entangle_phases
 export num_gates, get_phases
 
 # Training exports
-export train_basis, save_loss_history
+export train_basis, save_loss_history, load_loss_history
 
 # Visualization exports
 export TrainingHistory, plot_training_loss, plot_training_loss_steps,
        plot_training_comparison, plot_training_comparison_steps,
-       plot_training_grid, save_training_plots
+       plot_training_grid, save_training_plots, ema_smooth
 
 # Serialization exports
 export save_basis, load_basis, basis_to_dict, dict_to_basis

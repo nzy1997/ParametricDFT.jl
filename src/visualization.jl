@@ -22,6 +22,30 @@ struct TrainingHistory
 end
 
 """
+    ema_smooth(values::Vector{Float64}, alpha::Float64) -> Vector{Float64}
+
+Compute exponential moving average for smoothing noisy loss curves.
+
+# Arguments
+- `values::Vector{Float64}`: Raw values to smooth
+- `alpha::Float64`: Smoothing factor in (0, 1). Higher values = more smoothing.
+  Common values: 0.6 (light), 0.9 (heavy), 0.95 (very heavy).
+
+# Returns
+- `Vector{Float64}`: Smoothed values (same length as input)
+"""
+function ema_smooth(values::Vector{Float64}, alpha::Float64)
+    @assert 0.0 < alpha < 1.0 "alpha must be in (0, 1)"
+    isempty(values) && return Float64[]
+    smoothed = similar(values)
+    smoothed[1] = values[1]
+    for i in 2:length(values)
+        smoothed[i] = alpha * smoothed[i-1] + (1 - alpha) * values[i]
+    end
+    return smoothed
+end
+
+"""
     plot_training_loss(history::TrainingHistory; kwargs...)
 
 Plot training and validation loss curves for a single basis.
@@ -103,6 +127,7 @@ Plot per-step training loss curve for a single basis.
 - `ylabel::String`: Y-axis label (default: "Loss")
 - `yscale::Function`: Y-axis scale function (default: log10)
 - `size::Tuple{Int,Int}`: Figure size (default: (800, 500))
+- `smoothing::Float64`: EMA smoothing factor in (0, 1), 0 disables smoothing (default: 0.0)
 
 # Returns
 - `Makie.Figure`: The generated figure
@@ -112,7 +137,7 @@ Plot per-step training loss curve for a single basis.
 using ParametricDFT
 basis, history = train_basis(QFTBasis, images; m=5, n=5, epochs=3)
 hist = TrainingHistory(history.train_losses, history.val_losses, history.step_train_losses, "QFT")
-fig = plot_training_loss_steps(hist)
+fig = plot_training_loss_steps(hist; smoothing=0.8)
 save("qft_step_loss.png", fig)
 ```
 """
@@ -121,7 +146,8 @@ function plot_training_loss_steps(history::TrainingHistory;
                                  xlabel::String = "Step",
                                  ylabel::String = "Loss",
                                  yscale::Function = log10,
-                                 size::Tuple{Int,Int} = (800, 500))
+                                 size::Tuple{Int,Int} = (800, 500),
+                                 smoothing::Float64 = 0.0)
 
     steps = 1:length(history.step_train_losses)
 
@@ -132,10 +158,22 @@ function plot_training_loss_steps(history::TrainingHistory;
               ylabel=ylabel,
               yscale=yscale)
 
-    lines!(ax, steps, history.step_train_losses;
-           label="Training Loss",
-           linewidth=1.5,
-           color=:blue)
+    if smoothing > 0
+        lines!(ax, steps, history.step_train_losses;
+               label=nothing,
+               linewidth=0.5,
+               color=(:blue, 0.3))
+        smoothed = ema_smooth(history.step_train_losses, smoothing)
+        lines!(ax, steps, smoothed;
+               label="Training Loss (smoothed)",
+               linewidth=2,
+               color=:blue)
+    else
+        lines!(ax, steps, history.step_train_losses;
+               label="Training Loss",
+               linewidth=1.5,
+               color=:blue)
+    end
 
     axislegend(ax; position=:rt)
 
@@ -156,6 +194,7 @@ Plot per-step training loss curves for multiple bases on the same plot.
 - `ylabel::String`: Y-axis label (default: "Loss")
 - `yscale::Function`: Y-axis scale function (default: log10)
 - `size::Tuple{Int,Int}`: Figure size (default: (1000, 600))
+- `smoothing::Float64`: EMA smoothing factor in (0, 1), 0 disables smoothing (default: 0.0)
 
 # Returns
 - `Makie.Figure`: The generated figure
@@ -164,7 +203,7 @@ Plot per-step training loss curves for multiple bases on the same plot.
 ```julia
 using ParametricDFT
 histories = [hist_qft, hist_entangled, hist_tebd]
-fig = plot_training_comparison_steps(histories)
+fig = plot_training_comparison_steps(histories; smoothing=0.8)
 save("step_comparison.png", fig)
 ```
 """
@@ -173,7 +212,8 @@ function plot_training_comparison_steps(histories::Vector{TrainingHistory};
                                        xlabel::String = "Step",
                                        ylabel::String = "Loss",
                                        yscale::Function = log10,
-                                       size::Tuple{Int,Int} = (1000, 600))
+                                       size::Tuple{Int,Int} = (1000, 600),
+                                       smoothing::Float64 = 0.0)
 
     fig = Figure(; size=size)
     ax = Axis(fig[1, 1];
@@ -188,10 +228,22 @@ function plot_training_comparison_steps(histories::Vector{TrainingHistory};
         color = colors[mod1(idx, length(colors))]
         steps = 1:length(history.step_train_losses)
 
-        lines!(ax, steps, history.step_train_losses;
-               label=history.basis_name,
-               linewidth=1.5,
-               color=color)
+        if smoothing > 0
+            lines!(ax, steps, history.step_train_losses;
+                   label=nothing,
+                   linewidth=0.5,
+                   color=(color, 0.3))
+            smoothed = ema_smooth(history.step_train_losses, smoothing)
+            lines!(ax, steps, smoothed;
+                   label=history.basis_name,
+                   linewidth=2,
+                   color=color)
+        else
+            lines!(ax, steps, history.step_train_losses;
+                   label=history.basis_name,
+                   linewidth=1.5,
+                   color=color)
+        end
     end
 
     axislegend(ax; position=:rt)
@@ -375,7 +427,7 @@ function plot_training_grid(histories::Vector{TrainingHistory};
 end
 
 """
-    save_training_plots(histories::Vector{TrainingHistory}, output_dir::String; prefix::String="")
+    save_training_plots(histories::Vector{TrainingHistory}, output_dir::String; prefix::String="", smoothing::Float64=0.6)
 
 Generate and save all training visualization plots to a directory.
 
@@ -385,6 +437,8 @@ Generate and save all training visualization plots to a directory.
 
 # Keyword Arguments
 - `prefix::String`: Prefix for filenames (default: "")
+- `smoothing::Float64`: EMA smoothing factor for step-level plots (default: 0.6).
+  Set to 0.0 to disable smoothed plots.
 
 # Returns
 - `Vector{String}`: Paths to saved plot files
@@ -393,15 +447,16 @@ Generate and save all training visualization plots to a directory.
 ```julia
 using ParametricDFT
 histories = [
-    TrainingHistory(hist1.train_losses, hist1.val_losses, "QFT"),
-    TrainingHistory(hist2.train_losses, hist2.val_losses, "TEBD")
+    TrainingHistory(hist1.train_losses, hist1.val_losses, hist1.step_train_losses, "QFT"),
+    TrainingHistory(hist2.train_losses, hist2.val_losses, hist2.step_train_losses, "TEBD")
 ]
-save_training_plots(histories, "output/")
+save_training_plots(histories, "output/"; smoothing=0.8)
 ```
 """
 function save_training_plots(histories::Vector{TrainingHistory},
                             output_dir::String;
-                            prefix::String = "")
+                            prefix::String = "",
+                            smoothing::Float64 = 0.6)
 
     saved_files = String[]
 
@@ -435,6 +490,14 @@ function save_training_plots(histories::Vector{TrainingHistory},
                     fig = plot_training_loss_steps(history; yscale=scale_fn)
                     save(filename, fig)
                     push!(saved_files, filename)
+
+                    # Smoothed variant
+                    if smoothing > 0
+                        filename_smooth = joinpath(scale_dir, "$(file_prefix)$(safe_name)_step_loss_smooth.png")
+                        fig_smooth = plot_training_loss_steps(history; yscale=scale_fn, smoothing=smoothing)
+                        save(filename_smooth, fig_smooth)
+                        push!(saved_files, filename_smooth)
+                    end
                 end
             end
         end
@@ -466,6 +529,14 @@ function save_training_plots(histories::Vector{TrainingHistory},
                 fig = plot_training_comparison_steps(histories; yscale=scale_fn)
                 save(filename, fig)
                 push!(saved_files, filename)
+
+                # Smoothed variant
+                if smoothing > 0
+                    filename_smooth = joinpath(scale_dir, "$(file_prefix)comparison_steps_smooth.png")
+                    fig_smooth = plot_training_comparison_steps(histories; yscale=scale_fn, smoothing=smoothing)
+                    save(filename_smooth, fig_smooth)
+                    push!(saved_files, filename_smooth)
+                end
             end
 
             # 7. Grid plot
