@@ -184,16 +184,17 @@
         basis = EntangledQFTBasis(2, 2; entangle_phases=phases)
         path = joinpath(test_dir, "test_entangled_json.json")
         save_basis(path, basis)
-        
+
         # Read and verify JSON structure
         json_str = read(path, String)
         json_data = JSON3.read(json_str)
         @test json_data.type == "EntangledQFTBasis"
-        @test json_data.version == "1.0"
+        @test json_data.version == "1.1"
         @test json_data.m == 2
         @test json_data.n == 2
         @test json_data.n_entangle == 2
         @test collect(json_data.entangle_phases) ≈ phases
+        @test json_data.entangle_position == "back"
         @test haskey(json_data, :tensors)
         @test haskey(json_data, :hash)
     end
@@ -225,26 +226,84 @@
     @testset "EntangledQFTBasis basis_to_dict and dict_to_basis" begin
         phases = [0.1, 0.2, 0.3]
         basis = EntangledQFTBasis(3, 3; entangle_phases=phases)
-        
+
         # Convert to dict
         d = basis_to_dict(basis)
         @test d isa Dict
         @test d["type"] == "EntangledQFTBasis"
-        @test d["version"] == "1.0"
+        @test d["version"] == "1.1"
         @test d["m"] == 3
         @test d["n"] == 3
         @test d["n_entangle"] == 3
         @test d["entangle_phases"] ≈ phases
-        
+        @test d["entangle_position"] == "back"
+
         # Convert back to basis
         loaded = dict_to_basis(d)
         @test loaded isa EntangledQFTBasis
         @test loaded.m == basis.m
         @test loaded.n == basis.n
         @test loaded.entangle_phases ≈ basis.entangle_phases
+        @test loaded.entangle_position == :back
         @test basis_hash(loaded) == basis_hash(basis)
     end
     
+    @testset "EntangledQFTBasis entangle_position serialization" begin
+        for pos in [:front, :middle, :back]
+            phases = [0.1, 0.2, 0.3]
+            basis = EntangledQFTBasis(3, 3; entangle_phases=phases, entangle_position=pos)
+
+            # Save and load
+            path = joinpath(test_dir, "test_entangled_pos_$(pos).json")
+            save_basis(path, basis)
+            loaded_basis = load_basis(path)
+
+            @test loaded_basis isa EntangledQFTBasis
+            @test loaded_basis.entangle_position == pos
+            @test loaded_basis.entangle_phases ≈ basis.entangle_phases
+            @test basis_hash(loaded_basis) == basis_hash(basis)
+
+            # Verify transforms work
+            img = rand(8, 8)
+            freq_original = forward_transform(basis, img)
+            freq_loaded = forward_transform(loaded_basis, img)
+            @test freq_original ≈ freq_loaded
+        end
+    end
+
+    @testset "EntangledQFTBasis entangle_position in JSON" begin
+        basis = EntangledQFTBasis(3, 3; entangle_position=:front)
+        path = joinpath(test_dir, "test_entangled_pos_json.json")
+        save_basis(path, basis)
+
+        json_str = read(path, String)
+        json_data = JSON3.read(json_str)
+        @test json_data.entangle_position == "front"
+    end
+
+    @testset "EntangledQFTBasis entangle_position dict roundtrip" begin
+        for pos in [:front, :middle, :back]
+            basis = EntangledQFTBasis(3, 3; entangle_position=pos)
+            d = basis_to_dict(basis)
+            @test d["entangle_position"] == string(pos)
+
+            loaded = dict_to_basis(d)
+            @test loaded.entangle_position == pos
+            @test basis_hash(loaded) == basis_hash(basis)
+        end
+    end
+
+    @testset "EntangledQFTBasis backward compat (missing entangle_position)" begin
+        # Simulate an old-format dict without entangle_position
+        basis = EntangledQFTBasis(3, 3)
+        d = basis_to_dict(basis)
+        delete!(d, "entangle_position")
+
+        loaded = dict_to_basis(d)
+        @test loaded isa EntangledQFTBasis
+        @test loaded.entangle_position == :back  # Default
+    end
+
     @testset "EntangledQFTBasis with different sizes" begin
         for (m, n) in [(2, 2), (3, 4), (4, 3)]
             n_entangle = min(m, n)

@@ -353,6 +353,143 @@ end
     end
 end
 
+@testset "Entangle Position" begin
+
+    @testset "entangle_position parameter validation" begin
+        @test_throws AssertionError ParametricDFT.entangled_qft_code(3, 3; entangle_position=:invalid)
+    end
+
+    @testset "entangle_position :back matches default" begin
+        Random.seed!(1234)
+        m, n = 3, 3
+        phases = [0.1, 0.2, 0.3]
+
+        optcode_default, tensors_default, _ = ParametricDFT.entangled_qft_code(m, n; entangle_phases=phases)
+        optcode_back, tensors_back, _ = ParametricDFT.entangled_qft_code(m, n; entangle_phases=phases, entangle_position=:back)
+
+        pic = rand(ComplexF64, 2^m, 2^n)
+        result_default = reshape(optcode_default(tensors_default..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
+        result_back = reshape(optcode_back(tensors_back..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
+
+        @test isapprox(result_default, result_back, rtol=1e-10)
+    end
+
+    @testset "all positions produce valid transforms" begin
+        Random.seed!(42)
+        m, n = 3, 3
+        phases = rand(min(m, n)) * 2π
+
+        for pos in [:front, :middle, :back]
+            optcode, tensors, n_ent = ParametricDFT.entangled_qft_code(m, n; entangle_phases=phases, entangle_position=pos)
+            @test n_ent == min(m, n)
+
+            pic = rand(ComplexF64, 2^m, 2^n)
+            result = reshape(optcode(tensors..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
+            @test size(result) == (2^m, 2^n)
+        end
+    end
+
+    @testset "forward/inverse roundtrip for all positions" begin
+        Random.seed!(42)
+        m, n = 3, 3
+        phases = rand(min(m, n)) * 2π
+
+        for pos in [:front, :middle, :back]
+            optcode, tensors, _ = ParametricDFT.entangled_qft_code(m, n; entangle_phases=phases, entangle_position=pos)
+            optcode_inv, _, _ = ParametricDFT.entangled_qft_code(m, n; entangle_phases=phases, inverse=true, entangle_position=pos)
+
+            pic = rand(ComplexF64, 2^m, 2^n)
+            fft_result = reshape(optcode(tensors..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
+            reconstructed = reshape(optcode_inv(conj.(tensors)..., reshape(fft_result, fill(2, m+n)...)), 2^m, 2^n)
+
+            @test isapprox(reconstructed, pic, rtol=1e-10)
+        end
+    end
+
+    @testset "unitarity (norm preservation) for all positions" begin
+        Random.seed!(42)
+        m, n = 3, 3
+        phases = rand(min(m, n)) * 2π
+
+        for pos in [:front, :middle, :back]
+            optcode, tensors, _ = ParametricDFT.entangled_qft_code(m, n; entangle_phases=phases, entangle_position=pos)
+            pic = rand(ComplexF64, 2^m, 2^n)
+            result = reshape(optcode(tensors..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
+            @test isapprox(norm(result), norm(pic), rtol=1e-10)
+        end
+    end
+
+    @testset "different positions produce different results" begin
+        Random.seed!(42)
+        m, n = 3, 3
+        phases = [0.5, 1.0, 1.5]  # Non-trivial phases
+
+        results = Dict{Symbol, Matrix{ComplexF64}}()
+        pic = rand(ComplexF64, 2^m, 2^n)
+
+        for pos in [:front, :middle, :back]
+            optcode, tensors, _ = ParametricDFT.entangled_qft_code(m, n; entangle_phases=phases, entangle_position=pos)
+            results[pos] = reshape(optcode(tensors..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
+        end
+
+        # With non-trivial phases, different positions should give different results
+        @test !isapprox(results[:front], results[:back], rtol=1e-6)
+        @test !isapprox(results[:front], results[:middle], rtol=1e-6)
+        @test !isapprox(results[:middle], results[:back], rtol=1e-6)
+    end
+
+    @testset "EntangledQFTBasis with entangle_position" begin
+        for pos in [:front, :middle, :back]
+            basis = EntangledQFTBasis(3, 3; entangle_position=pos)
+            @test basis.entangle_position == pos
+            @test basis.n_entangle == 3
+
+            img = rand(8, 8)
+            freq = forward_transform(basis, img)
+            recovered = inverse_transform(basis, freq)
+            @test isapprox(real.(recovered), img, rtol=1e-10)
+        end
+    end
+
+    @testset "EntangledQFTBasis equality respects position" begin
+        basis_back = EntangledQFTBasis(3, 3; entangle_position=:back)
+        basis_front = EntangledQFTBasis(3, 3; entangle_position=:front)
+        basis_back2 = EntangledQFTBasis(3, 3; entangle_position=:back)
+
+        @test basis_back == basis_back2
+        @test !(basis_back == basis_front)
+    end
+
+    @testset "EntangledQFTBasis hash respects position" begin
+        basis_back = EntangledQFTBasis(3, 3; entangle_position=:back)
+        basis_front = EntangledQFTBasis(3, 3; entangle_position=:front)
+
+        @test basis_hash(basis_back) != basis_hash(basis_front)
+    end
+
+    @testset "EntangledQFTBasis show includes position" begin
+        basis = EntangledQFTBasis(3, 3; entangle_position=:middle)
+        io = IOBuffer()
+        show(io, basis)
+        str = String(take!(io))
+        @test occursin("middle", str)
+    end
+
+    @testset "rectangular images with positions" begin
+        m, n = 2, 4
+        for pos in [:front, :middle, :back]
+            basis = EntangledQFTBasis(m, n; entangle_position=pos)
+            @test basis.n_entangle == 2
+            @test basis.entangle_position == pos
+
+            img = rand(4, 16)
+            freq = forward_transform(basis, img)
+            recovered = inverse_transform(basis, freq)
+            @test isapprox(real.(recovered), img, rtol=1e-10)
+        end
+    end
+end
+
 @testset "Tensor Network Structure" begin
     
     @testset "standard QFT tensor structure" begin
