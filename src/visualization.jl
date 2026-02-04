@@ -3,8 +3,6 @@
 # ============================================================================
 # This file provides visualization functionality for training loss curves
 
-using Plots
-
 """
     TrainingHistory
 
@@ -42,8 +40,10 @@ Plot training and validation loss curves for a single basis.
 
 # Example
 ```julia
-history = TrainingHistory([0.1, 0.05, 0.03], [0.12, 0.06, 0.04], "QFT")
-plot_training_loss(history)
+using ParametricDFT
+basis, history = train_basis(QFTBasis, images; m=5, n=5, epochs=3)
+hist = TrainingHistory(history.train_losses, history.val_losses, "QFT")
+plot_training_loss(hist)
 savefig("qft_training_loss.png")
 ```
 """
@@ -57,7 +57,7 @@ function plot_training_loss(history::TrainingHistory;
 
     epochs = 1:length(history.train_losses)
 
-    p = plot(epochs, history.train_losses,
+    p = Plots.plot(epochs, history.train_losses,
              label="Training Loss",
              xlabel=xlabel,
              ylabel=ylabel,
@@ -70,7 +70,7 @@ function plot_training_loss(history::TrainingHistory;
              markersize=4,
              color=:blue)
 
-    plot!(p, epochs, history.val_losses,
+    Plots.plot!(p, epochs, history.val_losses,
           label="Validation Loss",
           linewidth=2,
           marker=:square,
@@ -102,9 +102,12 @@ Plot training loss curves for multiple bases on the same plot for comparison.
 
 # Example
 ```julia
+using ParametricDFT
+basis1, hist1 = train_basis(QFTBasis, images; m=5, n=5, epochs=3)
+basis2, hist2 = train_basis(TEBDBasis, images; m=5, n=5, epochs=3)
 histories = [
-    TrainingHistory([0.1, 0.05], [0.12, 0.06], "QFT"),
-    TrainingHistory([0.15, 0.04], [0.16, 0.05], "TEBD")
+    TrainingHistory(hist1.train_losses, hist1.val_losses, "QFT"),
+    TrainingHistory(hist2.train_losses, hist2.val_losses, "TEBD")
 ]
 plot_training_comparison(histories)
 savefig("training_comparison.png")
@@ -121,7 +124,7 @@ function plot_training_comparison(histories::Vector{TrainingHistory};
 
     @assert loss_type in [:train, :validation, :both] "loss_type must be :train, :validation, or :both"
 
-    p = plot(xlabel=xlabel,
+    p = Plots.plot(xlabel=xlabel,
              ylabel=ylabel,
              title=title,
              yscale=yscale,
@@ -141,7 +144,7 @@ function plot_training_comparison(histories::Vector{TrainingHistory};
 
         # Plot training loss
         if loss_type in [:train, :both]
-            plot!(p, epochs, history.train_losses,
+            Plots.plot!(p, epochs, history.train_losses,
                   label="$(history.basis_name) (Train)",
                   linewidth=2,
                   marker=marker_train,
@@ -152,7 +155,7 @@ function plot_training_comparison(histories::Vector{TrainingHistory};
 
         # Plot validation loss
         if loss_type in [:validation, :both]
-            plot!(p, epochs, history.val_losses,
+            Plots.plot!(p, epochs, history.val_losses,
                   label="$(history.basis_name) (Val)",
                   linewidth=2,
                   marker=marker_val,
@@ -184,11 +187,8 @@ Create a grid of individual training loss plots for multiple bases.
 
 # Example
 ```julia
-histories = [
-    TrainingHistory([0.1, 0.05], [0.12, 0.06], "QFT"),
-    TrainingHistory([0.15, 0.04], [0.16, 0.05], "TEBD"),
-    TrainingHistory([0.12, 0.03], [0.13, 0.04], "Entangled QFT")
-]
+using ParametricDFT
+histories = [hist1, hist2, hist3]  # TrainingHistory objects
 plot_training_grid(histories, layout=(2, 2))
 savefig("training_grid.png")
 ```
@@ -208,12 +208,12 @@ function plot_training_grid(histories::Vector{TrainingHistory};
         layout = (n_rows, n_cols)
     end
 
-    plots = []
+    plots_array = []
 
     for history in histories
         epochs = 1:length(history.train_losses)
 
-        p = plot(epochs, history.train_losses,
+        p = Plots.plot(epochs, history.train_losses,
                 label="Training",
                 xlabel="Epoch",
                 ylabel="Loss",
@@ -225,17 +225,17 @@ function plot_training_grid(histories::Vector{TrainingHistory};
                 markersize=3,
                 color=:blue)
 
-        plot!(p, epochs, history.val_losses,
+        Plots.plot!(p, epochs, history.val_losses,
               label="Validation",
               linewidth=2,
               marker=:square,
               markersize=3,
               color=:red)
 
-        push!(plots, p)
+        push!(plots_array, p)
     end
 
-    return plot(plots...,
+    return Plots.plot(plots_array...,
                 layout=layout,
                 size=size,
                 plot_title=title,
@@ -259,9 +259,10 @@ Generate and save all training visualization plots to a directory.
 
 # Example
 ```julia
+using ParametricDFT
 histories = [
-    TrainingHistory([0.1, 0.05], [0.12, 0.06], "QFT"),
-    TrainingHistory([0.15, 0.04], [0.16, 0.05], "TEBD")
+    TrainingHistory(hist1.train_losses, hist1.val_losses, "QFT"),
+    TrainingHistory(hist2.train_losses, hist2.val_losses, "TEBD")
 ]
 save_training_plots(histories, "output/")
 ```
@@ -286,7 +287,7 @@ function save_training_plots(histories::Vector{TrainingHistory},
         filename = joinpath(output_dir, "$(file_prefix)$(safe_name)_loss.png")
 
         p = plot_training_loss(history)
-        savefig(p, filename)
+        Plots.savefig(p, filename)
         push!(saved_files, filename)
     end
 
@@ -294,27 +295,27 @@ function save_training_plots(histories::Vector{TrainingHistory},
     if length(histories) > 1
         filename = joinpath(output_dir, "$(file_prefix)comparison_all.png")
         p = plot_training_comparison(histories; loss_type=:both)
-        savefig(p, filename)
+        Plots.savefig(p, filename)
         push!(saved_files, filename)
 
         # 3. Training loss only comparison
         filename = joinpath(output_dir, "$(file_prefix)comparison_train.png")
         p = plot_training_comparison(histories; loss_type=:train,
                                      title="Training Loss Comparison")
-        savefig(p, filename)
+        Plots.savefig(p, filename)
         push!(saved_files, filename)
 
         # 4. Validation loss only comparison
         filename = joinpath(output_dir, "$(file_prefix)comparison_val.png")
         p = plot_training_comparison(histories; loss_type=:validation,
                                      title="Validation Loss Comparison")
-        savefig(p, filename)
+        Plots.savefig(p, filename)
         push!(saved_files, filename)
 
         # 5. Grid plot
         filename = joinpath(output_dir, "$(file_prefix)grid.png")
         p = plot_training_grid(histories)
-        savefig(p, filename)
+        Plots.savefig(p, filename)
         push!(saved_files, filename)
     end
 

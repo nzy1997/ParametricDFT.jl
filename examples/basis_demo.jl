@@ -31,10 +31,7 @@ using Statistics
 using Printf
 using FFTW
 using NPZ
-using Plots
-
-# Include visualization utilities
-include("../src/visualization.jl")
+using Plots  # This automatically loads the visualization extension
 
 # ================================================================================
 # Dataset Configuration
