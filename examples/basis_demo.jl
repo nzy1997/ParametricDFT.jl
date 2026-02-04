@@ -31,6 +31,10 @@ using Statistics
 using Printf
 using FFTW
 using NPZ
+using Plots
+
+# Include visualization utilities
+include("../src/visualization.jl")
 
 # ================================================================================
 # Dataset Configuration
@@ -354,9 +358,9 @@ function main()
     println("  Images: $NUM_TRAINING_IMAGES | Epochs: $TRAINING_EPOCHS | Steps/image: $STEPS_PER_IMAGE")
     println("  Loss: MSELoss($k) - reconstruct from top $k/$total_coefficients coefficients")
     
-    # Train QFT
+    # Train QFT and capture training history
     println("\n--- Training Standard QFT Basis ---")
-    @time trained_qft = train_basis(
+    trained_qft, qft_history = @time train_basis(
         QFTBasis, training_images;
         m=M_QUBITS, n=N_QUBITS,
         loss=ParametricDFT.MSELoss(k),
@@ -365,10 +369,10 @@ function main()
         validation_split=0.2,
         verbose=true
     )
-    
-    # Train Entangled QFT
+
+    # Train Entangled QFT and capture training history
     println("\n--- Training Entangled QFT Basis ---")
-    @time trained_entangled = train_basis(
+    trained_entangled, entangled_history = @time train_basis(
         EntangledQFTBasis, training_images;
         m=M_QUBITS, n=N_QUBITS,
         entangle_position=:back,
@@ -378,10 +382,10 @@ function main()
         validation_split=0.2,
         verbose=true
     )
-    
-    # Train TEBD
+
+    # Train TEBD and capture training history
     println("\n--- Training TEBD Basis ---")
-    @time trained_tebd = train_basis(
+    trained_tebd, tebd_history = @time train_basis(
         TEBDBasis, training_images;
         m=M_QUBITS, n=N_QUBITS,
         loss=ParametricDFT.MSELoss(k),
@@ -396,7 +400,32 @@ function main()
     println("  Trained Entangled:    $(num_parameters(trained_entangled)) parameters")
     println("  Trained TEBD:         $(num_parameters(trained_tebd)) parameters")
     println("  Entanglement phases:  $(round.(get_entangle_phases(trained_entangled), digits=4))")
-    
+
+    # ============================================================================
+    # Step 3.5: Visualize Training Losses
+    # ============================================================================
+
+    println("\n" * "="^80)
+    println("Step 3.5: Visualizing Training Losses")
+    println("="^80)
+
+    # Convert history tuples to TrainingHistory objects
+    histories = [
+        TrainingHistory(qft_history.train_losses, qft_history.val_losses, "QFT"),
+        TrainingHistory(entangled_history.train_losses, entangled_history.val_losses, "Entangled QFT"),
+        TrainingHistory(tebd_history.train_losses, tebd_history.val_losses, "TEBD")
+    ]
+
+    # Generate and save all training plots
+    println("\nGenerating training loss plots...")
+    saved_plots = save_training_plots(histories, OUTPUT_DIR)
+
+    println("\n✓ Training loss plots saved:")
+    for plot_path in saved_plots
+        filename = basename(plot_path)
+        println("  ✓ $filename")
+    end
+
     # ============================================================================
     # Step 4: Save Trained Bases
     # ============================================================================
@@ -582,10 +611,18 @@ function main()
     
     Output files saved to: $OUTPUT_DIR
     ├─ trained_qft.json              : Trained QFT basis
-    ├─ trained_entangled_qft.json    : Trained Entangled QFT basis  
+    ├─ trained_entangled_qft.json    : Trained Entangled QFT basis
     ├─ trained_tebd.json             : Trained TEBD basis
     ├─ original_$(sample_label).png          : Original test image
-    └─ recovered_*.png               : Recovered images for each basis
+    ├─ recovered_*.png               : Recovered images for each basis
+    └─ Training loss visualizations:
+       ├─ qft_loss.png               : QFT training/validation loss curves
+       ├─ entangled_qft_loss.png     : Entangled QFT loss curves
+       ├─ tebd_loss.png              : TEBD loss curves
+       ├─ comparison_all.png         : All bases comparison (train + val)
+       ├─ comparison_train.png       : Training loss comparison
+       ├─ comparison_val.png         : Validation loss comparison
+       └─ grid.png                   : Grid view of all loss curves
     """
     
     println(summary_text)

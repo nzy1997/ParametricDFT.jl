@@ -115,7 +115,7 @@
         # Create a small trained basis
         m, n = 3, 3
         dataset = [rand(Float64, 8, 8) for _ in 1:3]
-        trained_basis = train_basis(
+        trained_basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
             epochs=1,

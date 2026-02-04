@@ -13,7 +13,7 @@
         dataset = [rand(Float64, 8, 8) for _ in 1:num_images]
         
         # Train with minimal steps for testing
-        basis = train_basis(
+        basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
             loss=ParametricDFT.L1Norm(),
@@ -38,7 +38,7 @@
         # Keep 50% of coefficients
         k = round(Int, 2^(m+n) * 0.5)
         
-        basis = train_basis(
+        basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
             loss=ParametricDFT.MSELoss(k),
@@ -57,7 +57,7 @@
         m, n = 3, 3
         dataset = [rand(Float64, 8, 8) for _ in 1:4]
         
-        basis = train_basis(
+        basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
             loss=ParametricDFT.L2Norm(),
@@ -76,7 +76,7 @@
         m, n = 3, 3
         dataset = [rand(Float64, 8, 8) for _ in 1:4]
         
-        basis = train_basis(
+        basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
             epochs=1,
@@ -96,7 +96,7 @@
         
         # Test with no validation (0.0 split)
         # Note: validation_split must be < 1.0, but 0.0 will still create at least 1 validation sample
-        basis = train_basis(
+        basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
             epochs=1,
@@ -142,7 +142,7 @@
         dataset = [rand(Float64, 8, 8) for _ in 1:6]
         
         # Train with early stopping enabled
-        basis = train_basis(
+        basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
             epochs=10,  # Many epochs to trigger early stopping
@@ -160,7 +160,7 @@
         m, n = 3, 3
         dataset = [rand(Float64, 8, 8) for _ in 1:4]
         
-        basis = train_basis(
+        basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
             epochs=1,
@@ -185,7 +185,7 @@
         # Dataset with complex images
         dataset = [rand(ComplexF64, 8, 8) for _ in 1:4]
         
-        basis = train_basis(
+        basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
             epochs=1,
@@ -211,7 +211,7 @@ end
         dataset = [rand(Float64, 8, 8) for _ in 1:num_images]
         
         # Train with minimal steps for testing
-        basis = train_basis(
+        basis, _ = train_basis(
             EntangledQFTBasis, dataset;
             m=m, n=n,
             loss=ParametricDFT.MSELoss(10),
@@ -235,7 +235,7 @@ end
         initial_phases = [0.1, 0.2, 0.3]
         dataset = [rand(Float64, 8, 8) for _ in 1:4]
         
-        basis = train_basis(
+        basis, _ = train_basis(
             EntangledQFTBasis, dataset;
             m=m, n=n,
             entangle_phases=initial_phases,
@@ -254,7 +254,7 @@ end
         m, n = 3, 3
         dataset = [rand(Float64, 8, 8) for _ in 1:4]
         
-        basis = train_basis(
+        basis, _ = train_basis(
             EntangledQFTBasis, dataset;
             m=m, n=n,
             epochs=1,
@@ -297,7 +297,7 @@ end
         m, n = 3, 3
         dataset = [rand(Float64, 8, 8) for _ in 1:4]
         
-        trained_basis = train_basis(
+        trained_basis, _ = train_basis(
             EntangledQFTBasis, dataset;
             m=m, n=n,
             epochs=1,

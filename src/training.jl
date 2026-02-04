@@ -9,11 +9,11 @@
 # ============================================================================
 
 """
-    _train_basis_core(dataset, optcode, inverse_code, initial_tensors, m, n, loss, 
-                      epochs, steps_per_image, validation_split, shuffle, 
+    _train_basis_core(dataset, optcode, inverse_code, initial_tensors, m, n, loss,
+                      epochs, steps_per_image, validation_split, shuffle,
                       early_stopping_patience, verbose, basis_name; extra_info="")
 
-Core training loop shared by all basis types. Returns (final_tensors, best_val_loss).
+Core training loop shared by all basis types. Returns (final_tensors, best_val_loss, train_losses, val_losses).
 """
 function _train_basis_core(
     dataset::Vector{<:AbstractMatrix},
@@ -63,7 +63,11 @@ function _train_basis_core(
     best_theta = current_theta
     best_val_loss = Inf
     patience_counter = 0
-    
+
+    # Track training history
+    train_losses = Float64[]
+    val_losses = Float64[]
+
     # Training loop
     for epoch in 1:epochs
         verbose && println("\nEpoch $epoch/$epochs")
@@ -93,7 +97,11 @@ function _train_basis_core(
         tensors = point2tensors(current_theta, M)
         val_loss = _compute_validation_loss(validation_data, tensors, optcode, inverse_code, m, n, loss)
         avg_train_loss = isempty(epoch_losses) ? Inf : sum(epoch_losses) / length(epoch_losses)
-        
+
+        # Store losses for visualization
+        push!(train_losses, avg_train_loss)
+        push!(val_losses, val_loss)
+
         if verbose
             println("  Avg train loss: $(round(avg_train_loss, digits=6))")
             println("  Validation loss: $(round(val_loss, digits=6))")
@@ -119,8 +127,8 @@ function _train_basis_core(
     
     final_tensors = point2tensors(best_theta, M)
     verbose && println("\n✓ Training completed. Best validation loss: $(round(best_val_loss, digits=6))")
-    
-    return final_tensors, best_val_loss
+
+    return final_tensors, best_val_loss, train_losses, val_losses
 end
 
 # ============================================================================
@@ -148,14 +156,17 @@ Train a QFTBasis on a dataset of images using Riemannian gradient descent.
 - `verbose::Bool = true`: Whether to print training progress
 
 # Returns
-- `QFTBasis`: Trained basis with optimized parameters
+- `Tuple{QFTBasis, NamedTuple}`: Trained basis and training history
+  - `basis`: Trained QFTBasis with optimized parameters
+  - `history`: NamedTuple with fields `train_losses`, `val_losses`, `basis_name`
 
 # Example
 ```julia
 images = [load_image(path) for path in image_paths]
 k = round(Int, 64 * 64 * 0.1)  # Keep 10% of coefficients
-basis = train_basis(QFTBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5)
+basis, history = train_basis(QFTBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5)
 save_basis("trained_basis.json", basis)
+println("Final training loss: ", history.train_losses[end])
 ```
 """
 function train_basis(
@@ -181,13 +192,16 @@ function train_basis(
     optcode, initial_tensors = qft_code(m, n)
     inverse_code, _ = qft_code(m, n; inverse=true)
     
-    final_tensors, _ = _train_basis_core(
+    final_tensors, _, train_losses, val_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, verbose, "QFTBasis"
     )
-    
-    return QFTBasis(m, n, final_tensors, optcode, inverse_code)
+
+    trained_basis = QFTBasis(m, n, final_tensors, optcode, inverse_code)
+    history = (train_losses=train_losses, val_losses=val_losses, basis_name="QFT")
+
+    return trained_basis, history
 end
 
 """
@@ -206,13 +220,16 @@ Train an EntangledQFTBasis on a dataset of images using Riemannian gradient desc
   `early_stopping_patience`, `verbose`: Same as QFTBasis
 
 # Returns
-- `EntangledQFTBasis`: Trained basis with optimized entanglement phases
+- `Tuple{EntangledQFTBasis, NamedTuple}`: Trained basis and training history
+  - `basis`: Trained EntangledQFTBasis with optimized entanglement phases
+  - `history`: NamedTuple with fields `train_losses`, `val_losses`, `basis_name`
 
 # Example
 ```julia
 k = round(Int, 64 * 64 * 0.1)
-basis = train_basis(EntangledQFTBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5)
+basis, history = train_basis(EntangledQFTBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5)
 phases = get_entangle_phases(basis)
+println("Training loss per epoch: ", history.train_losses)
 ```
 """
 function train_basis(
@@ -242,13 +259,13 @@ function train_basis(
     optcode, initial_tensors, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, entangle_position=entangle_position)
     inverse_code, _, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, inverse=true, entangle_position=entangle_position)
     
-    final_tensors, _ = _train_basis_core(
+    final_tensors, _, train_losses, val_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, verbose, "EntangledQFTBasis";
         extra_info = "  Entanglement gates: $n_entangle"
     )
-    
+
     # Extract trained phases
     entangle_indices = get_entangle_tensor_indices(final_tensors, n_entangle)
     trained_phases = if !isempty(entangle_indices)
@@ -256,14 +273,17 @@ function train_basis(
     else
         entangle_phases === nothing ? zeros(n_entangle) : Float64.(entangle_phases)
     end
-    
+
     if verbose
         initial_str = entangle_phases === nothing ? "zeros" : "$(round.(entangle_phases, digits=4))"
         println("  Initial entanglement phases: $initial_str")
         println("  Trained entanglement phases: $(round.(trained_phases, digits=4))")
     end
-    
-    return EntangledQFTBasis(m, n, final_tensors, optcode, inverse_code, n_entangle, trained_phases, entangle_position)
+
+    trained_basis = EntangledQFTBasis(m, n, final_tensors, optcode, inverse_code, n_entangle, trained_phases, entangle_position)
+    history = (train_losses=train_losses, val_losses=val_losses, basis_name="Entangled QFT")
+
+    return trained_basis, history
 end
 
 """
@@ -285,12 +305,15 @@ Train a TEBDBasis on a dataset of images using Riemannian gradient descent.
   `early_stopping_patience`, `verbose`: Same as QFTBasis
 
 # Returns
-- `TEBDBasis`: Trained basis with optimized parameters
+- `Tuple{TEBDBasis, NamedTuple}`: Trained basis and training history
+  - `basis`: Trained TEBDBasis with optimized parameters
+  - `history`: NamedTuple with fields `train_losses`, `val_losses`, `basis_name`
 
 # Example
 ```julia
 k = round(Int, 64 * 64 * 0.1)  # Keep 10% of coefficients
-basis = train_basis(TEBDBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5)
+basis, history = train_basis(TEBDBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5)
+println("Validation loss per epoch: ", history.val_losses)
 ```
 """
 function train_basis(
@@ -328,13 +351,13 @@ function train_basis(
     optcode, initial_tensors, _, _ = tebd_code(m, n; phases=phases)
     inverse_code, _, _, _ = tebd_code(m, n; phases=phases, inverse=true)
     
-    final_tensors, _ = _train_basis_core(
+    final_tensors, _, train_losses, val_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, verbose, "TEBDBasis";
         extra_info = "  Row qubits: $m, Col qubits: $n\n  Row ring gates: $n_row_gates, Col ring gates: $n_col_gates"
     )
-    
+
     # Extract trained phases
     gate_indices = get_tebd_gate_indices(final_tensors, n_gates)
     trained_phases = if !isempty(gate_indices)
@@ -342,14 +365,17 @@ function train_basis(
     else
         phases === nothing ? zeros(n_gates) : Float64.(phases)
     end
-    
+
     if verbose
         initial_str = phases === nothing ? "zeros" : "$(round.(phases, digits=4))"
         println("  Initial phases: $initial_str")
         println("  Trained phases: $(round.(trained_phases, digits=4))")
     end
-    
-    return TEBDBasis(m, n, final_tensors, optcode, inverse_code, n_row_gates, n_col_gates, trained_phases)
+
+    trained_basis = TEBDBasis(m, n, final_tensors, optcode, inverse_code, n_row_gates, n_col_gates, trained_phases)
+    history = (train_losses=train_losses, val_losses=val_losses, basis_name="TEBD")
+
+    return trained_basis, history
 end
 
 # ============================================================================

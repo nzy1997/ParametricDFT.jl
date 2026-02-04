@@ -127,7 +127,7 @@ function main()
 
     for pos in POSITIONS
         println("\n  [$pos] Training...")
-        @time trained[pos] = train_basis(
+        @time trained[pos], _ = train_basis(
             EntangledQFTBasis, training_images;
             m=M_QUBITS, n=N_QUBITS,
             entangle_position=pos,
