@@ -67,7 +67,8 @@ Plot training and validation loss curves for a single basis.
 ```julia
 using ParametricDFT
 basis, history = train_basis(QFTBasis, images; m=5, n=5, epochs=3)
-hist = TrainingHistory(history.train_losses, history.val_losses, "QFT")
+hist = TrainingHistory(history.train_losses, history.val_losses,
+                       history.step_train_losses, "QFT")
 fig = plot_training_loss(hist)
 save("qft_training_loss.png", fig)
 ```
@@ -276,8 +277,8 @@ using ParametricDFT
 basis1, hist1 = train_basis(QFTBasis, images; m=5, n=5, epochs=3)
 basis2, hist2 = train_basis(TEBDBasis, images; m=5, n=5, epochs=3)
 histories = [
-    TrainingHistory(hist1.train_losses, hist1.val_losses, "QFT"),
-    TrainingHistory(hist2.train_losses, hist2.val_losses, "TEBD")
+    TrainingHistory(hist1.train_losses, hist1.val_losses, hist1.step_train_losses, "QFT"),
+    TrainingHistory(hist2.train_losses, hist2.val_losses, hist2.step_train_losses, "TEBD")
 ]
 fig = plot_training_comparison(histories)
 save("training_comparison.png", fig)
