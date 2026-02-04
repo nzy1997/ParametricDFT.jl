@@ -21,6 +21,7 @@ using Random
 using Statistics
 using Printf
 using FFTW
+using CairoMakie  # Used for training loss visualization
 
 # ================================================================================
 # Configuration
@@ -124,10 +125,11 @@ function main()
     println("  Loss: MSELoss($k) | Epochs: $TRAINING_EPOCHS | Steps/image: $STEPS_PER_IMAGE")
 
     trained = Dict{Symbol, EntangledQFTBasis}()
+    train_histories = Dict{Symbol, Any}()
 
     for pos in POSITIONS
         println("\n  [$pos] Training...")
-        @time trained[pos], _ = train_basis(
+        @time trained[pos], train_histories[pos] = train_basis(
             EntangledQFTBasis, training_images;
             m=M_QUBITS, n=N_QUBITS,
             entangle_position=pos,
@@ -150,6 +152,30 @@ function main()
         path = joinpath(OUTPUT_DIR, "trained_entangled_$(pos).json")
         save_basis(path, trained[pos])
         println("  Saved: trained_entangled_$(pos).json ($(round(filesize(path)/1024, digits=2)) KB)")
+    end
+
+    # =========================================================================
+    # Step 4.5: Visualize Training Losses
+    # =========================================================================
+
+    println("\n--- Step 4.5: Visualizing Training Losses ---")
+
+    histories = [
+        TrainingHistory(
+            train_histories[pos].train_losses,
+            train_histories[pos].val_losses,
+            train_histories[pos].step_train_losses,
+            "Entangled :$pos"
+        )
+        for pos in POSITIONS
+    ]
+
+    plots_dir = joinpath(OUTPUT_DIR, "plots")
+    saved_plots = save_training_plots(histories, plots_dir)
+
+    println("  Training loss plots saved to: $plots_dir")
+    for plot_path in saved_plots
+        println("    ✓ $(relpath(plot_path, plots_dir))")
     end
 
     # =========================================================================
@@ -322,6 +348,11 @@ function main()
       :back   $(round.(get_entangle_phases(trained[:back]),   digits=4))
 
     Output files: $OUTPUT_DIR
+    ├─ trained_entangled_*.json   : Trained bases
+    ├─ original_*.png / recovered_*.png : Sample images
+    └─ plots/                     : Training loss visualizations
+       ├─ log/                    : Log-scale (y-axis) plots
+       └─ linear/                 : Linear-scale (y-axis) plots
     """)
     println("="^90)
 
