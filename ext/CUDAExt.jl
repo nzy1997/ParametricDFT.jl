@@ -60,14 +60,15 @@ function ParametricDFT.topk_truncate(x::CuArray{T}, k::Integer) where {T}
     scores_flat = vec(scores)
     idx = partialsortperm(scores_flat, 1:k2, rev=true)
 
-    # Create mask on CPU
-    mask = zeros(T, m, n)
+    # Create mask on CPU (use real type for efficiency, complex multiplication not needed)
+    RT = real(T)
+    mask = zeros(RT, m, n)
     for flat_idx in idx
-        mask[flat_idx] = one(T)
+        mask[flat_idx] = one(RT)
     end
 
-    # Apply mask on GPU
-    mask_gpu = CUDA.cu(mask)
+    # Apply mask on GPU - preserve type to avoid Float32 conversion
+    mask_gpu = CuArray{RT}(mask)
     return x .* mask_gpu
 end
 
@@ -92,18 +93,27 @@ end
 GPU-compatible QR retraction on unitary manifold.
 Note: QR decomposition on GPU uses cuSOLVER.
 """
-function ParametricDFT.retract_unitary_qr(U::CuMatrix, ξ::CuMatrix, α)
+function ParametricDFT.retract_unitary_qr(U::CuMatrix{T}, ξ::CuMatrix{T}, α) where T
     Y = U + α * ξ
     # Use CUDA's QR decomposition
-    Q, R = qr(Y)
-    Q_mat = CuMatrix(Q)
+    F = qr(Y)
 
-    # Ensure correct orientation (handle sign ambiguity)
-    # Get diagonal signs from R
-    d = diag(R)
-    signs = sign.(real.(d))
+    # Extract Q matrix - this is the orthogonalized version of Y
+    # For small steps, Q ≈ Y normalized, which approximates the exponential map
+    Q_mat = CuMatrix(F.Q)
+
+    # Sign correction: ensure diagonal of R is positive
+    # Move R to CPU for diagonal extraction (avoid scalar indexing on GPU)
+    R_cpu = Array(F.R)
+    n = size(R_cpu, 1)
+    signs = zeros(T, n)
+    for i in 1:n
+        signs[i] = real(R_cpu[i, i]) < 0 ? T(-1) : T(1)
+    end
+    signs_gpu = CuArray(signs)
+
     # Multiply columns of Q by signs
-    return Q_mat .* reshape(signs, 1, :)
+    return Q_mat .* reshape(signs_gpu, 1, :)
 end
 
 # ============================================================================
@@ -116,6 +126,29 @@ end
 GPU-compatible skew-Hermitian projection.
 """
 ParametricDFT.skew(A::CuMatrix) = (A - A') / 2
+
+# ============================================================================
+# GPU-Compatible U(1)^4 Operations
+# ============================================================================
+
+"""
+    project_tangent_u1_product(z::CuMatrix, g::CuMatrix)
+
+GPU-compatible projection onto U(1)^4 tangent space.
+"""
+function ParametricDFT.project_tangent_u1_product(z::CuMatrix, g::CuMatrix)
+    return im .* imag.(conj.(z) .* g) .* z
+end
+
+"""
+    retract_u1_product(z::CuMatrix, ξ::CuMatrix, α)
+
+GPU-compatible U(1)^4 retraction via normalization.
+"""
+function ParametricDFT.retract_u1_product(z::CuMatrix, ξ::CuMatrix, α)
+    y = z .+ α .* ξ
+    return y ./ abs.(y)
+end
 
 # ============================================================================
 # GPU-Compatible rrule for topk_truncate
@@ -152,13 +185,14 @@ function ChainRulesCore.rrule(::typeof(ParametricDFT.topk_truncate), x::CuArray{
     idx = partialsortperm(scores_flat, 1:k2, rev=true)
 
     # Create mask on CPU
-    mask_cpu = zeros(real(T), m, n)
+    RT = real(T)
+    mask_cpu = zeros(RT, m, n)
     for flat_idx in idx
-        mask_cpu[flat_idx] = one(real(T))
+        mask_cpu[flat_idx] = one(RT)
     end
 
-    # Convert mask to GPU
-    mask_gpu = CUDA.cu(mask_cpu)
+    # Convert mask to GPU - preserve type to avoid Float32 conversion
+    mask_gpu = CuArray{RT}(mask_cpu)
 
     # Apply mask on GPU (element-wise, no scalar indexing)
     y = x .* mask_gpu

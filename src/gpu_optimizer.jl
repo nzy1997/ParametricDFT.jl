@@ -1,15 +1,74 @@
 # ============================================================================
-# GPU-Compatible Riemannian Optimizer for Unitary Manifolds
+# GPU-Compatible Riemannian Optimizer for Mixed Manifolds
 # ============================================================================
 # Custom implementation of Riemannian gradient descent that works with GPU arrays.
 # This bypasses Manifolds.jl/Manopt.jl which don't support GPU.
 #
-# For unitary matrices U ∈ U(n):
-# - Tangent space at U: T_U = {U*S : S is skew-Hermitian}
-# - Riemannian gradient: proj_U(∇f) = U * skew(U' * ∇f)
-# - Retraction: QR-based or Cayley retraction
+# Supports two manifold types:
+# 1. U(2) - Unitary matrices (for Hadamard-like gates)
+#    - Tangent space at U: T_U = {U*S : S is skew-Hermitian}
+#    - Riemannian gradient: proj_U(∇f) = U * skew(U' * ∇f)
+#    - Retraction: QR-based
+#
+# 2. U(1)^4 - Product of 4 unit circles (for controlled phase gates)
+#    - Tangent space at z: T_z = {iθ*z : θ ∈ ℝ}
+#    - Riemannian gradient: imaginary part of conj(z)*g
+#    - Retraction: normalization z_new = z / |z|
 
 using LinearAlgebra
+
+# ============================================================================
+# Manifold Type Detection
+# ============================================================================
+
+"""
+    is_unitary_tensor(t)
+
+Check if tensor t is a unitary matrix (U(2) manifold).
+Returns true for Hadamard-like gates, false for controlled phase gates.
+
+Controlled phase gates have all elements with |z| ≈ 1 but the matrix itself
+is not unitary (doesn't satisfy U*U' = I).
+"""
+function is_unitary_tensor(t::AbstractMatrix{T}) where T
+    # Check if it's a 2x2 matrix
+    size(t) == (2, 2) || return false
+    # Check unitarity: U*U' ≈ I
+    UUh = t * t'
+    return isapprox(UUh, Matrix{T}(I, 2, 2), atol=1e-6)
+end
+
+# ============================================================================
+# U(1)^4 Manifold Operations (for controlled phase gates)
+# ============================================================================
+
+"""
+    project_tangent_u1_product(z, g)
+
+Project Euclidean gradient g onto the tangent space of U(1)^4 at z.
+For each element z[i], the tangent space is the imaginary axis scaled by z[i].
+The projection of g[i] is: z[i] * im * imag(conj(z[i]) * g[i])
+
+This is equivalent to the imaginary part of the product in the Lie algebra.
+"""
+function project_tangent_u1_product(z::AbstractMatrix, g::AbstractMatrix)
+    # For each element on U(1), the Riemannian gradient is:
+    # proj_{z_i}(g_i) = z_i * im * imag(conj(z_i) * g_i)
+    # This simplifies to: im * imag(conj(z) .* g) .* z
+    return im .* imag.(conj.(z) .* g) .* z
+end
+
+"""
+    retract_u1_product(z, ξ, α)
+
+Retract on U(1)^4 product manifold.
+For each element, move in direction ξ and project back to unit circle.
+"""
+function retract_u1_product(z::AbstractMatrix, ξ::AbstractMatrix, α)
+    y = z .+ α .* ξ
+    # Normalize each element to stay on U(1)
+    return y ./ abs.(y)
+end
 
 # ============================================================================
 # Unitary Manifold Operations
@@ -83,10 +142,14 @@ end
         lr=0.01, max_iter=100, tol=1e-6, verbose=false
     )
 
-GPU-compatible Riemannian gradient descent for a list of unitary tensors.
+GPU-compatible Riemannian gradient descent for mixed manifold tensors.
+
+Automatically detects manifold type for each tensor:
+- Unitary matrices (U(2)): QR retraction
+- U(1)^4 product (controlled phases): Normalization retraction
 
 # Arguments
-- `tensors`: Vector of unitary matrices (can be CuArrays)
+- `tensors`: Vector of matrices (can be CuArrays)
 - `loss_fn`: Function that computes loss given tensors
 - `grad_fn`: Function that computes Euclidean gradients w.r.t. tensors
 
@@ -112,27 +175,58 @@ function riemannian_gradient_descent_gpu(
     current_tensors = copy.(tensors)
     n_tensors = length(tensors)
 
+    # Detect manifold type for each tensor (using CPU version for type check)
+    is_unitary = [is_unitary_tensor(Array(t)) for t in tensors]
+
+    if verbose
+        n_unitary = sum(is_unitary)
+        println("  Manifold types: $n_unitary U(2), $(n_tensors - n_unitary) U(1)^4")
+    end
+
+    # Debug: print initial loss
+    if verbose
+        initial_loss = loss_fn(current_tensors)
+        println("  Initial loss: ", round(initial_loss, digits=6))
+    end
+
     for iter in 1:max_iter
         # Compute Euclidean gradients
         euclidean_grads_raw = grad_fn(current_tensors)
         # Handle case where Zygote returns a tuple instead of vector
         euclidean_grads = euclidean_grads_raw isa Tuple ? collect(euclidean_grads_raw) : euclidean_grads_raw
 
+        # Check for NaN or Inf in gradients
+        has_bad_grad = false
+        for g in euclidean_grads
+            if any(isnan, g) || any(isinf, g)
+                has_bad_grad = true
+                break
+            end
+        end
+        if has_bad_grad
+            verbose && println("  WARNING: NaN or Inf in gradients at iter $iter")
+            break
+        end
+
         # Project to Riemannian gradients and compute norm
         riemannian_grads = Vector{T}(undef, n_tensors)
         grad_norm_sq = zero(real(eltype(T)))
 
         for i in 1:n_tensors
-            # Project Euclidean gradient to tangent space
-            riemannian_grads[i] = project_tangent_unitary(current_tensors[i], euclidean_grads[i])
+            # Project Euclidean gradient to tangent space based on manifold type
+            if is_unitary[i]
+                riemannian_grads[i] = project_tangent_unitary(current_tensors[i], euclidean_grads[i])
+            else
+                riemannian_grads[i] = project_tangent_u1_product(current_tensors[i], euclidean_grads[i])
+            end
             grad_norm_sq += sum(abs2, riemannian_grads[i])
         end
 
         grad_norm = sqrt(grad_norm_sq)
 
-        if verbose && iter % 10 == 0
+        if verbose && (iter % 10 == 0 || iter == 1)
             loss = loss_fn(current_tensors)
-            println("  Iter $iter: loss = $(round(loss, digits=6)), grad_norm = $(round(grad_norm, digits=6))")
+            println("  Iter $iter: loss = $(round(loss, digits=6)), grad_norm = $(round(grad_norm, digits=6)), lr = $lr")
         end
 
         # Check convergence
@@ -141,14 +235,23 @@ function riemannian_gradient_descent_gpu(
             break
         end
 
-        # Update tensors using retraction
+        # Update tensors using appropriate retraction
         for i in 1:n_tensors
-            # Use QR retraction (works well with GPU)
-            current_tensors[i] = retract_unitary_qr(
-                current_tensors[i],
-                -riemannian_grads[i],  # Negative gradient for descent
-                lr
-            )
+            if is_unitary[i]
+                # Use QR retraction for U(2)
+                current_tensors[i] = retract_unitary_qr(
+                    current_tensors[i],
+                    -riemannian_grads[i],  # Negative gradient for descent
+                    lr
+                )
+            else
+                # Use normalization retraction for U(1)^4
+                current_tensors[i] = retract_u1_product(
+                    current_tensors[i],
+                    -riemannian_grads[i],
+                    lr
+                )
+            end
         end
     end
 
@@ -274,11 +377,11 @@ function _train_on_batch_gpu(
     end
 
     # Run Riemannian gradient descent
-    # Use a higher learning rate than default since Manopt uses adaptive step sizes
-    # The lr passed in is typically 0.01, so we scale up to ~0.1 for faster convergence
+    # Use the passed learning rate - don't override it
+    # Debug: enable verbose for first batch only (controlled by global counter)
     optimized = riemannian_gradient_descent_gpu(
         tensors, loss_fn, grad_fn;
-        lr=max(lr, 0.1), max_iter=steps, tol=1e-8, verbose=false
+        lr=lr, max_iter=steps, tol=1e-8, verbose=true
     )
 
     return optimized
