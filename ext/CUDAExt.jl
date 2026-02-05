@@ -135,19 +135,25 @@ ParametricDFT.skew(A::CuMatrix) = (A - A') / 2
     project_tangent_u1_product(z::CuMatrix, g::CuMatrix)
 
 GPU-compatible projection onto U(1)^4 tangent space.
+Ensures type stability by using typed imaginary unit.
 """
-function ParametricDFT.project_tangent_u1_product(z::CuMatrix, g::CuMatrix)
-    return im .* imag.(conj.(z) .* g) .* z
+function ParametricDFT.project_tangent_u1_product(z::CuMatrix{T}, g::CuMatrix{T}) where T
+    # Use T(im) to ensure type stability with ComplexF64
+    return T(im) .* imag.(conj.(z) .* g) .* z
 end
 
 """
     retract_u1_product(z::CuMatrix, ξ::CuMatrix, α)
 
 GPU-compatible U(1)^4 retraction via normalization.
+Ensures type stability by converting step size to match element type.
 """
-function ParametricDFT.retract_u1_product(z::CuMatrix, ξ::CuMatrix, α)
-    y = z .+ α .* ξ
-    return y ./ abs.(y)
+function ParametricDFT.retract_u1_product(z::CuMatrix{T}, ξ::CuMatrix{T}, α) where T
+    # Ensure α has the correct type to avoid Float32/Float64 mixing
+    α_typed = convert(real(T), α)
+    y = z .+ α_typed .* ξ
+    # Normalize with explicit type conversion to maintain ComplexF64
+    return y ./ T.(abs.(y))
 end
 
 # ============================================================================

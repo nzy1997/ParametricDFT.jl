@@ -51,11 +51,12 @@ The projection of g[i] is: z[i] * im * imag(conj(z[i]) * g[i])
 
 This is equivalent to the imaginary part of the product in the Lie algebra.
 """
-function project_tangent_u1_product(z::AbstractMatrix, g::AbstractMatrix)
+function project_tangent_u1_product(z::AbstractMatrix{T}, g::AbstractMatrix{T}) where T
     # For each element on U(1), the Riemannian gradient is:
     # proj_{z_i}(g_i) = z_i * im * imag(conj(z_i) * g_i)
     # This simplifies to: im * imag(conj(z) .* g) .* z
-    return im .* imag.(conj.(z) .* g) .* z
+    # Use T(im) to ensure type stability
+    return T(im) .* imag.(conj.(z) .* g) .* z
 end
 
 """
@@ -63,11 +64,15 @@ end
 
 Retract on U(1)^4 product manifold.
 For each element, move in direction ξ and project back to unit circle.
+Ensures type stability by converting step size to match element type.
 """
-function retract_u1_product(z::AbstractMatrix, ξ::AbstractMatrix, α)
-    y = z .+ α .* ξ
+function retract_u1_product(z::AbstractMatrix{T}, ξ::AbstractMatrix{T}, α) where T
+    # Ensure α has the correct type to avoid Float32/Float64 mixing
+    α_typed = convert(real(T), α)
+    y = z .+ α_typed .* ξ
     # Normalize each element to stay on U(1)
-    return y ./ abs.(y)
+    # Use explicit conversion to maintain type
+    return y ./ T.(abs.(y))
 end
 
 # ============================================================================
@@ -101,13 +106,16 @@ QR-based retraction on the unitary manifold.
 Moves from U in direction ξ with step size α.
 
 Uses QR decomposition to ensure the result stays on U(n).
+Ensures type stability by converting step size to match element type.
 """
-function retract_unitary_qr(U, ξ, α)
-    Y = U + α * ξ
+function retract_unitary_qr(U::AbstractMatrix{T}, ξ::AbstractMatrix{T}, α) where T
+    # Ensure α has the correct type to avoid Float32/Float64 mixing
+    α_typed = convert(real(T), α)
+    Y = U + α_typed * ξ
     Q, R = qr(Y)
     # Ensure we're on the same connected component (det = 1 for SU(n))
     # by adjusting signs based on diagonal of R
-    Q_mat = Matrix(Q)
+    Q_mat = Matrix{T}(Q)
     for i in axes(R, 1)
         if real(R[i, i]) < 0
             Q_mat[:, i] .*= -1
