@@ -43,11 +43,15 @@ end
 
 Generate product manifold for m+n-qubit QFT parameters.
 Returns a product of U(2) manifolds for Hadamard gates and U(1)^4 for controlled gates.
+
+Note: Tensors are converted to CPU for type comparison (handles GPU arrays).
 """
 function generate_manifold(tensors)
     M2 = UnitaryMatrices(2)
     M1 = PowerManifold(UnitaryMatrices(1), 4)
-    return ProductManifold(map(x -> x ≈ mat(H) ? M2 : M1, tensors)...)
+    H_mat = mat(H)
+    # Convert tensors to CPU for comparison (handles GPU arrays)
+    return ProductManifold(map(x -> Array(x) ≈ H_mat ? M2 : M1, tensors)...)
 end
 
 """

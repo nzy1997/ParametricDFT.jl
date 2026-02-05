@@ -16,6 +16,15 @@ For `:gpu`, requires CUDA.jl to be loaded (via the CUDAExt extension).
 """
 to_device(x, ::Val{:cpu}) = x
 
+"""
+    to_cpu(x)
+
+Move array `x` to CPU. Returns `x` unchanged if already on CPU.
+For GPU arrays, this is overridden by the CUDAExt extension.
+"""
+to_cpu(x::AbstractArray) = Array(x)
+to_cpu(x) = x
+
 function to_device(x, device::Symbol)
     if device === :cpu
         return to_device(x, Val(:cpu))
@@ -77,8 +86,10 @@ function _train_basis_core(
     batch_size::Int = 1,
     device::Symbol = :cpu
 )
-    # Convert images to complex matrices and move to device
-    complex_dataset = [to_device(Complex{Float64}.(img), device) for img in dataset]
+    # Convert images to complex matrices
+    # Note: Keep data on CPU for now - GPU acceleration requires more careful integration
+    # with the manifold operations in Manopt.jl
+    complex_dataset = [Complex{Float64}.(img) for img in dataset]
 
     # Split into training and validation sets
     n_images = length(complex_dataset)
@@ -112,12 +123,16 @@ function _train_basis_core(
         println("  Steps per batch: $steps_per_image")
     end
 
-    # Move initial tensors to device for optimization
-    device_tensors = [to_device(t, device) for t in initial_tensors]
+    # Note: Manifold operations (Manifolds.jl/Manopt.jl) require CPU arrays.
+    # GPU acceleration is applied to tensor contractions in the loss function.
+    # For now, tensors stay on CPU for manifold compatibility.
+    if device === :gpu
+        @warn "GPU support is experimental. Manifold operations run on CPU; GPU accelerates tensor contractions only." maxlog=1
+    end
 
-    # Initialize manifold
-    M = generate_manifold(device_tensors)
-    current_theta = tensors2point(device_tensors, M)
+    # Initialize manifold with CPU tensors
+    M = generate_manifold(initial_tensors)
+    current_theta = tensors2point(initial_tensors, M)
 
     # Track best parameters
     best_theta = current_theta
