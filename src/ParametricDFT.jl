@@ -14,6 +14,7 @@ using JSON3
 using StructTypes
 using Random
 using CairoMakie
+using LinearAlgebra
 
 # Loss function exports
 export AbstractLoss, L1Norm, L2Norm, MSELoss
@@ -66,7 +67,9 @@ include("entangled_qft.jl")
 include("tebd.jl")
 # 4. Basis implementations (uses qft_code and entangled_qft_code)
 include("basis.jl")
-# 5. Training (uses basis types and loss functions)
+# 4b. GPU-compatible Riemannian optimizer (no manifold library dependency)
+include("gpu_optimizer.jl")
+# 5. Training (uses basis types, loss functions, and GPU optimizer)
 include("training.jl")
 # 6. Serialization (uses basis types)
 include("serialization.jl")

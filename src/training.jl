@@ -86,10 +86,8 @@ function _train_basis_core(
     batch_size::Int = 1,
     device::Symbol = :cpu
 )
-    # Convert images to complex matrices
-    # Note: Keep data on CPU for now - GPU acceleration requires more careful integration
-    # with the manifold operations in Manopt.jl
-    complex_dataset = [Complex{Float64}.(img) for img in dataset]
+    # Convert images to complex matrices and move to device
+    complex_dataset = [to_device(Complex{Float64}.(img), device) for img in dataset]
 
     # Split into training and validation sets
     n_images = length(complex_dataset)
@@ -105,6 +103,9 @@ function _train_basis_core(
     # Clamp batch_size to valid range
     batch_size = clamp(batch_size, 1, length(training_data))
     n_batches = ceil(Int, length(training_data) / batch_size)
+
+    # Move tensors to device
+    device_tensors = [to_device(t, device) for t in initial_tensors]
 
     if verbose
         optimizer_names = Dict(:gradient_descent => "Riemannian Gradient Descent",
@@ -123,19 +124,27 @@ function _train_basis_core(
         println("  Steps per batch: $steps_per_image")
     end
 
-    # Note: Manifold operations (Manifolds.jl/Manopt.jl) require CPU arrays.
-    # GPU acceleration is applied to tensor contractions in the loss function.
-    # For now, tensors stay on CPU for manifold compatibility.
-    if device === :gpu
-        @warn "GPU support is experimental. Manifold operations run on CPU; GPU accelerates tensor contractions only." maxlog=1
+    # Initialize based on device
+    # GPU: Use custom Riemannian optimizer (works directly with tensors)
+    # CPU: Use Manifolds.jl/Manopt.jl (requires manifold point representation)
+    use_gpu_optimizer = (device === :gpu)
+
+    if use_gpu_optimizer
+        # GPU path: work directly with tensor list
+        current_tensors = device_tensors
+        best_tensors = copy.(current_tensors)
+        M = nothing  # Not used in GPU path
+        current_theta = nothing
+    else
+        # CPU path: use manifold representation
+        M = generate_manifold(device_tensors)
+        current_theta = tensors2point(device_tensors, M)
+        current_tensors = nothing
+        best_tensors = nothing
     end
 
-    # Initialize manifold with CPU tensors
-    M = generate_manifold(initial_tensors)
-    current_theta = tensors2point(initial_tensors, M)
-
     # Track best parameters
-    best_theta = current_theta
+    best_theta = use_gpu_optimizer ? nothing : current_theta
     best_val_loss = Inf
     patience_counter = 0
 
@@ -162,15 +171,25 @@ function _train_basis_core(
             end_idx = min(batch_idx * batch_size, length(training_data))
             batch = training_data[start_idx:end_idx]
 
-            current_theta = _train_on_batch(
-                batch, current_theta, M, optcode, inverse_code,
-                m, n, loss, steps_per_image; optimizer=optimizer
-            )
+            if use_gpu_optimizer
+                # GPU path: use custom Riemannian optimizer
+                current_tensors = _train_on_batch_gpu(
+                    batch, current_tensors, optcode, inverse_code,
+                    m, n, loss, steps_per_image; lr=0.01
+                )
+                tensors_for_loss = current_tensors
+            else
+                # CPU path: use Manopt
+                current_theta = _train_on_batch(
+                    batch, current_theta, M, optcode, inverse_code,
+                    m, n, loss, steps_per_image; optimizer=optimizer
+                )
+                tensors_for_loss = point2tensors(current_theta, M)
+            end
 
             # Compute average loss over batch for tracking
-            tensors = point2tensors(current_theta, M)
             batch_loss = sum(
-                loss_function(tensors, m, n, optcode, img, loss; inverse_code=inverse_code)
+                loss_function(tensors_for_loss, m, n, optcode, img, loss; inverse_code=inverse_code)
                 for img in batch
             ) / length(batch)
             push!(epoch_losses, batch_loss)
@@ -183,8 +202,12 @@ function _train_basis_core(
         verbose && println()
 
         # Compute validation loss
-        tensors = point2tensors(current_theta, M)
-        val_loss = _compute_validation_loss(validation_data, tensors, optcode, inverse_code, m, n, loss)
+        if use_gpu_optimizer
+            tensors_for_val = current_tensors
+        else
+            tensors_for_val = point2tensors(current_theta, M)
+        end
+        val_loss = _compute_validation_loss(validation_data, tensors_for_val, optcode, inverse_code, m, n, loss)
         avg_train_loss = isempty(epoch_losses) ? Inf : sum(epoch_losses) / length(epoch_losses)
 
         # Store losses for visualization
@@ -201,7 +224,11 @@ function _train_basis_core(
             improvement = best_val_loss == Inf ? 100.0 : (best_val_loss - val_loss) / best_val_loss * 100
             verbose && println("  ✓ Validation improved by $(round(improvement, digits=2))%")
             best_val_loss = val_loss
-            best_theta = current_theta
+            if use_gpu_optimizer
+                best_tensors = copy.(current_tensors)
+            else
+                best_theta = current_theta
+            end
             patience_counter = 0
         else
             patience_counter += 1
@@ -215,8 +242,14 @@ function _train_basis_core(
     end
 
     # Move final tensors back to CPU for serialization
-    final_tensors_raw = point2tensors(best_theta, M)
-    final_tensors = [Array(t) for t in final_tensors_raw]
+    if use_gpu_optimizer
+        # GPU path: tensors are already in best_tensors
+        final_tensors = [Array(t) for t in best_tensors]
+    else
+        # CPU path: extract from manifold point
+        final_tensors_raw = point2tensors(best_theta, M)
+        final_tensors = [Array(t) for t in final_tensors_raw]
+    end
     verbose && println("\n✓ Training completed. Best validation loss: $(round(best_val_loss, digits=6))")
 
     # Save loss history to JSON if path provided
