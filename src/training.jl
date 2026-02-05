@@ -9,11 +9,15 @@
 # ============================================================================
 
 """
-    _train_basis_core(dataset, optcode, inverse_code, initial_tensors, m, n, loss, 
-                      epochs, steps_per_image, validation_split, shuffle, 
-                      early_stopping_patience, verbose, basis_name; extra_info="")
+    _train_basis_core(dataset, optcode, inverse_code, initial_tensors, m, n, loss,
+                      epochs, steps_per_image, validation_split, shuffle,
+                      early_stopping_patience, verbose, basis_name; extra_info="",
+                      save_loss_path=nothing)
 
-Core training loop shared by all basis types. Returns (final_tensors, best_val_loss).
+Core training loop shared by all basis types. Returns (final_tensors, best_val_loss, train_losses, val_losses, step_train_losses).
+
+If `save_loss_path` is provided, saves per-step training losses to a JSON file with
+`epoch`, `step`, and `loss` fields for each entry.
 """
 function _train_basis_core(
     dataset::Vector{<:AbstractMatrix},
@@ -29,7 +33,8 @@ function _train_basis_core(
     early_stopping_patience::Int,
     verbose::Bool,
     basis_name::String;
-    extra_info::String = ""
+    extra_info::String = "",
+    save_loss_path::Union{Nothing, String} = nothing
 )
     # Convert images to complex matrices
     complex_dataset = [Complex{Float64}.(img) for img in dataset]
@@ -63,27 +68,37 @@ function _train_basis_core(
     best_theta = current_theta
     best_val_loss = Inf
     patience_counter = 0
-    
+
+    # Track training history
+    train_losses = Float64[]
+    val_losses = Float64[]
+    step_train_losses = Float64[]
+
+    # Per-step loss records for JSON export (epoch, step, loss)
+    loss_records = Dict{String, Any}[]
+
     # Training loop
     for epoch in 1:epochs
         verbose && println("\nEpoch $epoch/$epochs")
-        
+
         # Shuffle training data each epoch
         shuffle && epoch > 1 && Random.shuffle!(training_data)
-        
+
         epoch_losses = Float64[]
-        
+
         # Train on each image
         for (idx, img_matrix) in enumerate(training_data)
             current_theta = _train_on_single_image(
                 img_matrix, current_theta, M, optcode, inverse_code,
                 m, n, loss, steps_per_image
             )
-            
+
             tensors = point2tensors(current_theta, M)
             train_loss = loss_function(tensors, m, n, optcode, img_matrix, loss; inverse_code=inverse_code)
             push!(epoch_losses, train_loss)
-            
+            push!(step_train_losses, train_loss)
+            push!(loss_records, Dict{String, Any}("epoch" => epoch, "step" => idx, "loss" => train_loss))
+
             verbose && print("  [$idx/$(length(training_data))] loss: $(round(train_loss, digits=6))\r")
         end
         
@@ -93,7 +108,11 @@ function _train_basis_core(
         tensors = point2tensors(current_theta, M)
         val_loss = _compute_validation_loss(validation_data, tensors, optcode, inverse_code, m, n, loss)
         avg_train_loss = isempty(epoch_losses) ? Inf : sum(epoch_losses) / length(epoch_losses)
-        
+
+        # Store losses for visualization
+        push!(train_losses, avg_train_loss)
+        push!(val_losses, val_loss)
+
         if verbose
             println("  Avg train loss: $(round(avg_train_loss, digits=6))")
             println("  Validation loss: $(round(val_loss, digits=6))")
@@ -119,8 +138,14 @@ function _train_basis_core(
     
     final_tensors = point2tensors(best_theta, M)
     verbose && println("\n✓ Training completed. Best validation loss: $(round(best_val_loss, digits=6))")
-    
-    return final_tensors, best_val_loss
+
+    # Save loss history to JSON if path provided
+    if save_loss_path !== nothing
+        _save_loss_history(save_loss_path, basis_name, loss_records, train_losses, val_losses)
+        verbose && println("  Loss history saved to: $save_loss_path")
+    end
+
+    return final_tensors, best_val_loss, train_losses, val_losses, step_train_losses
 end
 
 # ============================================================================
@@ -146,16 +171,21 @@ Train a QFTBasis on a dataset of images using Riemannian gradient descent.
 - `shuffle::Bool = true`: Whether to shuffle data each epoch
 - `early_stopping_patience::Int = 2`: Epochs without improvement before stopping
 - `verbose::Bool = true`: Whether to print training progress
+- `save_loss_path::Union{Nothing, String} = nothing`: Path to save training loss history as JSON
 
 # Returns
-- `QFTBasis`: Trained basis with optimized parameters
+- `Tuple{QFTBasis, NamedTuple}`: Trained basis and training history
+  - `basis`: Trained QFTBasis with optimized parameters
+  - `history`: NamedTuple with fields `train_losses`, `val_losses`, `step_train_losses`, `basis_name`
 
 # Example
 ```julia
 images = [load_image(path) for path in image_paths]
 k = round(Int, 64 * 64 * 0.1)  # Keep 10% of coefficients
-basis = train_basis(QFTBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5)
+basis, history = train_basis(QFTBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5,
+                             save_loss_path="qft_loss.json")
 save_basis("trained_basis.json", basis)
+println("Final training loss: ", history.train_losses[end])
 ```
 """
 function train_basis(
@@ -168,7 +198,8 @@ function train_basis(
     validation_split::Float64 = 0.2,
     shuffle::Bool = true,
     early_stopping_patience::Int = 2,
-    verbose::Bool = true
+    verbose::Bool = true,
+    save_loss_path::Union{Nothing, String} = nothing
 )
     @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
     @assert length(dataset) > 0 "Dataset must not be empty"
@@ -181,13 +212,17 @@ function train_basis(
     optcode, initial_tensors = qft_code(m, n)
     inverse_code, _ = qft_code(m, n; inverse=true)
     
-    final_tensors, _ = _train_basis_core(
+    final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
-        early_stopping_patience, verbose, "QFTBasis"
+        early_stopping_patience, verbose, "QFTBasis";
+        save_loss_path=save_loss_path
     )
-    
-    return QFTBasis(m, n, final_tensors, optcode, inverse_code)
+
+    trained_basis = QFTBasis(m, n, final_tensors, optcode, inverse_code)
+    history = (train_losses=train_losses, val_losses=val_losses, step_train_losses=step_train_losses, basis_name="QFT")
+
+    return trained_basis, history
 end
 
 """
@@ -204,15 +239,19 @@ Train an EntangledQFTBasis on a dataset of images using Riemannian gradient desc
 - `entangle_phases::Union{Nothing, Vector{<:Real}}`: Initial phases (default: zeros)
 - `loss`, `epochs`, `steps_per_image`, `validation_split`, `shuffle`, 
   `early_stopping_patience`, `verbose`: Same as QFTBasis
+- `save_loss_path::Union{Nothing, String} = nothing`: Path to save training loss history as JSON
 
 # Returns
-- `EntangledQFTBasis`: Trained basis with optimized entanglement phases
+- `Tuple{EntangledQFTBasis, NamedTuple}`: Trained basis and training history
+  - `basis`: Trained EntangledQFTBasis with optimized entanglement phases
+  - `history`: NamedTuple with fields `train_losses`, `val_losses`, `step_train_losses`, `basis_name`
 
 # Example
 ```julia
 k = round(Int, 64 * 64 * 0.1)
-basis = train_basis(EntangledQFTBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5)
+basis, history = train_basis(EntangledQFTBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5)
 phases = get_entangle_phases(basis)
+println("Training loss per epoch: ", history.train_losses)
 ```
 """
 function train_basis(
@@ -227,7 +266,8 @@ function train_basis(
     validation_split::Float64 = 0.2,
     shuffle::Bool = true,
     early_stopping_patience::Int = 2,
-    verbose::Bool = true
+    verbose::Bool = true,
+    save_loss_path::Union{Nothing, String} = nothing
 )
     @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
     @assert length(dataset) > 0 "Dataset must not be empty"
@@ -242,13 +282,14 @@ function train_basis(
     optcode, initial_tensors, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, entangle_position=entangle_position)
     inverse_code, _, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, inverse=true, entangle_position=entangle_position)
     
-    final_tensors, _ = _train_basis_core(
+    final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, verbose, "EntangledQFTBasis";
-        extra_info = "  Entanglement gates: $n_entangle"
+        extra_info = "  Entanglement gates: $n_entangle",
+        save_loss_path=save_loss_path
     )
-    
+
     # Extract trained phases
     entangle_indices = get_entangle_tensor_indices(final_tensors, n_entangle)
     trained_phases = if !isempty(entangle_indices)
@@ -256,14 +297,17 @@ function train_basis(
     else
         entangle_phases === nothing ? zeros(n_entangle) : Float64.(entangle_phases)
     end
-    
+
     if verbose
         initial_str = entangle_phases === nothing ? "zeros" : "$(round.(entangle_phases, digits=4))"
         println("  Initial entanglement phases: $initial_str")
         println("  Trained entanglement phases: $(round.(trained_phases, digits=4))")
     end
-    
-    return EntangledQFTBasis(m, n, final_tensors, optcode, inverse_code, n_entangle, trained_phases, entangle_position)
+
+    trained_basis = EntangledQFTBasis(m, n, final_tensors, optcode, inverse_code, n_entangle, trained_phases, entangle_position)
+    history = (train_losses=train_losses, val_losses=val_losses, step_train_losses=step_train_losses, basis_name="Entangled QFT")
+
+    return trained_basis, history
 end
 
 """
@@ -283,14 +327,18 @@ Train a TEBDBasis on a dataset of images using Riemannian gradient descent.
   Length must be m+n for ring topology.
 - `loss`, `epochs`, `steps_per_image`, `validation_split`, `shuffle`, 
   `early_stopping_patience`, `verbose`: Same as QFTBasis
+- `save_loss_path::Union{Nothing, String} = nothing`: Path to save training loss history as JSON
 
 # Returns
-- `TEBDBasis`: Trained basis with optimized parameters
+- `Tuple{TEBDBasis, NamedTuple}`: Trained basis and training history
+  - `basis`: Trained TEBDBasis with optimized parameters
+  - `history`: NamedTuple with fields `train_losses`, `val_losses`, `step_train_losses`, `basis_name`
 
 # Example
 ```julia
 k = round(Int, 64 * 64 * 0.1)  # Keep 10% of coefficients
-basis = train_basis(TEBDBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5)
+basis, history = train_basis(TEBDBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5)
+println("Validation loss per epoch: ", history.val_losses)
 ```
 """
 function train_basis(
@@ -304,7 +352,8 @@ function train_basis(
     validation_split::Float64 = 0.2,
     shuffle::Bool = true,
     early_stopping_patience::Int = 2,
-    verbose::Bool = true
+    verbose::Bool = true,
+    save_loss_path::Union{Nothing, String} = nothing
 )
     @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
     @assert length(dataset) > 0 "Dataset must not be empty"
@@ -328,13 +377,14 @@ function train_basis(
     optcode, initial_tensors, _, _ = tebd_code(m, n; phases=phases)
     inverse_code, _, _, _ = tebd_code(m, n; phases=phases, inverse=true)
     
-    final_tensors, _ = _train_basis_core(
+    final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, verbose, "TEBDBasis";
-        extra_info = "  Row qubits: $m, Col qubits: $n\n  Row ring gates: $n_row_gates, Col ring gates: $n_col_gates"
+        extra_info = "  Row qubits: $m, Col qubits: $n\n  Row ring gates: $n_row_gates, Col ring gates: $n_col_gates",
+        save_loss_path=save_loss_path
     )
-    
+
     # Extract trained phases
     gate_indices = get_tebd_gate_indices(final_tensors, n_gates)
     trained_phases = if !isempty(gate_indices)
@@ -342,19 +392,118 @@ function train_basis(
     else
         phases === nothing ? zeros(n_gates) : Float64.(phases)
     end
-    
+
     if verbose
         initial_str = phases === nothing ? "zeros" : "$(round.(phases, digits=4))"
         println("  Initial phases: $initial_str")
         println("  Trained phases: $(round.(trained_phases, digits=4))")
     end
-    
-    return TEBDBasis(m, n, final_tensors, optcode, inverse_code, n_row_gates, n_col_gates, trained_phases)
+
+    trained_basis = TEBDBasis(m, n, final_tensors, optcode, inverse_code, n_row_gates, n_col_gates, trained_phases)
+    history = (train_losses=train_losses, val_losses=val_losses, step_train_losses=step_train_losses, basis_name="TEBD")
+
+    return trained_basis, history
 end
 
 # ============================================================================
 # Internal Helper Functions
 # ============================================================================
+
+"""
+    _save_loss_history(path, basis_name, loss_records, train_losses, val_losses)
+
+Internal function to save training loss history to a JSON file.
+"""
+function _save_loss_history(
+    path::String,
+    basis_name::String,
+    loss_records::Vector{Dict{String, Any}},
+    train_losses::Vector{Float64},
+    val_losses::Vector{Float64}
+)
+    mkpath(dirname(path))
+    json_data = Dict{String, Any}(
+        "basis_name" => basis_name,
+        "epoch_losses" => [
+            Dict{String, Any}("epoch" => i, "train_loss" => train_losses[i], "val_loss" => val_losses[i])
+            for i in eachindex(train_losses)
+        ],
+        "step_losses" => loss_records
+    )
+    open(path, "w") do io
+        JSON3.pretty(io, json_data)
+    end
+end
+
+"""
+    save_loss_history(path::String, history::NamedTuple)
+
+Save training loss history returned by `train_basis` to a JSON file.
+
+The JSON contains:
+- `basis_name`: Name of the trained basis
+- `epoch_losses`: Array of `{epoch, train_loss, val_loss}` per epoch
+- `step_losses`: Array of `{epoch, step, loss}` per training step
+
+# Arguments
+- `path::String`: Output file path (`.json`)
+- `history::NamedTuple`: Training history returned by `train_basis`
+
+# Example
+```julia
+basis, history = train_basis(QFTBasis, images; m=5, n=5, epochs=3)
+save_loss_history("training_loss.json", history)
+```
+"""
+function save_loss_history(path::String, history::NamedTuple)
+    # Reconstruct step loss records with epoch/step info from step_train_losses
+    # We need to infer epoch boundaries from the epoch-level train_losses
+    n_epochs = length(history.train_losses)
+    n_steps = length(history.step_train_losses)
+    steps_per_epoch = n_epochs > 0 ? n_steps ÷ n_epochs : n_steps
+
+    loss_records = Dict{String, Any}[]
+    for (global_step, loss_val) in enumerate(history.step_train_losses)
+        epoch = (global_step - 1) ÷ steps_per_epoch + 1
+        step = (global_step - 1) % steps_per_epoch + 1
+        push!(loss_records, Dict{String, Any}("epoch" => epoch, "step" => step, "loss" => loss_val))
+    end
+
+    _save_loss_history(path, history.basis_name, loss_records, history.train_losses, history.val_losses)
+end
+
+"""
+    load_loss_history(path::String) -> TrainingHistory
+
+Load training loss history from a JSON file (saved by `save_loss_history` or `save_loss_path`)
+and return a `TrainingHistory` object that can be passed directly to plotting functions.
+
+# Arguments
+- `path::String`: Path to the JSON file
+
+# Returns
+- `TrainingHistory`: Object with `train_losses`, `val_losses`, `step_train_losses`, and `basis_name`
+
+# Example
+```julia
+using ParametricDFT
+history = load_loss_history("training_loss.json")
+fig = plot_training_loss(history)
+save("loss_curve.png", fig)
+```
+"""
+function load_loss_history(path::String)
+    json_str = read(path, String)
+    json_data = JSON3.read(json_str)
+
+    basis_name = String(json_data[:basis_name])
+
+    train_losses = Float64[entry[:train_loss] for entry in json_data[:epoch_losses]]
+    val_losses = Float64[entry[:val_loss] for entry in json_data[:epoch_losses]]
+    step_train_losses = Float64[entry[:loss] for entry in json_data[:step_losses]]
+
+    return TrainingHistory(train_losses, val_losses, step_train_losses, basis_name)
+end
 
 """
     _train_on_single_image(img_matrix, theta, M, optcode, inverse_code, m, n, loss, steps)

@@ -31,6 +31,7 @@ using Statistics
 using Printf
 using FFTW
 using NPZ
+using CairoMakie  # Used for training loss visualization
 
 # ================================================================================
 # Dataset Configuration
@@ -354,21 +355,26 @@ function main()
     println("  Images: $NUM_TRAINING_IMAGES | Epochs: $TRAINING_EPOCHS | Steps/image: $STEPS_PER_IMAGE")
     println("  Loss: MSELoss($k) - reconstruct from top $k/$total_coefficients coefficients")
     
-    # Train QFT
+    # Directory for saving training loss JSON files
+    loss_dir = joinpath(OUTPUT_DIR, "loss_history")
+    mkpath(loss_dir)
+
+    # Train QFT and capture training history
     println("\n--- Training Standard QFT Basis ---")
-    @time trained_qft = train_basis(
+    trained_qft, qft_history = @time train_basis(
         QFTBasis, training_images;
         m=M_QUBITS, n=N_QUBITS,
         loss=ParametricDFT.MSELoss(k),
         epochs=TRAINING_EPOCHS,
         steps_per_image=STEPS_PER_IMAGE,
         validation_split=0.2,
-        verbose=true
+        verbose=true,
+        save_loss_path=joinpath(loss_dir, "qft_loss.json")
     )
-    
-    # Train Entangled QFT
+
+    # Train Entangled QFT and capture training history
     println("\n--- Training Entangled QFT Basis ---")
-    @time trained_entangled = train_basis(
+    trained_entangled, entangled_history = @time train_basis(
         EntangledQFTBasis, training_images;
         m=M_QUBITS, n=N_QUBITS,
         entangle_position=:back,
@@ -376,19 +382,21 @@ function main()
         epochs=TRAINING_EPOCHS,
         steps_per_image=STEPS_PER_IMAGE,
         validation_split=0.2,
-        verbose=true
+        verbose=true,
+        save_loss_path=joinpath(loss_dir, "entangled_qft_loss.json")
     )
-    
-    # Train TEBD
+
+    # Train TEBD and capture training history
     println("\n--- Training TEBD Basis ---")
-    @time trained_tebd = train_basis(
+    trained_tebd, tebd_history = @time train_basis(
         TEBDBasis, training_images;
         m=M_QUBITS, n=N_QUBITS,
         loss=ParametricDFT.MSELoss(k),
         epochs=TRAINING_EPOCHS,
         steps_per_image=STEPS_PER_IMAGE,
         validation_split=0.2,
-        verbose=true
+        verbose=true,
+        save_loss_path=joinpath(loss_dir, "tebd_loss.json")
     )
     
     println("\n✓ All training completed!")
@@ -396,7 +404,33 @@ function main()
     println("  Trained Entangled:    $(num_parameters(trained_entangled)) parameters")
     println("  Trained TEBD:         $(num_parameters(trained_tebd)) parameters")
     println("  Entanglement phases:  $(round.(get_entangle_phases(trained_entangled), digits=4))")
-    
+
+    # ============================================================================
+    # Step 3.5: Visualize Training Losses
+    # ============================================================================
+
+    println("\n" * "="^80)
+    println("Step 3.5: Visualizing Training Losses")
+    println("="^80)
+
+    # Convert history tuples to TrainingHistory objects
+    histories = [
+        TrainingHistory(qft_history.train_losses, qft_history.val_losses, qft_history.step_train_losses, "QFT"),
+        TrainingHistory(entangled_history.train_losses, entangled_history.val_losses, entangled_history.step_train_losses, "Entangled QFT"),
+        TrainingHistory(tebd_history.train_losses, tebd_history.val_losses, tebd_history.step_train_losses, "TEBD")
+    ]
+
+    # Generate and save all training plots to a dedicated subfolder
+    plots_dir = joinpath(OUTPUT_DIR, "plots")
+    println("\nGenerating training loss plots...")
+    saved_plots = save_training_plots(histories, plots_dir)
+
+    println("\n✓ Training loss plots saved to: $plots_dir")
+    for plot_path in saved_plots
+        relpath_str = relpath(plot_path, plots_dir)
+        println("  ✓ $relpath_str")
+    end
+
     # ============================================================================
     # Step 4: Save Trained Bases
     # ============================================================================
@@ -582,10 +616,25 @@ function main()
     
     Output files saved to: $OUTPUT_DIR
     ├─ trained_qft.json              : Trained QFT basis
-    ├─ trained_entangled_qft.json    : Trained Entangled QFT basis  
+    ├─ trained_entangled_qft.json    : Trained Entangled QFT basis
     ├─ trained_tebd.json             : Trained TEBD basis
     ├─ original_$(sample_label).png          : Original test image
-    └─ recovered_*.png               : Recovered images for each basis
+    ├─ recovered_*.png               : Recovered images for each basis
+    ├─ loss_history/                 : Training loss data (JSON)
+    │  ├─ qft_loss.json              : QFT epoch/step losses
+    │  ├─ entangled_qft_loss.json    : Entangled QFT epoch/step losses
+    │  └─ tebd_loss.json             : TEBD epoch/step losses
+    └─ plots/                        : Training loss visualizations
+       ├─ log/                       : Log-scale (y-axis) plots
+       │  ├─ *_loss.png              : Per-epoch loss curves
+       │  ├─ *_step_loss.png         : Per-step loss curves
+       │  ├─ comparison_*.png        : Comparison plots
+       │  └─ grid.png                : Grid view of all loss curves
+       └─ linear/                    : Linear-scale (y-axis) plots
+          ├─ *_loss.png              : Per-epoch loss curves
+          ├─ *_step_loss.png         : Per-step loss curves
+          ├─ comparison_*.png        : Comparison plots
+          └─ grid.png                : Grid view of all loss curves
     """
     
     println(summary_text)
