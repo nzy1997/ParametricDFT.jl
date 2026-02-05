@@ -54,8 +54,8 @@ const N_QUBITS = 4           # 2^4 = 16 columns
 const IMG_SIZE = 16          # Smaller size for faster comparison
 
 const NUM_TRAINING_IMAGES = 30
-const TRAINING_EPOCHS = 10
-const STEPS_PER_BATCH = 400   # More steps for better convergence
+const TRAINING_EPOCHS = 5
+const STEPS_PER_BATCH = 50
 const BATCH_SIZE = 5
 const NUM_TEST_IMAGES = 10
 
@@ -204,6 +204,44 @@ function main()
     println("  Batch size: $BATCH_SIZE")
     println("  Loss: MSELoss($k) - top $k/$total_coefficients coefficients")
     println("  Compression ratio: $(round(Int, (1-COMPRESSION_RATIO)*100))% retained")
+
+    # =========================================================================
+    # Step 2.5: Diagnostic - Compare initial loss on CPU vs GPU
+    # =========================================================================
+
+    if HAS_GPU
+        println("\n[Diagnostic] Comparing initial loss on CPU vs GPU...")
+
+        # Initialize same tensors
+        optcode, init_tensors = qft_code(M_QUBITS, N_QUBITS)
+        inverse_code, _ = qft_code(M_QUBITS, N_QUBITS; inverse=true)
+
+        test_img = Complex{Float64}.(training_images[1])
+
+        # CPU loss
+        cpu_init_loss = ParametricDFT.loss_function(init_tensors, M_QUBITS, N_QUBITS,
+            optcode, test_img, ParametricDFT.MSELoss(k); inverse_code=inverse_code)
+
+        # GPU loss
+        gpu_tensors = [CuArray{ComplexF64}(t) for t in init_tensors]
+        gpu_img = CuArray{ComplexF64}(test_img)
+
+        gpu_init_loss = ParametricDFT.loss_function(gpu_tensors, M_QUBITS, N_QUBITS,
+            optcode, gpu_img, ParametricDFT.MSELoss(k); inverse_code=inverse_code)
+
+        println("  CPU initial loss: ", cpu_init_loss)
+        println("  GPU initial loss: ", gpu_init_loss)
+        println("  Ratio (GPU/CPU): ", gpu_init_loss / cpu_init_loss)
+
+        # Check tensor types
+        println("  CPU tensor type: ", typeof(init_tensors[1]))
+        println("  GPU tensor type: ", typeof(gpu_tensors[1]))
+        println("  GPU tensor eltype: ", eltype(gpu_tensors[1]))
+
+        if abs(gpu_init_loss / cpu_init_loss - 1.0) > 0.1
+            println("  WARNING: Large discrepancy in initial loss!")
+        end
+    end
 
     # =========================================================================
     # Step 3: Train on CPU
