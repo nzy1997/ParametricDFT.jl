@@ -13,9 +13,12 @@ using ChainRulesCore
     to_device(x, ::Val{:gpu})
 
 Move array `x` to GPU using CUDA.jl. Converts to CuArray for GPU-accelerated computation.
+Uses Float64 precision to maintain numerical accuracy consistent with CPU operations.
 """
-function ParametricDFT.to_device(x::AbstractArray, ::Val{:gpu})
-    return CUDA.cu(x)
+function ParametricDFT.to_device(x::AbstractArray{T}, ::Val{:gpu}) where T
+    # Use CuArray with explicit element type to preserve Float64 precision
+    # CUDA.cu() defaults to Float32 which can cause type mismatches
+    return CuArray{T}(x)
 end
 
 # Scalars and non-array types pass through unchanged

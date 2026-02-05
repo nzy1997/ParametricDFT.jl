@@ -274,9 +274,11 @@ function _train_on_batch_gpu(
     end
 
     # Run Riemannian gradient descent
+    # Use a higher learning rate than default since Manopt uses adaptive step sizes
+    # The lr passed in is typically 0.01, so we scale up to ~0.1 for faster convergence
     optimized = riemannian_gradient_descent_gpu(
         tensors, loss_fn, grad_fn;
-        lr=lr, max_iter=steps, tol=1e-8, verbose=false
+        lr=max(lr, 0.1), max_iter=steps, tol=1e-8, verbose=false
     )
 
     return optimized

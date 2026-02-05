@@ -242,13 +242,15 @@ function _train_basis_core(
     end
 
     # Move final tensors back to CPU for serialization
+    # Ensure tensors are ComplexF64 for consistency with CPU operations
     if use_gpu_optimizer
         # GPU path: tensors are already in best_tensors
-        final_tensors = [Array(t) for t in best_tensors]
+        # Convert to ComplexF64 to avoid type mismatches with OMEinsum
+        final_tensors = [ComplexF64.(Array(t)) for t in best_tensors]
     else
         # CPU path: extract from manifold point
         final_tensors_raw = point2tensors(best_theta, M)
-        final_tensors = [Array(t) for t in final_tensors_raw]
+        final_tensors = [ComplexF64.(Array(t)) for t in final_tensors_raw]
     end
     verbose && println("\n✓ Training completed. Best validation loss: $(round(best_val_loss, digits=6))")
 
