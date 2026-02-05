@@ -377,11 +377,9 @@ function _train_on_batch_gpu(
     end
 
     # Run Riemannian gradient descent
-    # Use the passed learning rate - don't override it
-    # Debug: enable verbose for first batch only (controlled by global counter)
     optimized = riemannian_gradient_descent_gpu(
         tensors, loss_fn, grad_fn;
-        lr=lr, max_iter=steps, tol=1e-8, verbose=true
+        lr=lr, max_iter=steps, tol=1e-8, verbose=false
     )
 
     return optimized
