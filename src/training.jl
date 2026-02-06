@@ -49,7 +49,9 @@ end
                       epochs, steps_per_image, validation_split, shuffle,
                       early_stopping_patience, verbose, basis_name; extra_info="",
                       save_loss_path=nothing, optimizer=:gradient_descent,
-                      batch_size=1, device=:cpu)
+                      batch_size=1, device=:cpu,
+                      checkpoint_interval=0, checkpoint_dir=nothing,
+                      build_basis_fn=nothing)
 
 Core training loop shared by all basis types. Returns (final_tensors, best_val_loss, train_losses, val_losses, step_train_losses).
 
@@ -66,6 +68,14 @@ If `save_loss_path` is provided, saves per-step training losses to a JSON file w
 - `batch_size::Int = 1`: Number of images per batch. When > 1, the optimizer minimizes the
   average loss over the batch instead of a single image. batch_size=1 recovers original behavior.
 - `device::Symbol = :cpu`: Device for computation. Use `:gpu` for GPU acceleration (requires CUDA.jl).
+
+# Checkpointing
+- `checkpoint_interval::Int = 0`: Save a checkpoint every N training steps (batches).
+  0 disables checkpointing.
+- `checkpoint_dir::Union{Nothing, String} = nothing`: Directory to save checkpoints.
+  Each checkpoint saves both the trained basis and the loss history so far.
+- `build_basis_fn::Union{Nothing, Function} = nothing`: Callback `tensors -> basis` used
+  to construct the basis object at each checkpoint. Provided by `train_basis` methods.
 """
 function _train_basis_core(
     dataset::Vector{<:AbstractMatrix},
@@ -85,7 +95,10 @@ function _train_basis_core(
     save_loss_path::Union{Nothing, String} = nothing,
     optimizer::Symbol = :gradient_descent,
     batch_size::Int = 1,
-    device::Symbol = :cpu
+    device::Symbol = :cpu,
+    checkpoint_interval::Int = 0,
+    checkpoint_dir::Union{Nothing, String} = nothing,
+    build_basis_fn::Union{Nothing, Function} = nothing
 )
     # Convert images to complex matrices and move to device
     complex_dataset = [to_device(Complex{Float64}.(img), device) for img in dataset]
@@ -159,6 +172,14 @@ function _train_basis_core(
     # Per-step loss records for JSON export (epoch, step, loss)
     loss_records = Dict{String, Any}[]
 
+    # Checkpointing setup
+    do_checkpoint = checkpoint_interval > 0 && checkpoint_dir !== nothing
+    if do_checkpoint
+        mkpath(checkpoint_dir)
+        verbose && println("  Checkpointing every $checkpoint_interval steps to: $checkpoint_dir")
+    end
+    global_step = 0
+
     # Training loop
     for epoch in 1:epochs
         verbose && println("\nEpoch $epoch/$epochs")
@@ -200,8 +221,20 @@ function _train_basis_core(
             push!(epoch_losses, batch_loss)
             push!(step_train_losses, batch_loss)
             push!(loss_records, Dict{String, Any}("epoch" => epoch, "step" => batch_idx, "loss" => batch_loss))
+            global_step += 1
 
             verbose && print("  [batch $batch_idx/$n_batches] loss: $(round(batch_loss, digits=6))\r")
+
+            # Checkpoint: save basis and loss history periodically
+            if do_checkpoint && global_step % checkpoint_interval == 0
+                _save_checkpoint(
+                    checkpoint_dir, global_step, basis_name,
+                    use_custom_optimizer ? current_tensors : point2tensors(current_theta, M),
+                    loss_records, train_losses, val_losses,
+                    build_basis_fn
+                )
+                verbose && println("\n  Checkpoint saved at step $global_step")
+            end
         end
 
         verbose && println()
@@ -297,6 +330,8 @@ Train a QFTBasis on a dataset of images using Riemannian optimization.
 - `batch_size::Int = 1`: Number of images per batch. The optimizer minimizes average loss over
   the batch. batch_size=1 is equivalent to single-image training.
 - `device::Symbol = :cpu`: Computation device. Use `:gpu` for CUDA acceleration (requires CUDA.jl).
+- `checkpoint_interval::Int = 0`: Save a checkpoint every N training steps (batches). 0 disables.
+- `checkpoint_dir::Union{Nothing, String} = nothing`: Directory to save checkpoints.
 
 # Returns
 - `Tuple{QFTBasis, NamedTuple}`: Trained basis and training history
@@ -309,7 +344,8 @@ images = [load_image(path) for path in image_paths]
 k = round(Int, 64 * 64 * 0.1)  # Keep 10% of coefficients
 basis, history = train_basis(QFTBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5,
                              optimizer=:conjugate_gradient, batch_size=8,
-                             save_loss_path="qft_loss.json")
+                             save_loss_path="qft_loss.json",
+                             checkpoint_interval=50, checkpoint_dir="checkpoints/qft")
 save_basis("trained_basis.json", basis)
 println("Final training loss: ", history.train_losses[end])
 ```
@@ -328,7 +364,9 @@ function train_basis(
     save_loss_path::Union{Nothing, String} = nothing,
     optimizer::Symbol = :gradient_descent,
     batch_size::Int = 1,
-    device::Symbol = :cpu
+    device::Symbol = :cpu,
+    checkpoint_interval::Int = 0,
+    checkpoint_dir::Union{Nothing, String} = nothing
 )
     @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
     @assert length(dataset) > 0 "Dataset must not be empty"
@@ -341,12 +379,17 @@ function train_basis(
     optcode, initial_tensors = qft_code(m, n)
     inverse_code, _ = qft_code(m, n; inverse=true)
 
+    # Checkpoint callback: construct QFTBasis from tensors
+    build_fn = tensors -> QFTBasis(m, n, tensors, optcode, inverse_code)
+
     final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, verbose, "QFTBasis";
         save_loss_path=save_loss_path, optimizer=optimizer,
-        batch_size=batch_size, device=device
+        batch_size=batch_size, device=device,
+        checkpoint_interval=checkpoint_interval, checkpoint_dir=checkpoint_dir,
+        build_basis_fn=build_fn
     )
 
     trained_basis = QFTBasis(m, n, final_tensors, optcode, inverse_code)
@@ -374,6 +417,8 @@ Train an EntangledQFTBasis on a dataset of images using Riemannian optimization.
   Options: `:gradient_descent`, `:conjugate_gradient`, `:quasi_newton`, `:adam`
 - `batch_size::Int = 1`: Number of images per batch for training
 - `device::Symbol = :cpu`: Computation device (`:cpu` or `:gpu`)
+- `checkpoint_interval::Int = 0`: Save a checkpoint every N training steps (batches). 0 disables.
+- `checkpoint_dir::Union{Nothing, String} = nothing`: Directory to save checkpoints.
 
 # Returns
 - `Tuple{EntangledQFTBasis, NamedTuple}`: Trained basis and training history
@@ -384,7 +429,8 @@ Train an EntangledQFTBasis on a dataset of images using Riemannian optimization.
 ```julia
 k = round(Int, 64 * 64 * 0.1)
 basis, history = train_basis(EntangledQFTBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5,
-                             optimizer=:conjugate_gradient, batch_size=8)
+                             optimizer=:conjugate_gradient, batch_size=8,
+                             checkpoint_interval=50, checkpoint_dir="checkpoints/entangled")
 phases = get_entangle_phases(basis)
 println("Training loss per epoch: ", history.train_losses)
 ```
@@ -405,7 +451,9 @@ function train_basis(
     save_loss_path::Union{Nothing, String} = nothing,
     optimizer::Symbol = :gradient_descent,
     batch_size::Int = 1,
-    device::Symbol = :cpu
+    device::Symbol = :cpu,
+    checkpoint_interval::Int = 0,
+    checkpoint_dir::Union{Nothing, String} = nothing
 )
     @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
     @assert length(dataset) > 0 "Dataset must not be empty"
@@ -419,14 +467,24 @@ function train_basis(
     # Initialize circuit
     optcode, initial_tensors, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, entangle_position=entangle_position)
     inverse_code, _, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, inverse=true, entangle_position=entangle_position)
-    
+
+    # Checkpoint callback: construct EntangledQFTBasis from tensors
+    build_fn = tensors -> begin
+        eidx = get_entangle_tensor_indices(tensors, n_entangle)
+        phases = !isempty(eidx) ? extract_entangle_phases(tensors, eidx) :
+                 (entangle_phases === nothing ? zeros(n_entangle) : Float64.(entangle_phases))
+        EntangledQFTBasis(m, n, tensors, optcode, inverse_code, n_entangle, phases, entangle_position)
+    end
+
     final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, verbose, "EntangledQFTBasis";
         extra_info = "  Entanglement gates: $n_entangle",
         save_loss_path=save_loss_path, optimizer=optimizer,
-        batch_size=batch_size, device=device
+        batch_size=batch_size, device=device,
+        checkpoint_interval=checkpoint_interval, checkpoint_dir=checkpoint_dir,
+        build_basis_fn=build_fn
     )
 
     # Extract trained phases
@@ -471,6 +529,8 @@ Train a TEBDBasis on a dataset of images using Riemannian optimization.
   Options: `:gradient_descent`, `:conjugate_gradient`, `:quasi_newton`, `:adam`
 - `batch_size::Int = 1`: Number of images per batch for training
 - `device::Symbol = :cpu`: Computation device (`:cpu` or `:gpu`)
+- `checkpoint_interval::Int = 0`: Save a checkpoint every N training steps (batches). 0 disables.
+- `checkpoint_dir::Union{Nothing, String} = nothing`: Directory to save checkpoints.
 
 # Returns
 - `Tuple{TEBDBasis, NamedTuple}`: Trained basis and training history
@@ -481,7 +541,8 @@ Train a TEBDBasis on a dataset of images using Riemannian optimization.
 ```julia
 k = round(Int, 64 * 64 * 0.1)  # Keep 10% of coefficients
 basis, history = train_basis(TEBDBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5,
-                             optimizer=:quasi_newton, batch_size=8, device=:gpu)
+                             optimizer=:quasi_newton, batch_size=8, device=:gpu,
+                             checkpoint_interval=50, checkpoint_dir="checkpoints/tebd")
 println("Validation loss per epoch: ", history.val_losses)
 ```
 """
@@ -500,7 +561,9 @@ function train_basis(
     save_loss_path::Union{Nothing, String} = nothing,
     optimizer::Symbol = :gradient_descent,
     batch_size::Int = 1,
-    device::Symbol = :cpu
+    device::Symbol = :cpu,
+    checkpoint_interval::Int = 0,
+    checkpoint_dir::Union{Nothing, String} = nothing
 )
     @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
     @assert length(dataset) > 0 "Dataset must not be empty"
@@ -523,14 +586,24 @@ function train_basis(
     # Initialize circuit
     optcode, initial_tensors, _, _ = tebd_code(m, n; phases=phases)
     inverse_code, _, _, _ = tebd_code(m, n; phases=phases, inverse=true)
-    
+
+    # Checkpoint callback: construct TEBDBasis from tensors
+    build_fn = tensors -> begin
+        gidx = get_tebd_gate_indices(tensors, n_gates)
+        p = !isempty(gidx) ? extract_tebd_phases(tensors, gidx) :
+            (phases === nothing ? zeros(n_gates) : Float64.(phases))
+        TEBDBasis(m, n, tensors, optcode, inverse_code, n_row_gates, n_col_gates, p)
+    end
+
     final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, verbose, "TEBDBasis";
         extra_info = "  Row qubits: $m, Col qubits: $n\n  Row ring gates: $n_row_gates, Col ring gates: $n_col_gates",
         save_loss_path=save_loss_path, optimizer=optimizer,
-        batch_size=batch_size, device=device
+        batch_size=batch_size, device=device,
+        checkpoint_interval=checkpoint_interval, checkpoint_dir=checkpoint_dir,
+        build_basis_fn=build_fn
     )
 
     # Extract trained phases
@@ -556,6 +629,37 @@ end
 # ============================================================================
 # Internal Helper Functions
 # ============================================================================
+
+"""
+    _save_checkpoint(checkpoint_dir, step, basis_name, tensors, loss_records,
+                     train_losses, val_losses, build_basis_fn)
+
+Internal function to save a training checkpoint (basis + loss history).
+"""
+function _save_checkpoint(
+    checkpoint_dir::String,
+    step::Int,
+    basis_name::String,
+    tensors::Vector,
+    loss_records::Vector{Dict{String, Any}},
+    train_losses::Vector{Float64},
+    val_losses::Vector{Float64},
+    build_basis_fn::Union{Nothing, Function}
+)
+    tag = "step" * lpad(step, 4, '0')
+
+    # Save loss history up to this point
+    loss_path = joinpath(checkpoint_dir, "$(tag)_loss.json")
+    _save_loss_history(loss_path, basis_name, loss_records, train_losses, val_losses)
+
+    # Save basis if builder is available
+    if build_basis_fn !== nothing
+        cpu_tensors = [ComplexF64.(Array(t)) for t in tensors]
+        basis = build_basis_fn(cpu_tensors)
+        basis_path = joinpath(checkpoint_dir, "$(tag)_basis.json")
+        save_basis(basis_path, basis)
+    end
+end
 
 """
     _save_loss_history(path, basis_name, loss_records, train_losses, val_losses)
