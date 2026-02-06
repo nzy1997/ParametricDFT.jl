@@ -157,6 +157,28 @@ function ParametricDFT.retract_u1_product(z::CuMatrix{T}, ξ::CuMatrix{T}, α) w
 end
 
 # ============================================================================
+# GPU-Compatible Parallel Transport
+# ============================================================================
+
+"""
+    parallel_transport_unitary(U_old::CuMatrix, U_new::CuMatrix, v::CuMatrix)
+
+GPU-compatible parallel transport on unitary manifold via re-projection.
+"""
+function ParametricDFT.parallel_transport_unitary(U_old::CuMatrix, U_new::CuMatrix, v::CuMatrix)
+    return ParametricDFT.project_tangent_unitary(U_new, v)
+end
+
+"""
+    parallel_transport_u1_product(z_old::CuMatrix, z_new::CuMatrix, v::CuMatrix)
+
+GPU-compatible parallel transport on U(1)^4 product manifold via re-projection.
+"""
+function ParametricDFT.parallel_transport_u1_product(z_old::CuMatrix, z_new::CuMatrix, v::CuMatrix)
+    return ParametricDFT.project_tangent_u1_product(z_new, v)
+end
+
+# ============================================================================
 # GPU-Compatible rrule for topk_truncate
 # ============================================================================
 

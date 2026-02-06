@@ -60,6 +60,7 @@ If `save_loss_path` is provided, saves per-step training losses to a JSON file w
 - `:gradient_descent` (default): Riemannian gradient descent
 - `:conjugate_gradient`: Riemannian conjugate gradient descent
 - `:quasi_newton`: Riemannian L-BFGS quasi-Newton method
+- `:adam`: Riemannian Adam (adaptive learning rates, Bécigneul & Ganea, 2019)
 
 # Batch and Device Support
 - `batch_size::Int = 1`: Number of images per batch. When > 1, the optimizer minimizes the
@@ -110,7 +111,8 @@ function _train_basis_core(
     if verbose
         optimizer_names = Dict(:gradient_descent => "Riemannian Gradient Descent",
                                :conjugate_gradient => "Riemannian Conjugate Gradient",
-                               :quasi_newton => "Riemannian L-BFGS")
+                               :quasi_newton => "Riemannian L-BFGS",
+                               :adam => "Riemannian Adam")
         device_names = Dict(:cpu => "CPU", :gpu => "GPU (CUDA)")
         println("Training $basis_name:")
         println("  Image size: $(2^m)×$(2^n)")
@@ -124,12 +126,13 @@ function _train_basis_core(
         println("  Steps per batch: $steps_per_image")
     end
 
-    # Initialize based on device
-    # GPU: Use custom Riemannian optimizer (works directly with tensors)
-    # CPU: Use Manifolds.jl/Manopt.jl (requires manifold point representation)
-    use_gpu_optimizer = (device === :gpu)
+    # Initialize based on device and optimizer
+    # GPU: Always use custom Riemannian optimizer (works directly with tensors)
+    # CPU + :adam: Use custom optimizer (Manopt.jl doesn't have Adam)
+    # CPU + other: Use Manifolds.jl/Manopt.jl (requires manifold point representation)
+    use_custom_optimizer = (device === :gpu) || (optimizer === :adam)
 
-    if use_gpu_optimizer
+    if use_custom_optimizer
         # GPU path: work directly with tensor list
         current_tensors = device_tensors
         best_tensors = copy.(current_tensors)
@@ -144,7 +147,7 @@ function _train_basis_core(
     end
 
     # Track best parameters
-    best_theta = use_gpu_optimizer ? nothing : current_theta
+    best_theta = use_custom_optimizer ? nothing : current_theta
     best_val_loss = Inf
     patience_counter = 0
 
@@ -171,11 +174,13 @@ function _train_basis_core(
             end_idx = min(batch_idx * batch_size, length(training_data))
             batch = training_data[start_idx:end_idx]
 
-            if use_gpu_optimizer
-                # GPU path: use custom Riemannian optimizer
+            if use_custom_optimizer
+                # Custom optimizer path: GPU or CPU with :adam
                 current_tensors = _train_on_batch_gpu(
                     batch, current_tensors, optcode, inverse_code,
-                    m, n, loss, steps_per_image; lr=0.01
+                    m, n, loss, steps_per_image;
+                    lr=(optimizer === :adam ? 0.001 : 0.01),
+                    optimizer=optimizer
                 )
                 tensors_for_loss = current_tensors
             else
@@ -202,7 +207,7 @@ function _train_basis_core(
         verbose && println()
 
         # Compute validation loss
-        if use_gpu_optimizer
+        if use_custom_optimizer
             tensors_for_val = current_tensors
         else
             tensors_for_val = point2tensors(current_theta, M)
@@ -224,7 +229,7 @@ function _train_basis_core(
             improvement = best_val_loss == Inf ? 100.0 : (best_val_loss - val_loss) / best_val_loss * 100
             verbose && println("  ✓ Validation improved by $(round(improvement, digits=2))%")
             best_val_loss = val_loss
-            if use_gpu_optimizer
+            if use_custom_optimizer
                 best_tensors = copy.(current_tensors)
             else
                 best_theta = current_theta
@@ -243,7 +248,7 @@ function _train_basis_core(
 
     # Move final tensors back to CPU for serialization
     # Ensure tensors are ComplexF64 for consistency with CPU operations
-    if use_gpu_optimizer
+    if use_custom_optimizer
         # GPU path: tensors are already in best_tensors
         # Convert to ComplexF64 to avoid type mismatches with OMEinsum
         final_tensors = [ComplexF64.(Array(t)) for t in best_tensors]
@@ -288,7 +293,7 @@ Train a QFTBasis on a dataset of images using Riemannian optimization.
 - `verbose::Bool = true`: Whether to print training progress
 - `save_loss_path::Union{Nothing, String} = nothing`: Path to save training loss history as JSON
 - `optimizer::Symbol = :gradient_descent`: Riemannian optimizer to use.
-  Options: `:gradient_descent`, `:conjugate_gradient`, `:quasi_newton`
+  Options: `:gradient_descent`, `:conjugate_gradient`, `:quasi_newton`, `:adam`
 - `batch_size::Int = 1`: Number of images per batch. The optimizer minimizes average loss over
   the batch. batch_size=1 is equivalent to single-image training.
 - `device::Symbol = :cpu`: Computation device. Use `:gpu` for CUDA acceleration (requires CUDA.jl).
@@ -366,7 +371,7 @@ Train an EntangledQFTBasis on a dataset of images using Riemannian optimization.
   `early_stopping_patience`, `verbose`: Same as QFTBasis
 - `save_loss_path::Union{Nothing, String} = nothing`: Path to save training loss history as JSON
 - `optimizer::Symbol = :gradient_descent`: Riemannian optimizer to use.
-  Options: `:gradient_descent`, `:conjugate_gradient`, `:quasi_newton`
+  Options: `:gradient_descent`, `:conjugate_gradient`, `:quasi_newton`, `:adam`
 - `batch_size::Int = 1`: Number of images per batch for training
 - `device::Symbol = :cpu`: Computation device (`:cpu` or `:gpu`)
 
@@ -463,7 +468,7 @@ Train a TEBDBasis on a dataset of images using Riemannian optimization.
   `early_stopping_patience`, `verbose`: Same as QFTBasis
 - `save_loss_path::Union{Nothing, String} = nothing`: Path to save training loss history as JSON
 - `optimizer::Symbol = :gradient_descent`: Riemannian optimizer to use.
-  Options: `:gradient_descent`, `:conjugate_gradient`, `:quasi_newton`
+  Options: `:gradient_descent`, `:conjugate_gradient`, `:quasi_newton`, `:adam`
 - `batch_size::Int = 1`: Number of images per batch for training
 - `device::Symbol = :cpu`: Computation device (`:cpu` or `:gpu`)
 
@@ -688,7 +693,7 @@ function _train_on_batch(
     elseif optimizer == :quasi_newton
         return quasi_Newton(M, f, grad_f, theta; stopping_criterion=sc, memory_size=20)
     else
-        error("Unknown optimizer: $optimizer. Supported: :gradient_descent, :conjugate_gradient, :quasi_newton")
+        error("Unknown optimizer: $optimizer. Supported: :gradient_descent, :conjugate_gradient, :quasi_newton, :adam")
     end
 end
 
