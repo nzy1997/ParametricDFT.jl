@@ -13,11 +13,13 @@
 # Total: 2 optimizers x 2 devices x 3 bases x 2 datasets = 24 configurations
 #
 # Run:
-#   julia --project=examples examples/optimizer_basis_comparison.jl          # Small run
-#   julia --project=examples examples/optimizer_basis_comparison.jl --full   # Full run
+#   julia --project=examples examples/optimizer_basis_comparison.jl              # Small run
+#   julia --project=examples examples/optimizer_basis_comparison.jl --full       # Full run
+#   julia --project=examples examples/optimizer_basis_comparison.jl --gpu-quick  # GPU speedup test
 #
 # The small run uses 5 training / 3 test images, 10 steps, 1 epoch.
 # The full run uses 100 training / 100 test images, 500 steps, 3 epochs.
+# The gpu-quick run: focused QFT + Adam & GD, CPU vs GPU, 10 train / 5 test, timing + assertion.
 # ================================================================================
 
 ENV["DATADEPS_ALWAYS_ACCEPT"] = "true"
@@ -47,12 +49,14 @@ using Statistics
 using Printf
 using FFTW
 using NPZ
+using JSON3
 
 # ================================================================================
 # Configuration
 # ================================================================================
 
 const FULL_RUN = "--full" in ARGS
+const GPU_QUICK = "--gpu-quick" in ARGS
 
 const M_QUBITS = 5        # 2^5 = 32 rows
 const N_QUBITS = 5        # 2^5 = 32 columns
@@ -752,5 +756,205 @@ function main()
     return results
 end
 
+# ================================================================================
+# GPU Quick Mode: Focused CPU vs GPU speedup test
+# ================================================================================
+
+"""
+Run a focused GPU vs CPU comparison on QFT with both Adam and GD.
+Includes warmup run for GPU JIT compilation.
+Prints wall-clock time, speedup factor, and PASS/FAIL assertion.
+Saves timing data JSON for plot_comparison.jl.
+"""
+function gpu_quick_main()
+    println("=" ^ 80)
+    println("    GPU Quick Comparison: QFT + Adam & GD, CPU vs GPU")
+    println("=" ^ 80)
+
+    if !GPU_AVAILABLE
+        println("\n  ERROR: --gpu-quick requires a CUDA-capable GPU.")
+        println("  No GPU detected. Exiting.")
+        return nothing
+    end
+
+    # Medium dataset: 25 train / 10 test, 50 steps
+    n_train_quick = 25
+    n_test_quick = 10
+    epochs_quick = 1
+    steps_quick = 50
+
+    quick_optimizers = [
+        (:gradient_descent, "GD",   0.01),
+        (:adam,             "Adam", 0.001),
+    ]
+
+    println("\nConfiguration:")
+    println("  Basis:            QFT")
+    println("  Optimizers:       GD (lr=0.01), Adam (lr=0.001)")
+    println("  Training images:  $n_train_quick")
+    println("  Test images:      $n_test_quick")
+    println("  Epochs:           $epochs_quick")
+    println("  Steps/batch:      $steps_quick")
+    println("  GPU:              $(CUDA.name(CUDA.device()))")
+
+    mkpath(OUTPUT_DIR)
+
+    println("\nLoading MNIST...")
+    train_imgs, test_imgs = load_mnist_data(n_train_quick, n_test_quick)
+    println("  Loaded $(length(train_imgs)) train / $(length(test_imgs)) test")
+
+    total_coefficients = IMG_SIZE * IMG_SIZE
+    k = round(Int, total_coefficients * 0.1)
+
+    timing_results = Dict{String, Any}()
+
+    for (dev_sym, dev_name) in [(:cpu, "CPU"), (:gpu, "GPU")]
+        # GPU warmup once per device (covers JIT for both optimizers since Zygote path is shared)
+        if dev_sym === :gpu
+            println("\n" * "-" ^ 60)
+            println("  GPU warmup run (2 steps)...")
+            println("-" ^ 60)
+            Random.seed!(123)
+            try
+                train_basis(
+                    QFTBasis, train_imgs[1:2];
+                    m=M_QUBITS, n=N_QUBITS,
+                    loss=ParametricDFT.MSELoss(k),
+                    epochs=1,
+                    steps_per_image=2,
+                    validation_split=0.0,
+                    early_stopping_patience=1,
+                    verbose=false,
+                    optimizer=:adam,
+                    batch_size=1,
+                    device=dev_sym,
+                )
+            catch e
+                @warn "Warmup failed" exception=(e, catch_backtrace())
+            end
+            println("  Warmup complete.")
+        end
+
+        for (opt_sym, opt_name, lr) in quick_optimizers
+            config_key = "$dev_name $opt_name"
+
+            println("\n" * "-" ^ 60)
+            println("  Running: $config_key (QFT, lr=$lr)")
+            println("-" ^ 60)
+
+            Random.seed!(123)
+            local trained_basis, history
+            train_time = NaN
+            final_loss = NaN
+            step_losses = Float64[]
+
+            try
+                train_time = @elapsed begin
+                    trained_basis, history = train_basis(
+                        QFTBasis, train_imgs;
+                        m=M_QUBITS, n=N_QUBITS,
+                        loss=ParametricDFT.MSELoss(k),
+                        epochs=epochs_quick,
+                        steps_per_image=steps_quick,
+                        validation_split=0.2,
+                        early_stopping_patience=5,
+                        verbose=true,
+                        optimizer=opt_sym,
+                        batch_size=1,
+                        device=dev_sym,
+                    )
+                end
+                final_loss = history.train_losses[end]
+                step_losses = history.step_train_losses
+            catch e
+                @warn "FAILED: $config_key" exception=(e, catch_backtrace())
+            end
+
+            timing_results[config_key] = Dict(
+                "time_s" => train_time,
+                "final_loss" => final_loss,
+                "device" => dev_name,
+                "optimizer" => opt_name,
+                "step_losses" => step_losses,
+            )
+
+            @printf("  %s: %.2f s, final loss: %.6f\n", config_key, train_time, final_loss)
+        end
+    end
+
+    # Print results table
+    println("\n" * "=" ^ 70)
+    println("  RESULTS")
+    println("=" ^ 70)
+    @printf("  %-10s | %-10s | %8s | %8s | %8s\n", "Device", "Optimizer", "Time", "Loss", "Speedup")
+    println("  " * "-" ^ 62)
+
+    for (_, opt_name, _) in quick_optimizers
+        cpu_key = "CPU $opt_name"
+        gpu_key = "GPU $opt_name"
+        cpu_t = timing_results[cpu_key]["time_s"]
+        gpu_t = timing_results[gpu_key]["time_s"]
+        cpu_loss = timing_results[cpu_key]["final_loss"]
+        gpu_loss = timing_results[gpu_key]["final_loss"]
+
+        @printf("  %-10s | %-10s | %7.2f s | %8.4f | %8s\n",
+                "CPU", opt_name, cpu_t, cpu_loss, "-")
+
+        if !isnan(cpu_t) && !isnan(gpu_t) && gpu_t > 0
+            speedup = cpu_t / gpu_t
+            @printf("  %-10s | %-10s | %7.2f s | %8.4f | %6.2fx\n",
+                    "GPU", opt_name, gpu_t, gpu_loss, speedup)
+        else
+            @printf("  %-10s | %-10s | %7.2f s | %8.4f | %8s\n",
+                    "GPU", opt_name, gpu_t, gpu_loss, "N/A")
+        end
+        println("  " * "-" ^ 62)
+    end
+
+    # Compute per-optimizer speedups and overall
+    any_gpu_faster = false
+    for (_, opt_name, _) in quick_optimizers
+        cpu_t = timing_results["CPU $opt_name"]["time_s"]
+        gpu_t = timing_results["GPU $opt_name"]["time_s"]
+        if !isnan(cpu_t) && !isnan(gpu_t) && gpu_t > 0
+            speedup = cpu_t / gpu_t
+            @printf("\n  %s speedup: %.2fx\n", opt_name, speedup)
+            if speedup > 1.0
+                any_gpu_faster = true
+            end
+        end
+    end
+
+    # Overall speedup (average of CPU times / average of GPU times)
+    cpu_total = sum(timing_results["CPU $o"]["time_s"] for (_, o, _) in quick_optimizers)
+    gpu_total = sum(timing_results["GPU $o"]["time_s"] for (_, o, _) in quick_optimizers)
+    if !isnan(cpu_total) && !isnan(gpu_total) && gpu_total > 0
+        overall = cpu_total / gpu_total
+        @printf("  Overall speedup: %.2fx\n", overall)
+    end
+
+    # PASS/FAIL assertion
+    if any_gpu_faster
+        println("\n  PASS: At least one GPU config is faster than its CPU counterpart")
+    else
+        println("\n  FAIL: No GPU config was faster than CPU")
+    end
+
+    # Save timing JSON
+    timing_path = joinpath(OUTPUT_DIR, "gpu_quick_timing.json")
+    mkpath(dirname(timing_path))
+    open(timing_path, "w") do io
+        JSON3.pretty(io, timing_results)
+    end
+    println("\n  Timing data saved to: $timing_path")
+
+    println("=" ^ 70)
+    return timing_results
+end
+
 # Run
-main()
+if GPU_QUICK
+    gpu_quick_main()
+else
+    main()
+end
