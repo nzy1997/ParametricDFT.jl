@@ -73,5 +73,8 @@ include("tebd_tests.jl")
 include("training_tests.jl")
 include("serialization_tests.jl")
 include("compression_tests.jl")
+include("losstests.jl")
+include("gpu_optimizer_crosscheck.jl")
+include("batched_ops_tests.jl")
 
 end  # @testset "ParametricDFT.jl"

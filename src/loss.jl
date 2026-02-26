@@ -145,7 +145,7 @@ end
 # ============================================================================
 
 """
-    loss_function(tensors, m::Int, n::Int, optcode::AbstractEinsum, pic::Matrix, loss::AbstractLoss; inverse_code=nothing)
+    loss_function(tensors, m::Int, n::Int, optcode::AbstractEinsum, pic::AbstractMatrix, loss::AbstractLoss; inverse_code=nothing)
 
 Compute the loss for current circuit parameters.
 
@@ -154,20 +154,20 @@ Compute the loss for current circuit parameters.
 - `m::Int`: Number of qubits for row dimension
 - `n::Int`: Number of qubits for column dimension
 - `optcode::AbstractEinsum`: Optimized einsum code (forward transform)
-- `pic::Matrix`: Input signal (size must be 2^m × 2^n)
+- `pic::AbstractMatrix`: Input signal (size must be 2^m × 2^n). Supports both CPU arrays and GPU arrays (CuArray).
 - `loss::AbstractLoss`: Loss function type
 - `inverse_code::AbstractEinsum`: Optional inverse einsum code (required for MSELoss)
 
 # Returns
 - Loss value
 """
-function loss_function(tensors::AbstractVector, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum, pic::Matrix, loss::AbstractLoss; inverse_code=nothing)
+function loss_function(tensors::AbstractVector, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum, pic::AbstractMatrix, loss::AbstractLoss; inverse_code=nothing)
     # Avoid splatting an AbstractVector during AD; Zygote may produce tuple tangents for varargs.
     # We delegate to the Tuple method for a stable tangent type.
     return loss_function(Tuple(tensors), m, n, optcode, pic, loss; inverse_code=inverse_code)
 end
 
-function loss_function(tensors::Tuple, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum, pic::Matrix, loss::AbstractLoss; inverse_code=nothing)
+function loss_function(tensors::Tuple, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum, pic::AbstractMatrix, loss::AbstractLoss; inverse_code=nothing)
     @assert (size(pic) == (2^m, 2^n)) "Input matrix size must be 2^m × 2^n"
     fft_pic = reshape(optcode(tensors..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
     return _loss_function(fft_pic, pic, loss, tensors, m, n, inverse_code)
