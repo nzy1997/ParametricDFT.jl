@@ -351,35 +351,56 @@ Key advantages of this approach:
 - Reduces to standard 2D QFT when all entanglement phases $phi_k = 0$
 
 == Alternative Basis: Time Evolving Block Decimation (TEBD)
-Time Evolving Block Decimation (TEBD) is a tensor network ansatz originally developed for simulating 1D quantum many-body systems. It employs a _brickwork_ pattern of nearest-neighbor two-qubit gates applied in alternating layers. For image processing on a $2^n times 2^n$ grid, TEBD can be adapted by treating the $n$ row qubits and $n$ column qubits as two coupled 1D chains.
+Time Evolving Block Decimation (TEBD) is a tensor network ansatz originally developed for simulating 1D quantum many-body systems. In our implementation, it employs a _ring topology_ of nearest-neighbor controlled-phase gates preceded by Hadamard gates on each qubit. For image processing on a $2^n times 2^n$ grid, the $n$ row qubits and $n$ column qubits each form an independent ring of controlled-phase gates.
+
+#let tebdgate(x, i, j, label, name: "T") = {
+  import draw: *
+  circle((x, i), radius: 0.05, fill: black, stroke: none, name: name + "c1")
+  circle((x, j), radius: 0.05, fill: black, stroke: none, name: name + "c2")
+  ngate((x, (i + j) / 2), 1, name, text: text(8pt)[#label], gap-y: 0.8, width: 0.6)
+  line(name + "c1", name + ".t")
+  line(name + "c2", name + ".b")
+}
 
 #figure(canvas({
   import draw: *
-  let n = 4
   let dy = 0.8
-  // Input tensor
-  ngate((-1.5, -(n - 1) * dy / 2), n, "x_n", text:[$bold(x)$], gap-y: dy, width: 0.7)
-  // Draw qubit lines from input to output
-  for i in range(n){
-    line("x_n.o" + str(i), (7.5, -i * dy), stroke: gray)
-    content((7.9, -i * dy), [$q_#i$])
+  let n = 4
+  let ysep = (n + 0.5) * dy
+  // Input tensors
+  ngate((-2.5, -(n - 1) * dy / 2), n, "x_n", text:[$bold(x)$], gap-y: dy, width: 0.7)
+  ngate((-2.5, -ysep - (n - 1) * dy / 2), n, "y_n", text:[$bold(y)$], gap-y: dy, width: 0.7)
+  // Draw qubit lines and labels
+  for i in range(n) {
+    line("x_n.o" + str(i), (9.5, -i * dy), stroke: gray)
+    content((-3.3, -i * dy), [$|x_#(i + 1) angle.r$])
+    content((9.9, -i * dy), [$x'_#(i + 1)$])
+    line("y_n.o" + str(i), (9.5, -ysep - i * dy), stroke: gray)
+    content((-3.3, -ysep - i * dy), [$|y_#(i + 1) angle.r$])
+    content((9.9, -ysep - i * dy), [$y'_#(i + 1)$])
   }
-  // Layer 1: even pairs (q0-q1, q2-q3)
-  ngate((0.6, -0.5 * dy), 2, "U1", text:[$U_1$], gap-y: dy, width: 0.7)
-  ngate((0.6, -2.5 * dy), 2, "U2", text:[$U_2$], gap-y: dy, width: 0.7)
-  // Layer 2: odd pairs (q1-q2)
-  ngate((2.0, -1.5 * dy), 2, "U3", text:[$U_3$], gap-y: dy, width: 0.7)
-  // Layer 3: even pairs again
-  ngate((3.4, -0.5 * dy), 2, "U4", text:[$U_4$], gap-y: dy, width: 0.7)
-  ngate((3.4, -2.5 * dy), 2, "U5", text:[$U_5$], gap-y: dy, width: 0.7)
-  // Layer 4: odd pairs
-  ngate((4.8, -1.5 * dy), 2, "U6", text:[$U_6$], gap-y: dy, width: 0.7)
-  // Layer 5: even pairs
-  ngate((6.2, -0.5 * dy), 2, "U7", text:[$U_7$], gap-y: dy, width: 0.7)
-  ngate((6.2, -2.5 * dy), 2, "U8", text:[$U_8$], gap-y: dy, width: 0.7)
-}), caption: [TEBD brickwork circuit for $n=4$ qubits with $L=5$ layers: alternating layers of nearest-neighbor two-qubit gates $U_k$.])
+  // Dashed separator between row and column qubits
+  line((-3.5, -(n - 0.25) * dy), (9.5, -(n - 0.25) * dy), stroke: (dash: "dashed", paint: gray))
+  // Hadamard gates for all qubits
+  for i in range(n) {
+    ngate((-1.0, -i * dy), 1, "Hx" + str(i), text:[$H$], gap-y: dy, width: 0.5)
+    ngate((-1.0, -ysep - i * dy), 1, "Hy" + str(i), text:[$H$], gap-y: dy, width: 0.5)
+  }
+  // Row ring: nearest-neighbor controlled-phase gates (staircase pattern)
+  tebdgate(0.8, 0, -dy, [$T_(x 1)$], name: "Tx1")
+  tebdgate(2.2, -dy, -2 * dy, [$T_(x 2)$], name: "Tx2")
+  tebdgate(3.6, -2 * dy, -3 * dy, [$T_(x 3)$], name: "Tx3")
+  // Wrap-around gate closing the row ring
+  tebdgate(5.5, 0, -3 * dy, [$T_(x 4)$], name: "Tx4")
+  // Column ring: nearest-neighbor controlled-phase gates
+  tebdgate(0.8, -ysep, -ysep - dy, [$T_(y 1)$], name: "Ty1")
+  tebdgate(2.2, -ysep - dy, -ysep - 2 * dy, [$T_(y 2)$], name: "Ty2")
+  tebdgate(3.6, -ysep - 2 * dy, -ysep - 3 * dy, [$T_(y 3)$], name: "Ty3")
+  // Wrap-around gate closing the column ring
+  tebdgate(5.5, -ysep, -ysep - 3 * dy, [$T_(y 4)$], name: "Ty4")
+}), caption: [TEBD circuit for $n = 4$ row and column qubits with ring topology. Hadamard gates $H$ are applied to all qubits, followed by nearest-neighbor controlled-phase gates $T_(x k)$ (row ring) and $T_(y k)$ (column ring). Wrap-around gates $T_(x 4)$ and $T_(y 4)$ close each ring.])
 
-In this diagram, each $U_k$ is a parameterized $4 times 4$ unitary matrix acting on two adjacent qubits. Common parameterization choices for $U_k$ include:
+Each two-qubit gate in the TEBD circuit is a parameterized controlled-phase gate acting on two adjacent qubits. In our implementation, we use $T_k = "diag"(1, 1, 1, e^(i phi_k))$ with a single learnable phase $phi_k$ per gate. More generally, common parameterization choices include:
 
 + *Full $U(4)$ unitary*: The most general form with 16 complex parameters constrained by unitarity ($U U^dagger = I$). This lies on the unitary manifold $U(4)$.
 
@@ -504,6 +525,77 @@ Observing that in this representation, tensor parameters can be tuned without af
 Intuitively, the fourier basis is not optimal for image processing, because:
 - the fourier basis assumes periodic boundary condition, which is not suitable for image processing.
 - the 2d fourier basis assumes the $X$ and $Y$ coordinates are independent, which is not suitable for image processing.
+
+== Riemannian Optimization on Unitary Manifolds
+
+The trainable parameters of our quantum circuits—Hadamard gates $H$, controlled-phase gates $M_k$, and TEBD gates $T_k$—live on Riemannian manifolds rather than Euclidean space. Standard gradient-based optimizers cannot be applied directly because Euclidean updates would violate the unitarity constraint. We employ _Riemannian optimization_ that respects the manifold geometry.
+
+=== Manifold Structure
+
+Our circuits involve two types of parameter manifolds:
+
++ *Unitary manifold $U(2)$*: Hadamard-like gates are $2 times 2$ unitary matrices satisfying $U U^dagger = I$. The tangent space at $U$ is
+  $
+    T_U U(2) = { U S : S^dagger = -S }
+  $
+  where $S$ is skew-Hermitian.
+
++ *Product of unit circles $U(1)^4$*: Controlled-phase gates are $2 times 2$ diagonal matrices with entries on the unit circle $|z_i| = 1$. The tangent space at $z$ is
+  $
+    T_z U(1)^4 = { i theta dot.c z : theta in RR^4 }
+  $
+  corresponding to purely imaginary scalings of each component.
+
+=== Riemannian Gradient
+
+Given a Euclidean gradient $nabla_E f$ obtained via automatic differentiation, we project it onto the tangent space to obtain the Riemannian gradient:
+
+- *For $U(2)$*: $"grad" f(U) = U dot "skew"(U^dagger nabla_E f)$, where $"skew"(A) = (A - A^dagger) \/ 2$.
+- *For $U(1)^4$*: $"grad" f(z) = i dot "Im"(overline(z) circle.stroked.tiny nabla_E f) circle.stroked.tiny z$, applied element-wise.
+
+=== Retraction
+
+After computing a descent direction $xi in T_x cal(M)$, we map back to the manifold using a _retraction_:
+
+- *QR retraction for $U(2)$*: Given $U + alpha xi = Q R$ (QR decomposition), set $R_U (alpha xi) = Q dot "diag"("sgn"(R_(i i)))$. The sign correction ensures we remain on the correct connected component.
+- *Normalization for $U(1)^4$*: $R_z (alpha xi) = (z + alpha xi) \/ |z + alpha xi|$, applied element-wise to project back onto the unit circle.
+
+=== Riemannian Gradient Descent
+
+The basic optimization algorithm iterates:
+$
+  x_(t+1) = R_(x_t) (-eta dot "grad" f(x_t))
+$ <eq:rgd>
+where $eta > 0$ is the learning rate and $R$ is the retraction.
+
+=== Riemannian Adam
+
+For faster convergence, we implement the Riemannian Adam optimizer (Bécigneul & Ganea, 2019) that extends classical Adam to manifolds. Let $g_t = "grad" f(x_t)$ be the Riemannian gradient at step $t$. The algorithm maintains per-parameter first and second moment estimates:
+
+$
+  m_t &= beta_1 m_(t-1) + (1 - beta_1) g_t \
+  v_t &= beta_2 v_(t-1) + (1 - beta_2) |g_t|^2
+$ <eq:adam_moments>
+
+with bias-corrected estimates $hat(m)_t = m_t \/ (1 - beta_1^t)$ and $hat(v)_t = v_t \/ (1 - beta_2^t)$. The update direction is:
+
+$
+  d_t = hat(m)_t \/ (sqrt(hat(v)_t) + epsilon)
+$
+
+and the new iterate is obtained by retraction:
+
+$
+  x_(t+1) = R_(x_t) (-eta dot d_t)
+$
+
+After retraction, the first moment $m_t$ must be _parallel transported_ from the tangent space at $x_t$ to the tangent space at $x_(t+1)$. We use projection-based transport as a first-order approximation:
+
+$
+  Gamma_(x_t -> x_(t+1)) (m_t) = "proj"_(T_(x_(t+1)) cal(M)) (m_t)
+$
+
+which re-projects the old momentum onto the new tangent space. For $U(2)$ this is $U_(t+1) dot "skew"(U_(t+1)^dagger m_t)$; for $U(1)^4$ this re-applies the tangent projection at the new point.
 
 == Tasks
 - Create an image dataset $cal(D) = {bold(x)_i}_(i=1)^N$.
