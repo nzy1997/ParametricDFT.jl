@@ -76,5 +76,6 @@ include("compression_tests.jl")
 include("losstests.jl")
 include("gpu_optimizer_crosscheck.jl")
 include("batched_ops_tests.jl")
+include("batched_einsum_tests.jl")
 
 end  # @testset "ParametricDFT.jl"
