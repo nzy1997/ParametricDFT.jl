@@ -40,7 +40,7 @@ function optimize_batched_code(batched_flat, batch_label, batch_size::Int)
 end
 
 """Apply circuit to B images in a single einsum call. Returns (2,...,2,B) tensor."""
-function batched_forward(optcode_batched, tensors, batch::Vector{<:AbstractMatrix}, m::Int, n::Int)
+function batched_forward(optcode_batched, tensors::Tuple, batch::Vector{<:AbstractMatrix}, m::Int, n::Int)
     qubit_dims = fill(2, m + n)
     # Stack B images into a single (2,2,...,2, B) tensor
     stacked = cat([reshape(img, qubit_dims...) for img in batch]...; dims=m + n + 1)
@@ -48,19 +48,19 @@ function batched_forward(optcode_batched, tensors, batch::Vector{<:AbstractMatri
 end
 
 """Batched L1 loss: (1/B) * sum(|forward(images)|)."""
-function batched_loss_l1(optcode_batched, tensors, batch::Vector{<:AbstractMatrix}, m::Int, n::Int)
+function batched_loss_l1(optcode_batched, tensors::Tuple, batch::Vector{<:AbstractMatrix}, m::Int, n::Int)
     result = batched_forward(optcode_batched, tensors, batch, m, n)
     return sum(abs.(result)) / length(batch)
 end
 
 """Batched L2 loss: (1/B) * sum(|forward(images)|^2)."""
-function batched_loss_l2(optcode_batched, tensors, batch::Vector{<:AbstractMatrix}, m::Int, n::Int)
+function batched_loss_l2(optcode_batched, tensors::Tuple, batch::Vector{<:AbstractMatrix}, m::Int, n::Int)
     result = batched_forward(optcode_batched, tensors, batch, m, n)
     return sum(abs2.(result)) / length(batch)
 end
 
 """Batched MSE loss: batched forward, per-image topk_truncate + inverse."""
-function batched_loss_mse(optcode_batched, tensors, batch::Vector{<:AbstractMatrix}, m::Int, n::Int, k::Int, inverse_code)
+function batched_loss_mse(optcode_batched, tensors::Tuple, batch::Vector{<:AbstractMatrix}, m::Int, n::Int, k::Int, inverse_code)
     B = length(batch)
     qubit_dims = fill(2, m + n)
 
@@ -83,3 +83,9 @@ function batched_loss_mse(optcode_batched, tensors, batch::Vector{<:AbstractMatr
     end
     return total_loss / B
 end
+
+# Vector→Tuple wrapper methods to avoid Zygote vector-vs-tuple tangent mismatch
+# when splatting. Same pattern as loss_function in loss.jl.
+batched_loss_l1(oc, ts::AbstractVector, b, m, n) = batched_loss_l1(oc, Tuple(ts), b, m, n)
+batched_loss_l2(oc, ts::AbstractVector, b, m, n) = batched_loss_l2(oc, Tuple(ts), b, m, n)
+batched_loss_mse(oc, ts::AbstractVector, b, m, n, k, ic) = batched_loss_mse(oc, Tuple(ts), b, m, n, k, ic)
