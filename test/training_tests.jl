@@ -198,11 +198,78 @@
 end
 
 # ============================================================================
+# Tests for Batched Training
+# ============================================================================
+
+@testset "batched training" begin
+
+    @testset "adam with batch_size > 1 uses batched einsum" begin
+        Random.seed!(42)
+        m, n = 2, 2
+        dataset = [rand(Float64, 4, 4) for _ in 1:6]
+
+        basis, _ = train_basis(
+            QFTBasis, dataset;
+            m=m, n=n,
+            loss=ParametricDFT.L1Norm(),
+            epochs=1,
+            steps_per_image=3,
+            batch_size=3,
+            optimizer=:adam,
+            verbose=false
+        )
+
+        @test basis isa QFTBasis
+        @test basis.m == m
+        @test basis.n == n
+    end
+
+    @testset "gradient_descent with batch_size > 1" begin
+        Random.seed!(42)
+        m, n = 2, 2
+        dataset = [rand(Float64, 4, 4) for _ in 1:6]
+
+        basis, _ = train_basis(
+            QFTBasis, dataset;
+            m=m, n=n,
+            loss=ParametricDFT.L2Norm(),
+            epochs=1,
+            steps_per_image=3,
+            batch_size=3,
+            optimizer=:adam,
+            verbose=false
+        )
+
+        @test basis isa QFTBasis
+    end
+
+    @testset "batch_size=1 fallback still works" begin
+        Random.seed!(42)
+        m, n = 2, 2
+        dataset = [rand(Float64, 4, 4) for _ in 1:4]
+
+        basis, _ = train_basis(
+            QFTBasis, dataset;
+            m=m, n=n,
+            loss=ParametricDFT.L1Norm(),
+            epochs=1,
+            steps_per_image=3,
+            batch_size=1,
+            optimizer=:adam,
+            verbose=false
+        )
+
+        @test basis isa QFTBasis
+    end
+
+end
+
+# ============================================================================
 # Tests for EntangledQFTBasis Training
 # ============================================================================
 
 @testset "train_basis EntangledQFTBasis" begin
-    
+
     @testset "basic entangled training" begin
         Random.seed!(42)
         

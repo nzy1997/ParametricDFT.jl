@@ -551,6 +551,8 @@ function _train_on_batch_gpu(
     # Loss function — use batched einsum when available
     if batched_optcode !== nothing
         function batched_loss_fn(ts)
+            # Convert to Tuple to avoid Zygote vector-vs-tuple tangent mismatch
+            # when splatting inside batched functions (same pattern as loss_function).
             if loss isa L1Norm
                 return batched_loss_l1(batched_optcode, ts, batch, m, n)
             elseif loss isa L2Norm

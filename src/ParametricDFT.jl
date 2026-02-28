@@ -41,6 +41,7 @@ export num_gates, get_phases
 
 # Training exports
 export train_basis, save_loss_history, load_loss_history
+export to_device
 
 # Visualization exports
 export TrainingHistory, plot_training_loss, plot_training_loss_steps,
@@ -69,7 +70,7 @@ include("basis.jl")
 include("riemannian_optimizers.jl")
 # 4c. Batched einsum operations (batch dimension for parallel image processing)
 include("batched_einsum.jl")
-# 5. Training (uses basis types and loss functions)
+# 5. Training (uses basis types, loss functions, and Riemannian optimizers)
 include("training.jl")
 # 6. Serialization (uses basis types)
 include("serialization.jl")
