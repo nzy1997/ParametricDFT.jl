@@ -1,24 +1,32 @@
-# ============================================================================
-# Sparse Basis Training
-# ============================================================================
-# This file provides training functionality to learn optimal basis parameters
-# from a dataset of images.
 
-# ============================================================================
-# Generic Internal Training Core
-# ============================================================================
 
-"""
-    _train_basis_core(dataset, optcode, inverse_code, initial_tensors, m, n, loss,
-                      epochs, steps_per_image, validation_split, shuffle,
-                      early_stopping_patience, verbose, basis_name; extra_info="",
-                      save_loss_path=nothing)
+"""Move array to device. `:gpu` requires CUDA.jl via CUDAExt."""
+to_device(x, ::Val{:cpu}) = x
 
-Core training loop shared by all basis types. Returns (final_tensors, best_val_loss, train_losses, val_losses, step_train_losses).
+"""Move array to CPU."""
+to_cpu(x::AbstractArray) = Array(x)
+to_cpu(x) = x
 
-If `save_loss_path` is provided, saves per-step training losses to a JSON file with
-`epoch`, `step`, and `loss` fields for each entry.
-"""
+function to_device(x, device::Symbol)
+    if device === :cpu
+        return to_device(x, Val(:cpu))
+    elseif device === :gpu
+        # Check if the CUDAExt has added the Val{:gpu} method
+        if hasmethod(to_device, Tuple{typeof(x), Val{:gpu}})
+            return to_device(x, Val(:gpu))
+        else
+            error("GPU support requires CUDA.jl. Install and load CUDA.jl first: `using CUDA`")
+        end
+    else
+        error("Unknown device: $device. Supported: :cpu, :gpu")
+    end
+end
+
+
+"""Core training loop shared by all basis types.
+Returns `(final_tensors, best_val_loss, train_losses, val_losses, step_train_losses)`.
+Uses `optimize!` from optimizers.jl for all optimization (GPU and CPU).
+Supports optimizers: `RiemannianGD()`, `RiemannianAdam()`, or symbols `:gradient_descent`, `:adam`."""
 function _train_basis_core(
     dataset::Vector{<:AbstractMatrix},
     optcode::OMEinsum.AbstractEinsum,
@@ -34,38 +42,82 @@ function _train_basis_core(
     verbose::Bool,
     basis_name::String;
     extra_info::String = "",
-    save_loss_path::Union{Nothing, String} = nothing
+    save_loss_path::Union{Nothing, String} = nothing,
+    optimizer::Union{Symbol, AbstractRiemannianOptimizer} = :gradient_descent,
+    batch_size::Int = 1,
+    device::Symbol = :cpu,
+    checkpoint_interval::Int = 0,
+    checkpoint_dir::Union{Nothing, String} = nothing,
+    build_basis_fn::Union{Nothing, Function} = nothing
 )
-    # Convert images to complex matrices
-    complex_dataset = [Complex{Float64}.(img) for img in dataset]
-    
+    # Convert Symbol to optimizer type for backward compatibility
+    opt = if optimizer isa AbstractRiemannianOptimizer
+        optimizer
+    elseif optimizer === :adam
+        RiemannianAdam(lr=0.001)
+    elseif optimizer === :gradient_descent
+        RiemannianGD(lr=0.01)
+    else
+        error("Unknown optimizer: $optimizer. Use RiemannianGD(), RiemannianAdam(), or :gradient_descent/:adam")
+    end
+
+    # Convert images to complex matrices and move to device
+    complex_dataset = [to_device(Complex{Float64}.(img), device) for img in dataset]
+
     # Split into training and validation sets
     n_images = length(complex_dataset)
     n_validation = max(1, round(Int, n_images * validation_split))
-    
+
     indices = shuffle ? Random.shuffle(1:n_images) : collect(1:n_images)
     validation_indices = indices[1:n_validation]
     training_indices = indices[n_validation+1:end]
-    
+
     training_data = complex_dataset[training_indices]
     validation_data = complex_dataset[validation_indices]
-    
+
+    # Clamp batch_size to valid range
+    batch_size = clamp(batch_size, 1, length(training_data))
+    n_batches = ceil(Int, length(training_data) / batch_size)
+
+    # Move tensors to device and ensure Matrix{ComplexF64} for optimize!
+    device_tensors = [to_device(Matrix{ComplexF64}(t), device) for t in initial_tensors]
+
     if verbose
+        device_names = Dict(:cpu => "CPU", :gpu => "GPU (CUDA)")
+        opt_name = if opt isa RiemannianGD
+            "Riemannian Gradient Descent"
+        elseif opt isa RiemannianAdam
+            "Riemannian Adam"
+        else
+            string(typeof(opt))
+        end
         println("Training $basis_name:")
         println("  Image size: $(2^m)×$(2^n)")
         println("  Training images: $(length(training_data))")
         println("  Validation images: $(length(validation_data))")
         !isempty(extra_info) && println(extra_info)
+        println("  Optimizer: $opt_name")
+        println("  Device: $(get(device_names, device, string(device)))")
+        println("  Batch size: $batch_size ($(n_batches) batches per epoch)")
         println("  Epochs: $epochs")
-        println("  Steps per image: $steps_per_image")
+        println("  Steps per batch: $steps_per_image")
     end
-    
-    # Initialize manifold
-    M = generate_manifold(initial_tensors)
-    current_theta = tensors2point(initial_tensors, M)
-    
+
+    # Pre-compute batched einsum codes for batch_size > 1
+    # This is done once and reused for all epochs/batches (TreeSA optimization is expensive)
+    batched_optcode = nothing
+    if batch_size > 1
+        n_gates = length(initial_tensors)
+        flat_batched, blabel = make_batched_code(optcode, n_gates)
+        batched_optcode = optimize_batched_code(flat_batched, blabel, batch_size)
+        verbose && println("  Batched einsum: enabled ($(n_gates) gates, batch label=$blabel)")
+    end
+
+    # Single code path: work directly with tensor list
+    current_tensors = device_tensors
+    best_tensors = copy.(current_tensors)
+
     # Track best parameters
-    best_theta = current_theta
     best_val_loss = Inf
     patience_counter = 0
 
@@ -77,6 +129,14 @@ function _train_basis_core(
     # Per-step loss records for JSON export (epoch, step, loss)
     loss_records = Dict{String, Any}[]
 
+    # Checkpointing setup
+    do_checkpoint = checkpoint_interval > 0 && checkpoint_dir !== nothing
+    if do_checkpoint
+        mkpath(checkpoint_dir)
+        verbose && println("  Checkpointing every $checkpoint_interval steps to: $checkpoint_dir")
+    end
+    global_step = 0
+
     # Training loop
     for epoch in 1:epochs
         verbose && println("\nEpoch $epoch/$epochs")
@@ -86,27 +146,66 @@ function _train_basis_core(
 
         epoch_losses = Float64[]
 
-        # Train on each image
-        for (idx, img_matrix) in enumerate(training_data)
-            current_theta = _train_on_single_image(
-                img_matrix, current_theta, M, optcode, inverse_code,
-                m, n, loss, steps_per_image
-            )
+        # Train on batches
+        for batch_idx in 1:n_batches
+            start_idx = (batch_idx - 1) * batch_size + 1
+            end_idx = min(batch_idx * batch_size, length(training_data))
+            batch = training_data[start_idx:end_idx]
 
-            tensors = point2tensors(current_theta, M)
-            train_loss = loss_function(tensors, m, n, optcode, img_matrix, loss; inverse_code=inverse_code)
-            push!(epoch_losses, train_loss)
-            push!(step_train_losses, train_loss)
-            push!(loss_records, Dict{String, Any}("epoch" => epoch, "step" => idx, "loss" => train_loss))
+            # Construct loss function for this batch
+            batch_loss_fn = if batched_optcode !== nothing
+                ts -> loss_function(ts, m, n, optcode, batch, loss;
+                                    inverse_code=inverse_code, batched_optcode=batched_optcode)
+            else
+                ts -> begin
+                    total = zero(real(eltype(ts[1])))
+                    for img in batch
+                        total += loss_function(ts, m, n, optcode, img, loss; inverse_code=inverse_code)
+                    end
+                    return total / length(batch)
+                end
+            end
 
-            verbose && print("  [$idx/$(length(training_data))] loss: $(round(train_loss, digits=6))\r")
+            # Construct gradient function
+            batch_grad_fn = ts -> begin
+                _, back = Zygote.pullback(batch_loss_fn, ts)
+                grads = back(one(real(eltype(ts[1]))))[1]
+                return grads
+            end
+
+            # Run optimizer
+            current_tensors = optimize!(opt, current_tensors, batch_loss_fn, batch_grad_fn;
+                                         max_iter=steps_per_image, tol=1e-8, verbose=false)
+            tensors_for_loss = current_tensors
+
+            # Compute average loss over batch for tracking
+            batch_loss = sum(
+                loss_function(tensors_for_loss, m, n, optcode, img, loss; inverse_code=inverse_code)
+                for img in batch
+            ) / length(batch)
+            push!(epoch_losses, batch_loss)
+            push!(step_train_losses, batch_loss)
+            push!(loss_records, Dict{String, Any}("epoch" => epoch, "step" => batch_idx, "loss" => batch_loss))
+            global_step += 1
+
+            verbose && print("  [batch $batch_idx/$n_batches] loss: $(round(batch_loss, digits=6))\r")
+
+            # Checkpoint: save basis and loss history periodically
+            if do_checkpoint && global_step % checkpoint_interval == 0
+                _save_checkpoint(
+                    checkpoint_dir, global_step, basis_name,
+                    current_tensors,
+                    loss_records, train_losses, val_losses,
+                    build_basis_fn
+                )
+                verbose && println("\n  Checkpoint saved at step $global_step")
+            end
         end
-        
+
         verbose && println()
-        
+
         # Compute validation loss
-        tensors = point2tensors(current_theta, M)
-        val_loss = _compute_validation_loss(validation_data, tensors, optcode, inverse_code, m, n, loss)
+        val_loss = _compute_validation_loss(validation_data, current_tensors, optcode, inverse_code, m, n, loss)
         avg_train_loss = isempty(epoch_losses) ? Inf : sum(epoch_losses) / length(epoch_losses)
 
         # Store losses for visualization
@@ -117,26 +216,28 @@ function _train_basis_core(
             println("  Avg train loss: $(round(avg_train_loss, digits=6))")
             println("  Validation loss: $(round(val_loss, digits=6))")
         end
-        
+
         # Check for improvement
         if val_loss < best_val_loss
             improvement = best_val_loss == Inf ? 100.0 : (best_val_loss - val_loss) / best_val_loss * 100
             verbose && println("  ✓ Validation improved by $(round(improvement, digits=2))%")
             best_val_loss = val_loss
-            best_theta = current_theta
+            best_tensors = copy.(current_tensors)
             patience_counter = 0
         else
             patience_counter += 1
             verbose && println("  ✗ No improvement (patience: $patience_counter/$early_stopping_patience)")
-            
+
             if patience_counter >= early_stopping_patience && epoch > 1
                 verbose && println("\nEarly stopping: validation loss not improving")
                 break
             end
         end
     end
-    
-    final_tensors = point2tensors(best_theta, M)
+
+    # Move final tensors back to CPU for serialization
+    # Ensure tensors are ComplexF64 for consistency with CPU operations
+    final_tensors = [ComplexF64.(Array(t)) for t in best_tensors]
     verbose && println("\n✓ Training completed. Best validation loss: $(round(best_val_loss, digits=6))")
 
     # Save loss history to JSON if path provided
@@ -148,45 +249,14 @@ function _train_basis_core(
     return final_tensors, best_val_loss, train_losses, val_losses, step_train_losses
 end
 
-# ============================================================================
-# Public train_basis Methods
-# ============================================================================
 
 """
-    train_basis(::Type{QFTBasis}, dataset::Vector{<:AbstractMatrix}; kwargs...)
+    train_basis(::Type{QFTBasis}, dataset; m, n, loss, epochs, steps_per_image,
+                optimizer, batch_size, device, ...)
 
-Train a QFTBasis on a dataset of images using Riemannian gradient descent.
-
-# Arguments
-- `::Type{QFTBasis}`: The basis type to train
-- `dataset::Vector{<:AbstractMatrix}`: Training images (each must be 2^m × 2^n)
-
-# Keyword Arguments
-- `m::Int`: Number of qubits for rows (image height = 2^m)
-- `n::Int`: Number of qubits for columns (image width = 2^n)
-- `loss::AbstractLoss = MSELoss(k)`: Loss function for training
-- `epochs::Int = 3`: Number of training epochs
-- `steps_per_image::Int = 200`: Gradient descent steps per image
-- `validation_split::Float64 = 0.2`: Fraction of data for validation
-- `shuffle::Bool = true`: Whether to shuffle data each epoch
-- `early_stopping_patience::Int = 2`: Epochs without improvement before stopping
-- `verbose::Bool = true`: Whether to print training progress
-- `save_loss_path::Union{Nothing, String} = nothing`: Path to save training loss history as JSON
-
-# Returns
-- `Tuple{QFTBasis, NamedTuple}`: Trained basis and training history
-  - `basis`: Trained QFTBasis with optimized parameters
-  - `history`: NamedTuple with fields `train_losses`, `val_losses`, `step_train_losses`, `basis_name`
-
-# Example
-```julia
-images = [load_image(path) for path in image_paths]
-k = round(Int, 64 * 64 * 0.1)  # Keep 10% of coefficients
-basis, history = train_basis(QFTBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5,
-                             save_loss_path="qft_loss.json")
-save_basis("trained_basis.json", basis)
-println("Final training loss: ", history.train_losses[end])
-```
+Train a QFTBasis on images. Returns `(basis, history)`.
+Key kwargs: `optimizer` (`RiemannianGD()`/`RiemannianAdam()`/`:gradient_descent`/`:adam`),
+`batch_size`, `device` (`:cpu`/`:gpu`).
 """
 function train_basis(
     ::Type{QFTBasis},
@@ -199,7 +269,12 @@ function train_basis(
     shuffle::Bool = true,
     early_stopping_patience::Int = 2,
     verbose::Bool = true,
-    save_loss_path::Union{Nothing, String} = nothing
+    save_loss_path::Union{Nothing, String} = nothing,
+    optimizer::Union{Symbol, AbstractRiemannianOptimizer} = :gradient_descent,
+    batch_size::Int = 1,
+    device::Symbol = :cpu,
+    checkpoint_interval::Int = 0,
+    checkpoint_dir::Union{Nothing, String} = nothing
 )
     @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
     @assert length(dataset) > 0 "Dataset must not be empty"
@@ -207,16 +282,22 @@ function train_basis(
     for (i, img) in enumerate(dataset)
         @assert size(img) == expected_size "Image $i has size $(size(img)), expected $expected_size"
     end
-    
+
     # Initialize circuit
     optcode, initial_tensors = qft_code(m, n)
     inverse_code, _ = qft_code(m, n; inverse=true)
-    
+
+    # Checkpoint callback: construct QFTBasis from tensors
+    build_fn = tensors -> QFTBasis(m, n, tensors, optcode, inverse_code)
+
     final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, verbose, "QFTBasis";
-        save_loss_path=save_loss_path
+        save_loss_path=save_loss_path, optimizer=optimizer,
+        batch_size=batch_size, device=device,
+        checkpoint_interval=checkpoint_interval, checkpoint_dir=checkpoint_dir,
+        build_basis_fn=build_fn
     )
 
     trained_basis = QFTBasis(m, n, final_tensors, optcode, inverse_code)
@@ -226,33 +307,9 @@ function train_basis(
 end
 
 """
-    train_basis(::Type{EntangledQFTBasis}, dataset::Vector{<:AbstractMatrix}; kwargs...)
+    train_basis(::Type{EntangledQFTBasis}, dataset; m, n, entangle_phases, ...)
 
-Train an EntangledQFTBasis on a dataset of images using Riemannian gradient descent.
-
-# Arguments
-- `::Type{EntangledQFTBasis}`: The basis type to train
-- `dataset::Vector{<:AbstractMatrix}`: Training images (each must be 2^m × 2^n)
-
-# Keyword Arguments
-- `m::Int`, `n::Int`: Number of qubits for rows/columns
-- `entangle_phases::Union{Nothing, Vector{<:Real}}`: Initial phases (default: zeros)
-- `loss`, `epochs`, `steps_per_image`, `validation_split`, `shuffle`, 
-  `early_stopping_patience`, `verbose`: Same as QFTBasis
-- `save_loss_path::Union{Nothing, String} = nothing`: Path to save training loss history as JSON
-
-# Returns
-- `Tuple{EntangledQFTBasis, NamedTuple}`: Trained basis and training history
-  - `basis`: Trained EntangledQFTBasis with optimized entanglement phases
-  - `history`: NamedTuple with fields `train_losses`, `val_losses`, `step_train_losses`, `basis_name`
-
-# Example
-```julia
-k = round(Int, 64 * 64 * 0.1)
-basis, history = train_basis(EntangledQFTBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5)
-phases = get_entangle_phases(basis)
-println("Training loss per epoch: ", history.train_losses)
-```
+Train an EntangledQFTBasis on images. Same kwargs as QFTBasis plus `entangle_phases`.
 """
 function train_basis(
     ::Type{EntangledQFTBasis},
@@ -267,7 +324,12 @@ function train_basis(
     shuffle::Bool = true,
     early_stopping_patience::Int = 2,
     verbose::Bool = true,
-    save_loss_path::Union{Nothing, String} = nothing
+    save_loss_path::Union{Nothing, String} = nothing,
+    optimizer::Union{Symbol, AbstractRiemannianOptimizer} = :gradient_descent,
+    batch_size::Int = 1,
+    device::Symbol = :cpu,
+    checkpoint_interval::Int = 0,
+    checkpoint_dir::Union{Nothing, String} = nothing
 )
     @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
     @assert length(dataset) > 0 "Dataset must not be empty"
@@ -281,13 +343,24 @@ function train_basis(
     # Initialize circuit
     optcode, initial_tensors, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, entangle_position=entangle_position)
     inverse_code, _, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, inverse=true, entangle_position=entangle_position)
-    
+
+    # Checkpoint callback: construct EntangledQFTBasis from tensors
+    build_fn = tensors -> begin
+        eidx = get_entangle_tensor_indices(tensors, n_entangle)
+        phases = !isempty(eidx) ? extract_entangle_phases(tensors, eidx) :
+                 (entangle_phases === nothing ? zeros(n_entangle) : Float64.(entangle_phases))
+        EntangledQFTBasis(m, n, tensors, optcode, inverse_code, n_entangle, phases, entangle_position)
+    end
+
     final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, verbose, "EntangledQFTBasis";
         extra_info = "  Entanglement gates: $n_entangle",
-        save_loss_path=save_loss_path
+        save_loss_path=save_loss_path, optimizer=optimizer,
+        batch_size=batch_size, device=device,
+        checkpoint_interval=checkpoint_interval, checkpoint_dir=checkpoint_dir,
+        build_basis_fn=build_fn
     )
 
     # Extract trained phases
@@ -311,35 +384,9 @@ function train_basis(
 end
 
 """
-    train_basis(::Type{TEBDBasis}, dataset::Vector{<:AbstractMatrix}; kwargs...)
+    train_basis(::Type{TEBDBasis}, dataset; m, n, phases, ...)
 
-Train a TEBDBasis on a dataset of images using Riemannian gradient descent.
-
-# Arguments
-- `::Type{TEBDBasis}`: The basis type to train
-- `dataset::Vector{<:AbstractMatrix}`: Training images (each must be 2^m × 2^n)
-
-# Keyword Arguments
-- `m::Int`: Number of row qubits (image height = 2^m)
-- `n::Int`: Number of column qubits (image width = 2^n)
-- `phases::Union{Nothing, Vector{<:Real}}`: Initial phases for TEBD gates.
-  If nothing, uses small random values (randn * 0.1) to break symmetry.
-  Length must be m+n for ring topology.
-- `loss`, `epochs`, `steps_per_image`, `validation_split`, `shuffle`, 
-  `early_stopping_patience`, `verbose`: Same as QFTBasis
-- `save_loss_path::Union{Nothing, String} = nothing`: Path to save training loss history as JSON
-
-# Returns
-- `Tuple{TEBDBasis, NamedTuple}`: Trained basis and training history
-  - `basis`: Trained TEBDBasis with optimized parameters
-  - `history`: NamedTuple with fields `train_losses`, `val_losses`, `step_train_losses`, `basis_name`
-
-# Example
-```julia
-k = round(Int, 64 * 64 * 0.1)  # Keep 10% of coefficients
-basis, history = train_basis(TEBDBasis, images; m=6, n=6, loss=MSELoss(k), epochs=5)
-println("Validation loss per epoch: ", history.val_losses)
-```
+Train a TEBDBasis on images. Same kwargs as QFTBasis plus `phases` (initial TEBD gate phases).
 """
 function train_basis(
     ::Type{TEBDBasis},
@@ -353,7 +400,12 @@ function train_basis(
     shuffle::Bool = true,
     early_stopping_patience::Int = 2,
     verbose::Bool = true,
-    save_loss_path::Union{Nothing, String} = nothing
+    save_loss_path::Union{Nothing, String} = nothing,
+    optimizer::Union{Symbol, AbstractRiemannianOptimizer} = :gradient_descent,
+    batch_size::Int = 1,
+    device::Symbol = :cpu,
+    checkpoint_interval::Int = 0,
+    checkpoint_dir::Union{Nothing, String} = nothing
 )
     @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
     @assert length(dataset) > 0 "Dataset must not be empty"
@@ -376,13 +428,24 @@ function train_basis(
     # Initialize circuit
     optcode, initial_tensors, _, _ = tebd_code(m, n; phases=phases)
     inverse_code, _, _, _ = tebd_code(m, n; phases=phases, inverse=true)
-    
+
+    # Checkpoint callback: construct TEBDBasis from tensors
+    build_fn = tensors -> begin
+        gidx = get_tebd_gate_indices(tensors, n_gates)
+        p = !isempty(gidx) ? extract_tebd_phases(tensors, gidx) :
+            (phases === nothing ? zeros(n_gates) : Float64.(phases))
+        TEBDBasis(m, n, tensors, optcode, inverse_code, n_row_gates, n_col_gates, p)
+    end
+
     final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, verbose, "TEBDBasis";
         extra_info = "  Row qubits: $m, Col qubits: $n\n  Row ring gates: $n_row_gates, Col ring gates: $n_col_gates",
-        save_loss_path=save_loss_path
+        save_loss_path=save_loss_path, optimizer=optimizer,
+        batch_size=batch_size, device=device,
+        checkpoint_interval=checkpoint_interval, checkpoint_dir=checkpoint_dir,
+        build_basis_fn=build_fn
     )
 
     # Extract trained phases
@@ -405,15 +468,34 @@ function train_basis(
     return trained_basis, history
 end
 
-# ============================================================================
-# Internal Helper Functions
-# ============================================================================
 
-"""
-    _save_loss_history(path, basis_name, loss_records, train_losses, val_losses)
+"""Save a training checkpoint (basis + loss history)."""
+function _save_checkpoint(
+    checkpoint_dir::String,
+    step::Int,
+    basis_name::String,
+    tensors::Vector,
+    loss_records::Vector{Dict{String, Any}},
+    train_losses::Vector{Float64},
+    val_losses::Vector{Float64},
+    build_basis_fn::Union{Nothing, Function}
+)
+    tag = "step" * lpad(step, 4, '0')
 
-Internal function to save training loss history to a JSON file.
-"""
+    # Save loss history up to this point
+    loss_path = joinpath(checkpoint_dir, "$(tag)_loss.json")
+    _save_loss_history(loss_path, basis_name, loss_records, train_losses, val_losses)
+
+    # Save basis if builder is available
+    if build_basis_fn !== nothing
+        cpu_tensors = [ComplexF64.(Array(t)) for t in tensors]
+        basis = build_basis_fn(cpu_tensors)
+        basis_path = joinpath(checkpoint_dir, "$(tag)_basis.json")
+        save_basis(basis_path, basis)
+    end
+end
+
+"""Save training loss history to JSON."""
 function _save_loss_history(
     path::String,
     basis_name::String,
@@ -435,26 +517,7 @@ function _save_loss_history(
     end
 end
 
-"""
-    save_loss_history(path::String, history::NamedTuple)
-
-Save training loss history returned by `train_basis` to a JSON file.
-
-The JSON contains:
-- `basis_name`: Name of the trained basis
-- `epoch_losses`: Array of `{epoch, train_loss, val_loss}` per epoch
-- `step_losses`: Array of `{epoch, step, loss}` per training step
-
-# Arguments
-- `path::String`: Output file path (`.json`)
-- `history::NamedTuple`: Training history returned by `train_basis`
-
-# Example
-```julia
-basis, history = train_basis(QFTBasis, images; m=5, n=5, epochs=3)
-save_loss_history("training_loss.json", history)
-```
-"""
+"""Save training history (from `train_basis`) to a JSON file."""
 function save_loss_history(path::String, history::NamedTuple)
     # Reconstruct step loss records with epoch/step info from step_train_losses
     # We need to infer epoch boundaries from the epoch-level train_losses
@@ -472,26 +535,7 @@ function save_loss_history(path::String, history::NamedTuple)
     _save_loss_history(path, history.basis_name, loss_records, history.train_losses, history.val_losses)
 end
 
-"""
-    load_loss_history(path::String) -> TrainingHistory
-
-Load training loss history from a JSON file (saved by `save_loss_history` or `save_loss_path`)
-and return a `TrainingHistory` object that can be passed directly to plotting functions.
-
-# Arguments
-- `path::String`: Path to the JSON file
-
-# Returns
-- `TrainingHistory`: Object with `train_losses`, `val_losses`, `step_train_losses`, and `basis_name`
-
-# Example
-```julia
-using ParametricDFT
-history = load_loss_history("training_loss.json")
-fig = plot_training_loss(history)
-save("loss_curve.png", fig)
-```
-"""
+"""Load training loss history from JSON. Returns a `TrainingHistory` object."""
 function load_loss_history(path::String)
     json_str = read(path, String)
     json_data = JSON3.read(json_str)
@@ -505,36 +549,7 @@ function load_loss_history(path::String)
     return TrainingHistory(train_losses, val_losses, step_train_losses, basis_name)
 end
 
-"""
-    _train_on_single_image(img_matrix, theta, M, optcode, inverse_code, m, n, loss, steps)
-
-Train on a single image using gradient descent.
-"""
-function _train_on_single_image(
-    img_matrix::AbstractMatrix,
-    theta,
-    M::ProductManifold,
-    optcode::OMEinsum.AbstractEinsum,
-    inverse_code::OMEinsum.AbstractEinsum,
-    m::Int, n::Int,
-    loss::AbstractLoss,
-    steps::Int
-)
-    f(M, p) = loss_function(point2tensors(p, M), m, n, optcode, img_matrix, loss; inverse_code=inverse_code)
-    grad_f(M, p) = ManifoldDiff.gradient(M, x -> f(M, x), p, RiemannianProjectionBackend(AutoZygote()))
-    
-    return gradient_descent(
-        M, f, grad_f, theta;
-        debug = [],
-        stopping_criterion = StopAfterIteration(steps) | StopWhenGradientNormLess(1e-5)
-    )
-end
-
-"""
-    _compute_validation_loss(validation_data, tensors, optcode, inverse_code, m, n, loss)
-
-Compute average loss over validation set.
-"""
+"""Compute average loss over validation set."""
 function _compute_validation_loss(
     validation_data::Vector{<:AbstractMatrix},
     tensors::Vector,
@@ -549,28 +564,6 @@ function _compute_validation_loss(
     return total / length(validation_data)
 end
 
-# ============================================================================
-# Convenience Functions
-# ============================================================================
 
-"""
-    train_basis_from_files(::Type{QFTBasis}, image_paths::Vector{String}; 
-                          target_size::Int, kwargs...)
-
-Train a QFTBasis from image files, automatically resizing to power-of-2 dimensions.
-
-# Arguments
-- `::Type{QFTBasis}`: The basis type to train
-- `image_paths::Vector{String}`: Paths to image files
-
-# Keyword Arguments
-- `target_size::Int`: Target size (must be power of 2, e.g., 64, 128, 256, 512)
-- `kwargs...`: Additional arguments passed to `train_basis`
-
-# Returns
-- `QFTBasis`: Trained basis
-
-# Note
-This function requires the Images.jl package to be loaded.
-"""
+"""Train QFTBasis from image files. Requires Images.jl."""
 function train_basis_from_files end  # Defined in extension or requires Images.jl

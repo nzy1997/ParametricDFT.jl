@@ -35,45 +35,6 @@ function qft_code(m::Int, n::Int; inverse=false)
 end
 
 # ============================================================================
-# Manifold Structure and Conversions
-# ============================================================================
-
-"""
-    generate_manifold(tensors)
-
-Generate product manifold for m+n-qubit QFT parameters.
-Returns a product of U(2) manifolds for Hadamard gates and U(1)^4 for controlled gates.
-"""
-function generate_manifold(tensors)
-    M2 = UnitaryMatrices(2)
-    M1 = PowerManifold(UnitaryMatrices(1), 4)
-    return ProductManifold(map(x -> x ≈ mat(H) ? M2 : M1, tensors)...)
-end
-
-"""
-    tensors2point(tensors, M::ProductManifold)
-
-Convert circuit tensors (unitary matrices) to a point on the product manifold.
-"""
-function tensors2point(tensors, M::ProductManifold)
-    return ArrayPartition(
-        [mi isa UnitaryMatrices ? tensors[j] : 
-         [tensors[j][1, 1];;; tensors[j][1, 2];;; 
-          tensors[j][2, 1];;; tensors[j][2, 2]] 
-         for (j, mi) in enumerate(M.manifolds)]...
-    )
-end
-
-"""
-    point2tensors(p, M)
-
-Convert a manifold point back to circuit tensors (unitary matrices).
-"""
-function point2tensors(p, M)
-    return [mi isa UnitaryMatrices ? p.x[j] : reshape(p.x[j], 2, 2) for (j, mi) in enumerate(M.manifolds)]
-end
-
-# ============================================================================
 # Training with Single Image
 # ============================================================================
 
@@ -91,7 +52,7 @@ Train a parametric 2D quantum DFT circuit using Riemannian gradient descent.
 - `use_cuda::Bool=false`: Whether to use CUDA acceleration (not yet implemented)
 
 # Returns
-- Optimized parameters on the manifold (use `point2tensors` to convert to tensors)
+- Optimized parameters as `ArrayPartition` (backward compatible with existing callers)
 
 # Example
 ```julia
@@ -105,25 +66,28 @@ theta = fft_with_training(m, n, pic, MSELoss(100); steps=200)
 """
 function fft_with_training(m::Int, n::Int, pic::Matrix, loss::AbstractLoss; steps::Int=1000, use_cuda::Bool=false)
     optcode, tensors = qft_code(m, n)
-    M = generate_manifold(tensors)
-    
+
     # Generate inverse code if needed for MSE loss
     inverse_code = nothing
     if loss isa MSELoss
         inverse_code, _ = qft_code(m, n; inverse=true)
     end
-    
-    f(M, p) = loss_function(point2tensors(p, M), m, n, optcode, pic, loss; inverse_code=inverse_code)
-    grad_f2(M, p) = ManifoldDiff.gradient(M, x->f(M, x), p, RiemannianProjectionBackend(AutoZygote()))
-    
-    result = gradient_descent(
-        M, f, grad_f2, tensors2point(tensors, M);
-        debug = [:Iteration, (:Change, "|Δp|: %1.9f |"),
-                (:Cost, " F(x): %1.11f | "), "\n", :Stop],
-        stopping_criterion = StopAfterIteration(steps) | StopWhenGradientNormLess(1e-5)
-    )
-    
-    return result
+
+    # Convert tensors to Matrix{ComplexF64} for optimize!
+    mat_tensors = Matrix{ComplexF64}[Matrix{ComplexF64}(t) for t in tensors]
+
+    loss_fn = ts -> loss_function(ts, m, n, optcode, pic, loss; inverse_code=inverse_code)
+    grad_fn = ts -> begin
+        _, back = Zygote.pullback(loss_fn, ts)
+        return back(one(Float64))[1]
+    end
+
+    opt = RiemannianGD(lr=0.01)
+    optimized = optimize!(opt, mat_tensors, loss_fn, grad_fn;
+                           max_iter=steps, tol=1e-5, verbose=true)
+
+    # Return an ArrayPartition for backward compatibility with existing callers
+    return ArrayPartition(optimized...)
 end
 
 # ============================================================================

@@ -1,33 +1,12 @@
+authors = ["nzy1997"]
 name = "ParametricDFT"
 uuid = "cc2eb9de-5297-4754-b0bd-fdc80c6df40d"
 version = "0.1.0-DEV"
-authors = ["nzy1997"]
-
-[deps]
-ADTypes = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
-CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
-ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
-JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
-ManifoldDiff = "af67fdf4-a580-4b9f-bbec-742ef357defd"
-Manifolds = "1cead3c2-87b3-11e9-0ccd-23c62b72b94e"
-Manopt = "0fc0a36d-df90-57f3-8f93-d78a9fc72bb5"
-OMEinsum = "ebe7aa44-baf0-506c-a96f-8464559b3922"
-Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
-RecursiveArrayTools = "731186ca-8d62-57ce-b412-fbd966d074cd"
-SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
-StructTypes = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
-Yao = "5872b779-8223-5990-8dd0-5abbb0748c8c"
-Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
-
-[weakdeps]
-CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
-
-[extensions]
-CUDAExt = "CUDA"
 
 [compat]
 ADTypes = "1.18.0"
 CUDA = "5.9.1"
+CairoMakie = "0.12, 0.13, 0.14, 0.15"
 ChainRulesCore = "1"
 FFTW = "1.10.0"
 JSON3 = "1"
@@ -36,7 +15,6 @@ ManifoldDiff = "0.4.5"
 Manifolds = "0.10.23"
 Manopt = "0.5.24"
 OMEinsum = "0.9.2"
-CairoMakie = "0.12, 0.13, 0.14, 0.15"
 Random = "1.11.0"
 RecursiveArrayTools = "3.37.1"
 SHA = "0.7"
@@ -45,12 +23,36 @@ Yao = "0.9.2"
 Zygote = "0.7.10"
 julia = "1"
 
-[extras]
-FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
-LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+[deps]
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+OMEinsum = "ebe7aa44-baf0-506c-a96f-8464559b3922"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+RecursiveArrayTools = "731186ca-8d62-57ce-b412-fbd966d074cd"
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+StructTypes = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
+Yao = "5872b779-8223-5990-8dd0-5abbb0748c8c"
+Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
+
+[extensions]
+CUDAExt = "CUDA"
+
+[extras]
+ADTypes = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
+CUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
+ManifoldDiff = "af67fdf4-a580-4b9f-bbec-742ef357defd"
+Manifolds = "1cead3c2-87b3-11e9-0ccd-23c62b72b94e"
+Manopt = "0fc0a36d-df90-57f3-8f93-d78a9fc72bb5"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["FFTW", "LinearAlgebra", "CairoMakie", "Random", "Test"]
+test = ["ADTypes", "FFTW", "CairoMakie", "ManifoldDiff", "Manifolds", "Manopt", "Random", "Statistics", "Test"]
+
+[weakdeps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
