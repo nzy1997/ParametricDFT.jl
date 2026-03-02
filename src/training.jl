@@ -81,6 +81,16 @@ function _train_basis_core(
         batched_optcode = optimize_batched_code(flat_batched, blabel, batch_size)
     end
 
+    # Pre-compute materialized unitary code for GPU acceleration of large images
+    strategy = select_device_strategy(m, n, batch_size, device)
+    unitary_optcode = nothing
+    if strategy == :materialized_gpu
+        n_gates_u = length(initial_tensors)
+        D = 2^(m + n)
+        flat_u, blabel_u = make_batched_code(optcode, n_gates_u)
+        unitary_optcode = optimize_batched_code(flat_u, blabel_u, D)
+    end
+
     # Single code path: work directly with tensor list
     current_tensors = device_tensors
     best_tensors = copy.(current_tensors)
@@ -119,7 +129,18 @@ function _train_basis_core(
             batch = training_data[start_idx:end_idx]
 
             # Construct loss function for this batch
-            batch_loss_fn = if batched_optcode !== nothing
+            batch_loss_fn = if strategy == :materialized_gpu && unitary_optcode !== nothing
+                ts -> begin
+                    U = build_circuit_unitary(unitary_optcode, ts, m, n)
+                    if loss isa L1Norm
+                        materialized_loss_l1(U, batch, m, n)
+                    elseif loss isa L2Norm
+                        materialized_loss_l2(U, batch, m, n)
+                    else  # MSELoss
+                        materialized_loss_mse(U, batch, m, n, loss.k)
+                    end
+                end
+            elseif batched_optcode !== nothing
                 ts -> loss_function(ts, m, n, optcode, batch, loss;
                                     inverse_code=inverse_code, batched_optcode=batched_optcode)
             else
