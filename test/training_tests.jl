@@ -227,7 +227,7 @@ end
         @test final_loss < initial_loss
     end
 
-    @testset "adam with batch_size > 1 and L2Norm" begin
+    @testset "gradient_descent with batch_size > 1 and L2Norm" begin
         Random.seed!(42)
         m, n = 2, 2
         dataset = [rand(Float64, 4, 4) for _ in 1:6]
@@ -239,7 +239,7 @@ end
             epochs=3,
             steps_per_image=5,
             batch_size=3,
-            optimizer=:adam,
+            optimizer=:gradient_descent,
             verbose=false
         )
 

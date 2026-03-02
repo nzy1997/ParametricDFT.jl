@@ -37,18 +37,15 @@ Returns `nothing` if NaN or Inf values are detected.
 function _compute_gradients(grad_fn, tensors, verbose::Bool, iter::Int)
     _nvtx_range_push("gradient")
     euclidean_grads_raw = grad_fn(tensors)
-    euclidean_grads = euclidean_grads_raw isa Tuple ?
-        AbstractMatrix[euclidean_grads_raw[i] for i in eachindex(euclidean_grads_raw)] :
-        euclidean_grads_raw
+    raw = euclidean_grads_raw isa Tuple ? collect(euclidean_grads_raw) : euclidean_grads_raw
     _nvtx_range_pop()
 
-    # Replace ChainRules tangent types (ZeroTangent, etc.) with actual zero arrays
-    # so that downstream stack_tensors! can copyto! them into numeric buffers.
-    for i in eachindex(euclidean_grads)
-        if !(euclidean_grads[i] isa AbstractArray)
-            euclidean_grads[i] = zeros(eltype(tensors[i]), size(tensors[i]))
-        end
-    end
+    # Build typed Vector, replacing any non-matrix ChainRules tangents (ZeroTangent, etc.)
+    # with zero arrays. collect() first ensures the guard runs before typed conversion.
+    euclidean_grads = AbstractMatrix[
+        raw[i] isa AbstractMatrix ? raw[i] : zeros(eltype(tensors[i]), size(tensors[i]))
+        for i in eachindex(raw)
+    ]
 
     # Check for NaN/Inf in gradients
     if any(g -> any(x -> isnan(x) || isinf(x), g), euclidean_grads)
