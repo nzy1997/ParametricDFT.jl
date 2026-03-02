@@ -15,12 +15,12 @@ abstract type AbstractRiemannianOptimizer end
 # ============================================================================
 
 """
-    _compute_gradients(grad_fn, tensors, verbose, iter)
+    _compute_gradients(grad_fn, tensors)
 
 Compute Euclidean gradients via `grad_fn`, converting Tuple to Vector if needed.
 Returns `nothing` if NaN or Inf values are detected.
 """
-function _compute_gradients(grad_fn, tensors, verbose::Bool, iter::Int)
+function _compute_gradients(grad_fn, tensors)
     euclidean_grads_raw = grad_fn(tensors)
     raw = euclidean_grads_raw isa Tuple ? collect(euclidean_grads_raw) : euclidean_grads_raw
 
@@ -33,7 +33,6 @@ function _compute_gradients(grad_fn, tensors, verbose::Bool, iter::Int)
 
     # Check for NaN/Inf in gradients
     if any(g -> any(x -> isnan(x) || isinf(x), g), euclidean_grads)
-        verbose && println("  WARNING: NaN or Inf in gradients at iter $iter")
         return nothing
     end
 
@@ -95,7 +94,7 @@ RiemannianGD(; lr=0.01, armijo_c=1e-4, armijo_tau=0.5, max_ls_steps=10) =
     RiemannianGD(lr, armijo_c, armijo_tau, max_ls_steps)
 
 """
-    optimize!(opt::RiemannianGD, tensors, loss_fn, grad_fn; max_iter, tol, verbose)
+    optimize!(opt::RiemannianGD, tensors, loss_fn, grad_fn; max_iter, tol)
 
 Run Riemannian gradient descent on `tensors` using the manifold API.
 Uses batched operations and Armijo line search for step size selection.
@@ -106,8 +105,7 @@ function optimize!(
     loss_fn,
     grad_fn;
     max_iter::Int = 100,
-    tol::Real = 1e-6,
-    verbose::Bool = false
+    tol::Real = 1e-6
 ) where T <: AbstractMatrix
 
     current_tensors = copy.(tensors)
@@ -116,12 +114,6 @@ function optimize!(
 
     # Classify manifold types ONCE
     manifold_groups = group_by_manifold(tensors)
-
-    if verbose
-        for (m, idx) in manifold_groups
-            println("  $(typeof(m)): $(length(idx)) tensors")
-        end
-    end
 
     # Pre-loop: build persistent batched state + pre-allocate reusable buffers
     point_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
@@ -138,10 +130,6 @@ function optimize!(
 
     # Cache loss across iterations to avoid redundant forward passes
     cached_loss = RT(NaN)
-    if verbose
-        cached_loss = RT(loss_fn(current_tensors))
-        println("  Initial loss: ", round(cached_loss, digits=6))
-    end
 
     for iter in 1:max_iter
         # Unstack persistent batches for Zygote (which needs individual tensors)
@@ -150,7 +138,7 @@ function optimize!(
         end
 
         # Compute Euclidean gradients
-        euclidean_grads = _compute_gradients(grad_fn, current_tensors, verbose, iter)
+        euclidean_grads = _compute_gradients(grad_fn, current_tensors)
         euclidean_grads === nothing && break
 
         # Batched projection
@@ -162,16 +150,11 @@ function optimize!(
 
         # Check convergence
         if grad_norm < tol
-            verbose && println("  Converged at iteration $iter (grad_norm = $grad_norm)")
             break
         end
 
         # Armijo backtracking line search
         current_loss = isnan(cached_loss) ? RT(loss_fn(current_tensors)) : cached_loss
-
-        if verbose && (iter % 10 == 0 || iter == 1)
-            println("  Iter $iter: loss = $(round(current_loss, digits=6)), grad_norm = $(round(grad_norm, digits=6)), lr = $(opt.lr)")
-        end
 
         alpha = RT(opt.lr)
         accepted = false
@@ -241,7 +224,7 @@ RiemannianAdam(; lr=0.001, betas=(0.9, 0.999), eps=1e-8) =
     RiemannianAdam(lr, betas[1], betas[2], eps)
 
 """
-    optimize!(opt::RiemannianAdam, tensors, loss_fn, grad_fn; max_iter, tol, verbose)
+    optimize!(opt::RiemannianAdam, tensors, loss_fn, grad_fn; max_iter, tol)
 
 Run Riemannian Adam on `tensors` using the manifold API.
 Maintains per-manifold first and second moment estimates as batched arrays.
@@ -252,8 +235,7 @@ function optimize!(
     loss_fn,
     grad_fn;
     max_iter::Int = 100,
-    tol::Real = 1e-6,
-    verbose::Bool = false
+    tol::Real = 1e-6
 ) where T <: AbstractMatrix
 
     current_tensors = copy.(tensors)
@@ -263,12 +245,6 @@ function optimize!(
 
     # Classify manifold types ONCE
     manifold_groups = group_by_manifold(tensors)
-
-    if verbose
-        for (m, idx) in manifold_groups
-            println("  $(typeof(m)): $(length(idx)) tensors")
-        end
-    end
 
     # Pre-loop: build persistent batched state + pre-allocate reusable buffers
     point_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
@@ -294,11 +270,6 @@ function optimize!(
         end
     end
 
-    if verbose
-        initial_loss = loss_fn(current_tensors)
-        println("  Initial loss: ", round(initial_loss, digits=6))
-    end
-
     for iter in 1:max_iter
         # Unstack persistent batches for Zygote (which needs individual tensors)
         for (manifold, indices) in manifold_groups
@@ -306,7 +277,7 @@ function optimize!(
         end
 
         # Compute Euclidean gradients
-        euclidean_grads = _compute_gradients(grad_fn, current_tensors, verbose, iter)
+        euclidean_grads = _compute_gradients(grad_fn, current_tensors)
         euclidean_grads === nothing && break
 
         # Batched projection
@@ -314,13 +285,7 @@ function optimize!(
             manifold_groups, point_batches, grad_buf_batches, euclidean_grads
         )
 
-        if verbose && (iter % 10 == 0 || iter == 1)
-            loss = loss_fn(current_tensors)
-            println("  Iter $iter: loss = $(round(loss, digits=6)), grad_norm = $(round(grad_norm, digits=6)), lr = $(opt.lr)")
-        end
-
         if grad_norm < tol
-            verbose && println("  Converged at iteration $iter (grad_norm = $grad_norm)")
             break
         end
 

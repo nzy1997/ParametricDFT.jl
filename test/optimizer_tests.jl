@@ -45,7 +45,7 @@ using RecursiveArrayTools
 
         opt = ParametricDFT.RiemannianGD(lr=0.05)
         optimized = ParametricDFT.optimize!(opt, tensors, loss_fn, grad_fn;
-            max_iter=50, tol=1e-10, verbose=false)
+            max_iter=50, tol=1e-10)
 
         final_loss = loss_fn(optimized)
         @test final_loss < initial_loss
@@ -57,7 +57,7 @@ using RecursiveArrayTools
 
         opt = ParametricDFT.RiemannianAdam(lr=0.01)
         optimized = ParametricDFT.optimize!(opt, tensors, loss_fn, grad_fn;
-            max_iter=50, tol=1e-10, verbose=false)
+            max_iter=50, tol=1e-10)
 
         final_loss = loss_fn(optimized)
         @test final_loss < initial_loss
@@ -72,12 +72,12 @@ using RecursiveArrayTools
 
         opt_gd = ParametricDFT.RiemannianGD(lr=0.05)
         optimized_gd = ParametricDFT.optimize!(opt_gd, tensors_gd, loss_fn_gd, grad_fn_gd;
-            max_iter=50, tol=1e-10, verbose=false)
+            max_iter=50, tol=1e-10)
         final_loss_gd = loss_fn_gd(optimized_gd)
 
         opt_adam = ParametricDFT.RiemannianAdam(lr=0.01)
         optimized_adam = ParametricDFT.optimize!(opt_adam, tensors_adam, loss_fn_adam, grad_fn_adam;
-            max_iter=50, tol=1e-10, verbose=false)
+            max_iter=50, tol=1e-10)
         final_loss_adam = loss_fn_adam(optimized_adam)
 
         # Both should reduce loss by more than 10%
@@ -95,7 +95,7 @@ using RecursiveArrayTools
         # Run GD
         opt_gd = ParametricDFT.RiemannianGD(lr=0.05)
         optimized_gd = ParametricDFT.optimize!(opt_gd, tensors, loss_fn, grad_fn;
-            max_iter=30, tol=1e-10, verbose=false)
+            max_iter=30, tol=1e-10)
 
         for (i, t) in enumerate(optimized_gd)
             if ParametricDFT.is_unitary_general(t)
@@ -113,7 +113,7 @@ using RecursiveArrayTools
         tensors2, loss_fn2, grad_fn2 = make_test_problem(seed=42)
         opt_adam = ParametricDFT.RiemannianAdam(lr=0.01)
         optimized_adam = ParametricDFT.optimize!(opt_adam, tensors2, loss_fn2, grad_fn2;
-            max_iter=30, tol=1e-10, verbose=false)
+            max_iter=30, tol=1e-10)
 
         for (i, t) in enumerate(optimized_adam)
             if ParametricDFT.is_unitary_general(t)
@@ -189,14 +189,14 @@ using RecursiveArrayTools
         opt_gd = ParametricDFT.RiemannianGD(lr=0.05)
         optimized_gd = ParametricDFT.optimize!(
             opt_gd, copy.(tensors_init), loss_fn, grad_fn;
-            max_iter=steps, tol=1e-10, verbose=false)
+            max_iter=steps, tol=1e-10)
         loss_gd = loss_fn(optimized_gd)
 
         # --- Our RiemannianAdam ---
         opt_adam = ParametricDFT.RiemannianAdam(lr=0.01)
         optimized_adam = ParametricDFT.optimize!(
             opt_adam, copy.(tensors_init), loss_fn, grad_fn;
-            max_iter=steps, tol=1e-10, verbose=false)
+            max_iter=steps, tol=1e-10)
         loss_adam = loss_fn(optimized_adam)
 
         # All three should significantly reduce loss
