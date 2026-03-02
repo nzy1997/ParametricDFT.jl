@@ -30,7 +30,15 @@ errors immediately at `UnitaryManifold.project`.
 - `batched_matmul` (CPU): replace loops with a `for k in 1:n; mul!(view(C,:,:,k), ...)`
   pattern using BLAS `mul!`.
 - `batched_matmul` (GPU): add a `CuArray`-specialised method in `CUDAExt.jl` that
-  delegates to `NNlib.batched_mul`, which dispatches to cuBLAS.
+  uses a per-slice page-copy approach (`C[:,:,k] .= A[:,:,k] * B[:,:,k]` for each `k`).
+  This approach was chosen over `NNlib.batched_mul` for three reasons:
+  1. `NNlib` is not a listed dependency and adding it would require `Project.toml` changes,
+     introducing an undesirable new dependency for a single operation.
+  2. The page-copy approach dispatches through CUBLAS for each slice via the standard
+     CUDA.jl `*` overload for `CuMatrix`, which is correct and avoids the new dependency.
+  3. `mul!(view(CuArray,...), view(CuArray,...), view(CuArray,...))` may also route
+     through CUBLAS in future Julia/CUDA.jl versions, but the explicit CUDAExt method
+     ensures correct (non-scalar-indexing) behavior now.
 
 ### Issue 2: Score-computation logic duplicated in `CUDAExt.jl`
 

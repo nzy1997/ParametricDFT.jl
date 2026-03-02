@@ -26,6 +26,17 @@
         end
     end
 
+    @testset "batched_matmul adversarial" begin
+        @test_throws AssertionError ParametricDFT.batched_matmul(
+            randn(ComplexF64, 2, 3, 4),
+            randn(ComplexF64, 2, 2, 4)   # inner dim mismatch: 3 ≠ 2
+        )
+        @test_throws AssertionError ParametricDFT.batched_matmul(
+            randn(ComplexF64, 2, 3, 4),
+            randn(ComplexF64, 3, 2, 5)   # batch size mismatch: 4 ≠ 5
+        )
+    end
+
     @testset "batched_adjoint generalized" begin
         Random.seed!(44)
         for d in [2, 3, 4]
