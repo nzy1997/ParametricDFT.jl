@@ -132,7 +132,7 @@ function stack_tensors(tensors::Vector{<:AbstractMatrix{T}}, indices::Vector{Int
 end
 
 """In-place version: pack into pre-allocated `(d1, d2, n)` array."""
-function stack_tensors!(batch::AbstractArray{T,3}, tensors::Vector{<:AbstractArray}, indices::Vector{Int}) where T
+function stack_tensors!(batch::AbstractArray{T,3}, tensors::Vector{<:AbstractMatrix}, indices::Vector{Int}) where T
     for (k, idx) in enumerate(indices)
         copyto!(view(batch, :, :, k), tensors[idx])
     end

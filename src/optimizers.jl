@@ -38,7 +38,7 @@ function _compute_gradients(grad_fn, tensors, verbose::Bool, iter::Int)
     _nvtx_range_push("gradient")
     euclidean_grads_raw = grad_fn(tensors)
     euclidean_grads = euclidean_grads_raw isa Tuple ?
-        AbstractArray[euclidean_grads_raw[i] for i in eachindex(euclidean_grads_raw)] :
+        AbstractMatrix[euclidean_grads_raw[i] for i in eachindex(euclidean_grads_raw)] :
         euclidean_grads_raw
     _nvtx_range_pop()
 
