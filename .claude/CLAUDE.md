@@ -15,6 +15,9 @@ julia --project=. -e 'using Pkg; Pkg.status()'  # Check dependencies
 
 ## Git Safety
 - **NEVER force push** (`git push --force`, `git push -f`, `git push --force-with-lease`). This is an absolute rule with no exceptions. Force push can silently destroy other people's work and stashed changes.
+- **NEVER use `GIT_OBJECT_DIRECTORY` env var** to work around commit failures. If `git add` or `git commit` fails with "insufficient permission for adding an object to repository database", fix the root cause by running `git repack -a -d` to consolidate objects into an owned pack file.
+- **Verify after commit** — Run `git fsck --connectivity-only` after each commit to catch object corruption immediately, rather than discovering it sessions later.
+- **NEVER manipulate `.git` internals directly** — Don't copy, move, or create files inside `.git/objects/` manually. Use `git repack` to fix object storage issues.
 
 ## Architecture
 
