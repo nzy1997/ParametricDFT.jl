@@ -15,14 +15,11 @@ ParametricDFT.to_device(x, ::Val{:gpu}) = x  # scalars pass through
 
 # GPU-compatible top-k truncation with frequency weighting
 
-function ParametricDFT.topk_truncate(x::CuArray{T}, k::Integer) where {T}
-    m, n = size(x)
-    k2 = min(Int(k), length(x))
-    x_cpu = Array(x)
-
+function _topk_mask(x_cpu::Array{T}, k::Integer) where T
+    m, n = size(x_cpu)
+    k2 = min(Int(k), length(x_cpu))
     center_i, center_j = (m + 1) ÷ 2, (n + 1) ÷ 2
     max_dist = sqrt((m/2)^2 + (n/2)^2)
-
     scores = similar(x_cpu, Float64)
     mags = abs.(x_cpu)
     for j in 1:n, i in 1:m
@@ -30,43 +27,25 @@ function ParametricDFT.topk_truncate(x::CuArray{T}, k::Integer) where {T}
         freq_weight = 1.0 - (freq_dist / max_dist) * 0.5
         scores[i, j] = mags[i, j] * (1.0 + freq_weight)
     end
-
-    idx = partialsortperm(vec(scores), 1:k2, rev=true)
-    RT = real(T)
-    mask = zeros(RT, m, n)
-    for flat_idx in idx
-        mask[flat_idx] = one(RT)
-    end
-    return x .* CuArray{RT}(mask)
-end
-
-# rrule for topk_truncate on GPU (gradient flows through kept elements)
-
-function ChainRulesCore.rrule(::typeof(ParametricDFT.topk_truncate), x::CuArray{T}, k::Integer) where {T}
-    m, n = size(x)
-    k2 = min(Int(k), length(x))
-    x_cpu = Array(x)
-
-    center_i, center_j = (m + 1) ÷ 2, (n + 1) ÷ 2
-    max_dist = sqrt((m/2)^2 + (n/2)^2)
-
-    scores = similar(x_cpu, Float64)
-    mags = abs.(x_cpu)
-    for j in 1:n, i in 1:m
-        freq_dist = sqrt((i - center_i)^2 + (j - center_j)^2)
-        freq_weight = 1.0 - (freq_dist / max_dist) * 0.5
-        scores[i, j] = mags[i, j] * (1.0 + freq_weight)
-    end
-
     idx = partialsortperm(vec(scores), 1:k2, rev=true)
     RT = real(T)
     mask_cpu = zeros(RT, m, n)
     for flat_idx in idx
         mask_cpu[flat_idx] = one(RT)
     end
-    mask_gpu = CuArray{RT}(mask_cpu)
-    y = x .* mask_gpu
+    return CuArray{RT}(mask_cpu)
+end
 
+function ParametricDFT.topk_truncate(x::CuArray{T}, k::Integer) where {T}
+    mask_gpu = _topk_mask(Array(x), k)
+    return x .* mask_gpu
+end
+
+# rrule for topk_truncate on GPU (gradient flows through kept elements)
+
+function ChainRulesCore.rrule(::typeof(ParametricDFT.topk_truncate), x::CuArray{T}, k::Integer) where {T}
+    mask_gpu = _topk_mask(Array(x), k)
+    y = x .* mask_gpu
     function topk_truncate_pullback(ȳ)
         return (ChainRulesCore.NoTangent(), ȳ .* mask_gpu, ChainRulesCore.NoTangent())
     end
