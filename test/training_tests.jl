@@ -20,15 +20,14 @@
             epochs=1,
             steps_per_image=5,
             validation_split=0.2,
-            verbose=false
         )
-        
+
         @test basis isa QFTBasis
         @test basis.m == m
         @test basis.n == n
         @test image_size(basis) == (8, 8)
     end
-    
+
     @testset "training with MSELoss" begin
         Random.seed!(42)
         
@@ -45,7 +44,6 @@
             epochs=1,
             steps_per_image=3,
             validation_split=0.25,
-            verbose=false
         )
         
         @test basis isa QFTBasis
@@ -64,7 +62,6 @@
             epochs=1,
             steps_per_image=3,
             validation_split=0.25,
-            verbose=false
         )
         
         @test basis isa QFTBasis
@@ -82,7 +79,6 @@
             epochs=1,
             steps_per_image=2,
             shuffle=false,
-            verbose=false
         )
         
         @test basis isa QFTBasis
@@ -102,7 +98,6 @@
             epochs=1,
             steps_per_image=2,
             validation_split=0.1,
-            verbose=false
         )
         @test basis isa QFTBasis
     end
@@ -114,7 +109,6 @@
         @test_throws AssertionError train_basis(
             QFTBasis, Matrix{Float64}[];
             m=m, n=n,
-            verbose=false
         )
         
         # Test wrong image size
@@ -122,7 +116,6 @@
         @test_throws AssertionError train_basis(
             QFTBasis, wrong_dataset;
             m=m, n=n,
-            verbose=false
         )
         
         # Test invalid validation_split
@@ -131,7 +124,6 @@
             QFTBasis, dataset;
             m=m, n=n,
             validation_split=1.5,
-            verbose=false
         )
     end
     
@@ -148,7 +140,6 @@
             epochs=10,  # Many epochs to trigger early stopping
             steps_per_image=2,
             early_stopping_patience=1,
-            verbose=false
         )
         
         @test basis isa QFTBasis
@@ -165,7 +156,6 @@
             m=m, n=n,
             epochs=1,
             steps_per_image=3,
-            verbose=false
         )
         
         # Test that trained basis can transform images
@@ -190,7 +180,6 @@
             m=m, n=n,
             epochs=1,
             steps_per_image=2,
-            verbose=false
         )
         
         @test basis isa QFTBasis
@@ -216,7 +205,6 @@ end
             steps_per_image=5,
             batch_size=3,
             optimizer=:adam,
-            verbose=false
         )
 
         @test basis isa QFTBasis
@@ -240,7 +228,6 @@ end
             steps_per_image=5,
             batch_size=3,
             optimizer=:gradient_descent,
-            verbose=false
         )
 
         @test basis isa QFTBasis
@@ -262,7 +249,6 @@ end
             steps_per_image=5,
             batch_size=1,
             optimizer=:adam,
-            verbose=false
         )
 
         @test basis isa QFTBasis
@@ -294,7 +280,6 @@ end
             epochs=1,
             steps_per_image=5,
             validation_split=0.2,
-            verbose=false
         )
         
         @test basis isa EntangledQFTBasis
@@ -317,7 +302,6 @@ end
             entangle_phases=initial_phases,
             epochs=1,
             steps_per_image=3,
-            verbose=false
         )
         
         @test basis isa EntangledQFTBasis
@@ -335,7 +319,6 @@ end
             m=m, n=n,
             epochs=1,
             steps_per_image=3,
-            verbose=false
         )
         
         # Test that trained basis can transform images
@@ -355,7 +338,6 @@ end
         @test_throws AssertionError train_basis(
             EntangledQFTBasis, Matrix{Float64}[];
             m=m, n=n,
-            verbose=false
         )
         
         # Test wrong image size
@@ -363,7 +345,6 @@ end
         @test_throws AssertionError train_basis(
             EntangledQFTBasis, wrong_dataset;
             m=m, n=n,
-            verbose=false
         )
     end
     
@@ -378,7 +359,6 @@ end
             m=m, n=n,
             epochs=1,
             steps_per_image=2,
-            verbose=false
         )
         
         # Save and load

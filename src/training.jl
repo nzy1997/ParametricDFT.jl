@@ -39,7 +39,6 @@ function _train_basis_core(
     validation_split::Float64,
     shuffle::Bool,
     early_stopping_patience::Int,
-    verbose::Bool,
     basis_name::String;
     extra_info::String = "",
     save_loss_path::Union{Nothing, String} = nothing,
@@ -82,27 +81,6 @@ function _train_basis_core(
     # Move tensors to device and ensure Matrix{ComplexF64} for optimize!
     device_tensors = [to_device(Matrix{ComplexF64}(t), device) for t in initial_tensors]
 
-    if verbose
-        device_names = Dict(:cpu => "CPU", :gpu => "GPU (CUDA)")
-        opt_name = if opt isa RiemannianGD
-            "Riemannian Gradient Descent"
-        elseif opt isa RiemannianAdam
-            "Riemannian Adam"
-        else
-            string(typeof(opt))
-        end
-        println("Training $basis_name:")
-        println("  Image size: $(2^m)×$(2^n)")
-        println("  Training images: $(length(training_data))")
-        println("  Validation images: $(length(validation_data))")
-        !isempty(extra_info) && println(extra_info)
-        println("  Optimizer: $opt_name")
-        println("  Device: $(get(device_names, device, string(device)))")
-        println("  Batch size: $batch_size ($(n_batches) batches per epoch)")
-        println("  Epochs: $epochs")
-        println("  Steps per batch: $steps_per_image")
-    end
-
     # Pre-compute batched einsum codes for batch_size > 1
     # This is done once and reused for all epochs/batches (TreeSA optimization is expensive)
     batched_optcode = nothing
@@ -110,7 +88,6 @@ function _train_basis_core(
         n_gates = length(initial_tensors)
         flat_batched, blabel = make_batched_code(optcode, n_gates)
         batched_optcode = optimize_batched_code(flat_batched, blabel, batch_size)
-        verbose && println("  Batched einsum: enabled ($(n_gates) gates, batch label=$blabel)")
     end
 
     # Single code path: work directly with tensor list
@@ -133,13 +110,11 @@ function _train_basis_core(
     do_checkpoint = checkpoint_interval > 0 && checkpoint_dir !== nothing
     if do_checkpoint
         mkpath(checkpoint_dir)
-        verbose && println("  Checkpointing every $checkpoint_interval steps to: $checkpoint_dir")
     end
     global_step = 0
 
     # Training loop
     for epoch in 1:epochs
-        verbose && println("\nEpoch $epoch/$epochs")
 
         # Shuffle training data each epoch
         shuffle && epoch > 1 && Random.shuffle!(training_data)
@@ -175,7 +150,7 @@ function _train_basis_core(
 
             # Run optimizer
             current_tensors = optimize!(opt, current_tensors, batch_loss_fn, batch_grad_fn;
-                                         max_iter=steps_per_image, tol=1e-8, verbose=false)
+                                         max_iter=steps_per_image, tol=1e-8)
             tensors_for_loss = current_tensors
 
             # Compute average loss over batch for tracking
@@ -188,8 +163,6 @@ function _train_basis_core(
             push!(loss_records, Dict{String, Any}("epoch" => epoch, "step" => batch_idx, "loss" => batch_loss))
             global_step += 1
 
-            verbose && print("  [batch $batch_idx/$n_batches] loss: $(round(batch_loss, digits=6))\r")
-
             # Checkpoint: save basis and loss history periodically
             if do_checkpoint && global_step % checkpoint_interval == 0
                 _save_checkpoint(
@@ -198,11 +171,8 @@ function _train_basis_core(
                     loss_records, train_losses, val_losses,
                     build_basis_fn
                 )
-                verbose && println("\n  Checkpoint saved at step $global_step")
             end
         end
-
-        verbose && println()
 
         # Compute validation loss
         val_loss = _compute_validation_loss(validation_data, current_tensors, optcode, inverse_code, m, n, loss)
@@ -212,24 +182,15 @@ function _train_basis_core(
         push!(train_losses, avg_train_loss)
         push!(val_losses, val_loss)
 
-        if verbose
-            println("  Avg train loss: $(round(avg_train_loss, digits=6))")
-            println("  Validation loss: $(round(val_loss, digits=6))")
-        end
-
         # Check for improvement
         if val_loss < best_val_loss
-            improvement = best_val_loss == Inf ? 100.0 : (best_val_loss - val_loss) / best_val_loss * 100
-            verbose && println("  ✓ Validation improved by $(round(improvement, digits=2))%")
             best_val_loss = val_loss
             best_tensors = copy.(current_tensors)
             patience_counter = 0
         else
             patience_counter += 1
-            verbose && println("  ✗ No improvement (patience: $patience_counter/$early_stopping_patience)")
 
             if patience_counter >= early_stopping_patience && epoch > 1
-                verbose && println("\nEarly stopping: validation loss not improving")
                 break
             end
         end
@@ -238,12 +199,10 @@ function _train_basis_core(
     # Move final tensors back to CPU for serialization
     # Ensure tensors are ComplexF64 for consistency with CPU operations
     final_tensors = [ComplexF64.(Array(t)) for t in best_tensors]
-    verbose && println("\n✓ Training completed. Best validation loss: $(round(best_val_loss, digits=6))")
 
     # Save loss history to JSON if path provided
     if save_loss_path !== nothing
         _save_loss_history(save_loss_path, basis_name, loss_records, train_losses, val_losses)
-        verbose && println("  Loss history saved to: $save_loss_path")
     end
 
     return final_tensors, best_val_loss, train_losses, val_losses, step_train_losses
@@ -268,7 +227,6 @@ function train_basis(
     validation_split::Float64 = 0.2,
     shuffle::Bool = true,
     early_stopping_patience::Int = 2,
-    verbose::Bool = true,
     save_loss_path::Union{Nothing, String} = nothing,
     optimizer::Union{Symbol, AbstractRiemannianOptimizer} = :gradient_descent,
     batch_size::Int = 1,
@@ -293,7 +251,7 @@ function train_basis(
     final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
-        early_stopping_patience, verbose, "QFTBasis";
+        early_stopping_patience, "QFTBasis";
         save_loss_path=save_loss_path, optimizer=optimizer,
         batch_size=batch_size, device=device,
         checkpoint_interval=checkpoint_interval, checkpoint_dir=checkpoint_dir,
@@ -323,7 +281,6 @@ function train_basis(
     validation_split::Float64 = 0.2,
     shuffle::Bool = true,
     early_stopping_patience::Int = 2,
-    verbose::Bool = true,
     save_loss_path::Union{Nothing, String} = nothing,
     optimizer::Union{Symbol, AbstractRiemannianOptimizer} = :gradient_descent,
     batch_size::Int = 1,
@@ -337,9 +294,9 @@ function train_basis(
     for (i, img) in enumerate(dataset)
         @assert size(img) == expected_size "Image $i has size $(size(img)), expected $expected_size"
     end
-    
+
     n_entangle = min(m, n)
-    
+
     # Initialize circuit
     optcode, initial_tensors, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, entangle_position=entangle_position)
     inverse_code, _, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, inverse=true, entangle_position=entangle_position)
@@ -355,7 +312,7 @@ function train_basis(
     final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
-        early_stopping_patience, verbose, "EntangledQFTBasis";
+        early_stopping_patience, "EntangledQFTBasis";
         extra_info = "  Entanglement gates: $n_entangle",
         save_loss_path=save_loss_path, optimizer=optimizer,
         batch_size=batch_size, device=device,
@@ -369,12 +326,6 @@ function train_basis(
         extract_entangle_phases(final_tensors, entangle_indices)
     else
         entangle_phases === nothing ? zeros(n_entangle) : Float64.(entangle_phases)
-    end
-
-    if verbose
-        initial_str = entangle_phases === nothing ? "zeros" : "$(round.(entangle_phases, digits=4))"
-        println("  Initial entanglement phases: $initial_str")
-        println("  Trained entanglement phases: $(round.(trained_phases, digits=4))")
     end
 
     trained_basis = EntangledQFTBasis(m, n, final_tensors, optcode, inverse_code, n_entangle, trained_phases, entangle_position)
@@ -399,7 +350,6 @@ function train_basis(
     validation_split::Float64 = 0.2,
     shuffle::Bool = true,
     early_stopping_patience::Int = 2,
-    verbose::Bool = true,
     save_loss_path::Union{Nothing, String} = nothing,
     optimizer::Union{Symbol, AbstractRiemannianOptimizer} = :gradient_descent,
     batch_size::Int = 1,
@@ -413,18 +363,18 @@ function train_basis(
     for (i, img) in enumerate(dataset)
         @assert size(img) == expected_size "Image $i has size $(size(img)), expected $expected_size"
     end
-    
+
     n_row_gates = m  # Row ring has m gates
     n_col_gates = n  # Col ring has n gates
     n_gates = n_row_gates + n_col_gates
-    
+
     # Initialize phases: use small random values if not provided
     # Zero phases create a symmetric point where gradients are zero,
     # preventing the optimizer from learning. Small random values break symmetry.
     if phases === nothing
         phases = randn(n_gates) * 0.1
     end
-    
+
     # Initialize circuit
     optcode, initial_tensors, _, _ = tebd_code(m, n; phases=phases)
     inverse_code, _, _, _ = tebd_code(m, n; phases=phases, inverse=true)
@@ -440,7 +390,7 @@ function train_basis(
     final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
-        early_stopping_patience, verbose, "TEBDBasis";
+        early_stopping_patience, "TEBDBasis";
         extra_info = "  Row qubits: $m, Col qubits: $n\n  Row ring gates: $n_row_gates, Col ring gates: $n_col_gates",
         save_loss_path=save_loss_path, optimizer=optimizer,
         batch_size=batch_size, device=device,
@@ -454,12 +404,6 @@ function train_basis(
         extract_tebd_phases(final_tensors, gate_indices)
     else
         phases === nothing ? zeros(n_gates) : Float64.(phases)
-    end
-
-    if verbose
-        initial_str = phases === nothing ? "zeros" : "$(round.(phases, digits=4))"
-        println("  Initial phases: $initial_str")
-        println("  Trained phases: $(round.(trained_phases, digits=4))")
     end
 
     trained_basis = TEBDBasis(m, n, final_tensors, optcode, inverse_code, n_row_gates, n_col_gates, trained_phases)
