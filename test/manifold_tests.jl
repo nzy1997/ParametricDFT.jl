@@ -50,6 +50,17 @@
         end
     end
 
+    @testset "batched_adjoint real-valued" begin
+        Random.seed!(46)
+        n = 4
+        A = randn(Float64, 3, 4, n)
+        Ah = ParametricDFT.batched_adjoint(A)
+        @test size(Ah) == (4, 3, n)
+        for k in 1:n
+            @test Ah[:, :, k] ≈ A[:, :, k]'
+        end
+    end
+
     @testset "UnitaryManifold project" begin
         Random.seed!(46)
         um = ParametricDFT.UnitaryManifold()
