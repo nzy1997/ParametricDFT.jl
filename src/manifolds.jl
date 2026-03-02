@@ -13,24 +13,21 @@ abstract type AbstractRiemannianManifold end
 """
     project(m::AbstractRiemannianManifold, points, euclidean_grads)
 
-Project Euclidean gradients onto the tangent space at `points`.
-Operates on batched arrays of shape `(d1, d2, ..., n)` where `n` is batch size.
+Project Euclidean gradients onto the tangent space at `points`. Batched over last dim.
 """
 function project end
 
 """
     retract(m::AbstractRiemannianManifold, points, tangent_vec, α)
 
-Retract from `points` along `tangent_vec` with step size `α`, returning
-a new point on the manifold. Operates on batched arrays.
+Retract from `points` along `tangent_vec` with step size `α`. Batched over last dim.
 """
 function retract end
 
 """
     transport(m::AbstractRiemannianManifold, old_points, new_points, vec)
 
-Parallel transport `vec` from `old_points` to `new_points`.
-Operates on batched arrays.
+Parallel transport `vec` from `old_points` to `new_points`. Batched over last dim.
 """
 function transport end
 
@@ -39,10 +36,9 @@ function transport end
 # ============================================================================
 
 """
-    batched_matmul(A::AbstractArray{T,3}, B::AbstractArray{T,3}) where T
+    batched_matmul(A::AbstractArray{T,3}, B::AbstractArray{T,3})
 
 Batched matrix multiply: `C[:,:,k] = A[:,:,k] * B[:,:,k]` for each slice `k`.
-Works for arbitrary `(d1,d2,n) x (d2,d3,n) -> (d1,d3,n)`.
 """
 function batched_matmul(A::AbstractArray{T,3}, B::AbstractArray{T,3}) where T
     d1, d2A, n = size(A)
@@ -57,10 +53,9 @@ function batched_matmul(A::AbstractArray{T,3}, B::AbstractArray{T,3}) where T
 end
 
 """
-    batched_adjoint(A::AbstractArray{T,3}) where T
+    batched_adjoint(A::AbstractArray{T,3})
 
 Batched conjugate transpose: `C[:,:,k] = A[:,:,k]'` for each slice `k`.
-Works for arbitrary `(d1,d2,n) -> (d2,d1,n)`.
 """
 function batched_adjoint(A::AbstractArray{T,3}) where T
     return permutedims(conj.(A), (2, 1, 3))
@@ -71,11 +66,9 @@ end
 # ============================================================================
 
 """
-    is_unitary_general(t::AbstractMatrix{T}) where T
+    is_unitary_general(t::AbstractMatrix)
 
-Check if a square matrix satisfies `U*U' ~ I` (unitary manifold).
-Returns `false` for non-square matrices.
-Generalized version that works for any dimension (not just 2x2).
+Check if a square matrix satisfies `U*U' ≈ I`. Returns `false` for non-square matrices.
 """
 function is_unitary_general(t::AbstractMatrix{T}) where T
     n = size(t, 1)
@@ -83,30 +76,14 @@ function is_unitary_general(t::AbstractMatrix{T}) where T
     return isapprox(t * t', Matrix{T}(I, n, n), atol=1e-6)
 end
 
-"""
-    classify_manifold(t::AbstractMatrix) -> AbstractRiemannianManifold
-
-Classify a single tensor into its manifold type based on unitarity check.
-Must be called on CPU arrays (use `Array(t)` for GPU tensors).
-"""
+"""Classify a tensor as `UnitaryManifold` or `PhaseManifold` based on unitarity."""
 function classify_manifold end  # forward declaration
 
-"""
-    group_by_manifold(tensors::Vector{<:AbstractMatrix})
-
-Group tensor indices by manifold type.
-Returns `Dict{AbstractRiemannianManifold, Vector{Int}}`.
-Calls `Array(t)` before classifying to handle GPU tensors.
-"""
+"""Group tensor indices by manifold type. Returns `Dict{AbstractRiemannianManifold, Vector{Int}}`."""
 function group_by_manifold(tensors::Vector{<:AbstractMatrix})
     groups = Dict{AbstractRiemannianManifold, Vector{Int}}()
     for (i, t) in enumerate(tensors)
-        m = classify_manifold(Array(t))
-        if haskey(groups, m)
-            push!(groups[m], i)
-        else
-            groups[m] = [i]
-        end
+        push!(get!(groups, classify_manifold(Array(t)), Int[]), i)
     end
     return groups
 end
@@ -115,11 +92,7 @@ end
 # Batched Tensor Packing/Unpacking
 # ============================================================================
 
-"""
-    stack_tensors(tensors::Vector{<:AbstractMatrix{T}}, indices::Vector{Int}) where T
-
-Pack selected matrices into a batched `(d1, d2, n)` array.
-"""
+"""Pack selected matrices into a batched `(d1, d2, n)` array."""
 function stack_tensors(tensors::Vector{<:AbstractMatrix{T}}, indices::Vector{Int}) where T
     n = length(indices)
     n == 0 && return Array{T}(undef, 0, 0, 0)
@@ -165,8 +138,7 @@ function project(::UnitaryManifold, U::AbstractArray{T,3}, G::AbstractArray{T,3}
     return batched_matmul(U, S)
 end
 
-"""Batched QR retraction via modified Gram-Schmidt (pure broadcasting, no cuSOLVER).
-Generalizes to arbitrary square matrices -- NOT hardcoded to 2 columns."""
+"""Batched QR retraction via modified Gram-Schmidt (pure broadcasting)."""
 function retract(::UnitaryManifold, U::AbstractArray{T,3}, Xi::AbstractArray{T,3}, α) where T
     RT = real(T)
     α_typed = convert(RT, α)
@@ -221,7 +193,6 @@ transport(::PhaseManifold, Z_old, Z_new, v) = project(PhaseManifold(), Z_new, v)
 # classify_manifold implementation (defined after concrete types)
 # ============================================================================
 
-"""Classify a single tensor into its manifold type based on unitarity check."""
 function classify_manifold(t::AbstractMatrix)
     if is_unitary_general(t)
         return UnitaryManifold()

@@ -17,8 +17,7 @@ abstract type AbstractRiemannianOptimizer end
 """
     _compute_gradients(grad_fn, tensors)
 
-Compute Euclidean gradients via `grad_fn`, converting Tuple to Vector if needed.
-Returns `nothing` if NaN or Inf values are detected.
+Compute Euclidean gradients via `grad_fn`. Returns `nothing` on NaN/Inf.
 """
 function _compute_gradients(grad_fn, tensors)
     euclidean_grads_raw = grad_fn(tensors)
@@ -42,15 +41,7 @@ end
 """
     _batched_project(manifold_groups, point_batches, grad_buf_batches, euclidean_grads)
 
-Project Euclidean gradients onto manifold tangent spaces using batched operations.
-
-For each `(manifold, indices)` in `manifold_groups`:
-  - Stacks the relevant Euclidean gradients into the pre-allocated gradient buffer
-  - Calls `project(manifold, point_batch, grad_batch)` to get Riemannian gradients
-
-Returns `(rg_batches::Dict, grad_norm::Real)` where:
-  - `rg_batches` maps each manifold to its projected Riemannian gradient batch
-  - `grad_norm` is the L2 norm of the combined Riemannian gradient
+Batched Riemannian projection. Returns `(rg_batches, grad_norm)`.
 """
 function _batched_project(
     manifold_groups::Dict{<:AbstractRiemannianManifold, Vector{Int}},
@@ -78,11 +69,7 @@ end
 # RiemannianGD -- Gradient Descent with Armijo Line Search
 # ============================================================================
 
-"""
-    RiemannianGD(; lr=0.01, armijo_c=1e-4, armijo_tau=0.5, max_ls_steps=10)
-
-Riemannian gradient descent with Armijo backtracking line search.
-"""
+"""Riemannian gradient descent with Armijo backtracking line search."""
 struct RiemannianGD <: AbstractRiemannianOptimizer
     lr::Float64
     armijo_c::Float64
@@ -94,10 +81,9 @@ RiemannianGD(; lr=0.01, armijo_c=1e-4, armijo_tau=0.5, max_ls_steps=10) =
     RiemannianGD(lr, armijo_c, armijo_tau, max_ls_steps)
 
 """
-    optimize!(opt::RiemannianGD, tensors, loss_fn, grad_fn; max_iter, tol)
+    optimize!(opt::RiemannianGD, tensors, loss_fn, grad_fn; max_iter=100, tol=1e-6)
 
-Run Riemannian gradient descent on `tensors` using the manifold API.
-Uses batched operations and Armijo line search for step size selection.
+Run Riemannian gradient descent with Armijo line search. Returns optimized tensors.
 """
 function optimize!(
     opt::RiemannianGD,
@@ -208,11 +194,7 @@ end
 # RiemannianAdam -- Riemannian Adam Optimizer
 # ============================================================================
 
-"""
-    RiemannianAdam(; lr=0.001, betas=(0.9, 0.999), eps=1e-8)
-
-Riemannian Adam optimizer (Becigneul & Ganea, 2019) using batched manifold operations.
-"""
+"""Riemannian Adam optimizer (Becigneul & Ganea, 2019) with batched manifold operations."""
 struct RiemannianAdam <: AbstractRiemannianOptimizer
     lr::Float64
     beta1::Float64
@@ -224,10 +206,9 @@ RiemannianAdam(; lr=0.001, betas=(0.9, 0.999), eps=1e-8) =
     RiemannianAdam(lr, betas[1], betas[2], eps)
 
 """
-    optimize!(opt::RiemannianAdam, tensors, loss_fn, grad_fn; max_iter, tol)
+    optimize!(opt::RiemannianAdam, tensors, loss_fn, grad_fn; max_iter=100, tol=1e-6)
 
-Run Riemannian Adam on `tensors` using the manifold API.
-Maintains per-manifold first and second moment estimates as batched arrays.
+Run Riemannian Adam with momentum transport. Returns optimized tensors.
 """
 function optimize!(
     opt::RiemannianAdam,
@@ -324,3 +305,4 @@ function optimize!(
 
     return current_tensors
 end
+

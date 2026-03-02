@@ -3,46 +3,16 @@
 # ============================================================================
 # This file provides loss functions for training parametric DFT circuits.
 
-"""
-    AbstractLoss
-
-Abstract base type for loss functions. Custom loss functions should inherit from 
-this type and implement `_loss_function(fft_result, input, loss)`.
-"""
+"""Abstract base type for loss functions. Subtypes implement `_loss_function`."""
 abstract type AbstractLoss end
 
-"""
-    L1Norm <: AbstractLoss
-
-L1 norm loss: minimizes sum of absolute values in the transformed domain.
-This encourages sparsity in the frequency representation.
-"""
+"""L1 norm loss: minimizes `sum(|T(x)|)` to encourage sparsity."""
 struct L1Norm <: AbstractLoss end
 
-"""
-    L2Norm <: AbstractLoss
-
-L2 norm loss: minimizes sum of squared magnitudes in the transformed domain.
-This encourages energy concentration (squared magnitude) with smoother gradients
-compared to L1 norm, and less aggressive sparsity promotion than L1.
-"""
+"""L2 norm loss: minimizes `sum(|T(x)|^2)` for energy concentration."""
 struct L2Norm <: AbstractLoss end
 
-"""
-    MSELoss <: AbstractLoss
-
-Mean Squared Error loss with truncation: minimizes reconstruction error after
-forward transform, truncation (keeping top k elements), and inverse transform.
-
-# Fields
-- `k::Int`: Number of top elements to keep after truncation (by magnitude)
-
-# Equation
-L(θ) = Σᵢ ||xᵢ - T(θ)⁻¹(truncate(T(θ)(xᵢ), k))||²₂
-
-This loss encourages the circuit to learn a representation where the top k
-frequency components capture most of the signal information.
-"""
+"""MSE loss with top-k truncation: `||x - T⁻¹(truncate(T(x), k))||²`. Field `k` is the number of kept coefficients."""
 struct MSELoss <: AbstractLoss
     k::Int
     MSELoss(k::Int) = k > 0 ? new(k) : error("k must be positive")
@@ -55,12 +25,7 @@ end
 """
     topk_truncate(x::AbstractMatrix, k::Integer)
 
-Return a matrix where frequency-dependent truncation is applied for image compression.
-Low-frequency components (near center) are kept with higher priority, while high-frequency
-components (away from center) are kept with lower priority.
-
-This is more appropriate for image compression than global top-k selection, as it
-preserves more low-frequency information which contains most of the image structure.
+Frequency-weighted top-k truncation: keeps `k` coefficients biased toward low frequencies.
 """
 function topk_truncate(x::AbstractMatrix{T}, k::Integer) where {T}
     m, n = size(x)
@@ -145,21 +110,9 @@ end
 # ============================================================================
 
 """
-    loss_function(tensors, m::Int, n::Int, optcode::AbstractEinsum, pic::AbstractMatrix, loss::AbstractLoss; inverse_code=nothing)
+    loss_function(tensors, m, n, optcode, pic::AbstractMatrix, loss; inverse_code=nothing)
 
-Compute the loss for current circuit parameters.
-
-# Arguments
-- `tensors::Vector`: Circuit parameters (unitary matrices)
-- `m::Int`: Number of qubits for row dimension
-- `n::Int`: Number of qubits for column dimension
-- `optcode::AbstractEinsum`: Optimized einsum code (forward transform)
-- `pic::AbstractMatrix`: Input signal (size must be 2^m × 2^n). Supports both CPU arrays and GPU arrays (CuArray).
-- `loss::AbstractLoss`: Loss function type
-- `inverse_code::AbstractEinsum`: Optional inverse einsum code (required for MSELoss)
-
-# Returns
-- Loss value
+Compute loss for a single image `pic` (2^m x 2^n) under the given circuit parameters.
 """
 function loss_function(tensors::AbstractVector, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum, pic::AbstractMatrix, loss::AbstractLoss; inverse_code=nothing)
     # Avoid splatting an AbstractVector during AD; Zygote may produce tuple tangents for varargs.
@@ -204,13 +157,13 @@ end
 # ============================================================================
 # Batched Einsum Operations
 # ============================================================================
-# Batched einsum: add a batch dimension to einsum contractions so B images
-# are processed in a single kernel call (B×K launches → K launches).
+# Batched einsum: extend OMEinsum contraction indices with a batch label so B images
+# are processed in a single kernel call. Each image index (input/output) gets the batch
+# label appended; the contraction order is then re-optimized for the batched tensor sizes.
 
 using OMEinsum: getixsv, getiyv, uniquelabels
 
-"""Add batch dimension to image input/output indices of a flattened einsum code.
-Returns `(batched_flat_code, batch_label)`."""
+"""Add a batch label to image input/output indices. Returns `(batched_flat_code, batch_label)`."""
 function make_batched_code(optcode, n_gates::Int)
     flat = OMEinsum.flatten(optcode)
     ixs = getixsv(flat)
@@ -301,11 +254,9 @@ batched_loss_mse(oc, ts::AbstractVector, b, m, n, k, ic) = batched_loss_mse(oc, 
 # ============================================================================
 
 """
-    loss_function(tensors, m, n, optcode, pics::Vector{<:AbstractMatrix}, loss;
-                  inverse_code=nothing, batched_optcode=nothing)
+    loss_function(tensors, m, n, optcode, pics::Vector{<:AbstractMatrix}, loss; inverse_code=nothing, batched_optcode=nothing)
 
-Compute average loss over a batch of images. If `batched_optcode` is provided,
-uses a single batched einsum kernel. Otherwise falls back to sequential.
+Average loss over a batch of images. Uses batched einsum if `batched_optcode` is provided.
 """
 function loss_function(tensors::AbstractVector, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum,
                        pics::Vector{<:AbstractMatrix}, loss::AbstractLoss;
