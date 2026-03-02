@@ -61,6 +61,22 @@ function batched_adjoint(A::AbstractArray{T,3}) where T
     return permutedims(conj.(A), (2, 1, 3))
 end
 
+"""
+    batched_inv(A::AbstractArray{T,3})
+
+Batched matrix inverse: `C[:,:,k] = inv(A[:,:,k])` for each slice `k`.
+Uses LU factorization for general matrices.
+"""
+function batched_inv(A::AbstractArray{T,3}) where T
+    d1, d2, n = size(A)
+    @assert d1 == d2 "Matrix must be square: got $d1 × $d2"
+    C = similar(A)
+    for k in 1:n
+        C[:, :, k] = inv(A[:, :, k])
+    end
+    return C
+end
+
 # ============================================================================
 # Manifold Classification Utilities
 # ============================================================================
@@ -138,29 +154,33 @@ function project(::UnitaryManifold, U::AbstractArray{T,3}, G::AbstractArray{T,3}
     return batched_matmul(U, S)
 end
 
-"""Batched QR retraction via modified Gram-Schmidt (pure broadcasting)."""
+"""Batched Cayley retraction on U(n): `(I - α/2·W)⁻¹(I + α/2·W)·U` where `W = Ξ·U'`."""
 function retract(::UnitaryManifold, U::AbstractArray{T,3}, Xi::AbstractArray{T,3}, α) where T
     RT = real(T)
-    α_typed = convert(RT, α)
+    α_half = convert(RT, α) / 2
     d = size(U, 1)
+    n = size(U, 3)
 
-    # Y = U + alpha * Xi
-    Y = U .+ α_typed .* Xi
+    # W = Xi * U' projected to skew-Hermitian (Lie algebra).
+    # The projection ensures correctness even when Xi is not exactly tangent
+    # (e.g. Adam's element-wise scaled direction).
+    W_raw = batched_matmul(Xi, batched_adjoint(U))
+    W = (W_raw .- batched_adjoint(W_raw)) ./ 2
 
-    # Modified Gram-Schmidt column by column
-    Q = similar(Y)
-    for col in 1:d
-        v = Y[:, col:col, :]  # (d, 1, n)
-        for prev in 1:(col-1)
-            q_prev = Q[:, prev:prev, :]  # (d, 1, n)
-            dot_val = sum(conj.(q_prev) .* v; dims=1)  # (1, 1, n)
-            v = v .- dot_val .* q_prev
+    # Build batched identity
+    I_batch = zeros(T, d, d, n)
+    for k in 1:n
+        for i in 1:d
+            I_batch[i, i, k] = one(T)
         end
-        nrm = sqrt.(sum(abs2.(v); dims=1))
-        nrm = max.(nrm, RT(1e-30))  # prevent division by zero
-        copyto!(view(Q, :, col:col, :), v ./ nrm)
     end
-    return Q
+    I_batch = convert(typeof(U), I_batch)
+
+    lhs = I_batch .- α_half .* W   # I - α/2·W
+    rhs = I_batch .+ α_half .* W   # I + α/2·W
+
+    # (I - α/2·W)⁻¹ (I + α/2·W) U
+    return batched_matmul(batched_matmul(batched_inv(lhs), rhs), U)
 end
 
 """Batched U(n) parallel transport via re-projection."""

@@ -53,6 +53,32 @@ function ChainRulesCore.rrule(::typeof(ParametricDFT.topk_truncate), x::CuArray{
     return y, topk_truncate_pullback
 end
 
+function ParametricDFT.batched_inv(A::CuArray{T,3}) where T
+    d, _, n = size(A)
+    if d == 2
+        # Explicit 2×2 inverse: (1/(ad-bc)) * [d -b; -c a]
+        # Pure broadcasting — single GPU kernel
+        a = A[1:1, 1:1, :]
+        b = A[1:1, 2:2, :]
+        c = A[2:2, 1:1, :]
+        dd = A[2:2, 2:2, :]
+        det = a .* dd .- b .* c
+        inv_det = one(T) ./ det
+        return cat(
+            cat(dd .* inv_det, -(b .* inv_det); dims=2),
+            cat(-(c .* inv_det), a .* inv_det; dims=2);
+            dims=1
+        )
+    else
+        # General case: per-slice inverse
+        C = similar(A)
+        for k in 1:n
+            C[:, :, k] .= inv(A[:, :, k])
+        end
+        return C
+    end
+end
+
 function ParametricDFT.batched_matmul(A::CuArray{T,3}, B::CuArray{T,3}) where T
     d1, d2A, n = size(A)
     d2B, d3, n2 = size(B)

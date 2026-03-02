@@ -129,6 +129,44 @@
         end
     end
 
+    @testset "batched_inv" begin
+        Random.seed!(53)
+        for d in [2, 3, 4]
+            n = 5
+            A = Array{ComplexF64}(undef, d, d, n)
+            for k in 1:n
+                A[:, :, k] = randn(ComplexF64, d, d) + d * Matrix{ComplexF64}(I, d, d)
+            end
+            Ainv = ParametricDFT.batched_inv(A)
+            @test size(Ainv) == (d, d, n)
+            for k in 1:n
+                @test Ainv[:, :, k] ≈ inv(A[:, :, k]) atol=1e-10
+                @test A[:, :, k] * Ainv[:, :, k] ≈ Matrix{ComplexF64}(I, d, d) atol=1e-10
+            end
+        end
+    end
+
+    @testset "Cayley retract small step" begin
+        Random.seed!(54)
+        um = ParametricDFT.UnitaryManifold()
+        for d in [2, 3, 4]
+            n = 5
+            U = Array{ComplexF64}(undef, d, d, n)
+            for k in 1:n
+                Q, _ = qr(randn(ComplexF64, d, d))
+                U[:, :, k] = Matrix{ComplexF64}(Q)
+            end
+            G = randn(ComplexF64, d, d, n)
+            Xi = ParametricDFT.project(um, U, G)
+
+            # Small step should stay close to U
+            Q_small = ParametricDFT.retract(um, U, Xi, 1e-8)
+            for k in 1:n
+                @test Q_small[:, :, k] ≈ U[:, :, k] atol=1e-6
+            end
+        end
+    end
+
     @testset "PhaseManifold project" begin
         Random.seed!(48)
         pm = ParametricDFT.PhaseManifold()
