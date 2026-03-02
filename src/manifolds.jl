@@ -69,12 +69,7 @@ Batched conjugate transpose: `C[:,:,k] = A[:,:,k]'` for each slice `k`.
 Works for arbitrary `(d1,d2,n) -> (d2,d1,n)`.
 """
 function batched_adjoint(A::AbstractArray{T,3}) where T
-    d1, d2, n = size(A)
-    C = similar(A, T, d2, d1, n)
-    @inbounds for k in 1:n, j in 1:d1, i in 1:d2
-        C[i, j, k] = conj(A[j, i, k])
-    end
-    return C
+    return permutedims(conj.(A), (2, 1, 3))
 end
 
 # ============================================================================
