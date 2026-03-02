@@ -35,62 +35,6 @@ function qft_code(m::Int, n::Int; inverse=false)
 end
 
 # ============================================================================
-# Training with Single Image
-# ============================================================================
-
-"""
-    fft_with_training(m::Int, n::Int, pic::Matrix, loss::AbstractLoss; steps::Int=1000, use_cuda::Bool=false)
-
-Train a parametric 2D quantum DFT circuit using Riemannian gradient descent.
-
-# Arguments
-- `m::Int`: Number of qubits for row dimension (image height = 2^m)
-- `n::Int`: Number of qubits for column dimension (image width = 2^n)
-- `pic::Matrix`: Input signal (size must be 2^m × 2^n)
-- `loss::AbstractLoss`: Loss function (e.g., `L1Norm()`)
-- `steps::Int=1000`: Maximum optimization iterations
-- `use_cuda::Bool=false`: Whether to use CUDA acceleration (not yet implemented)
-
-# Returns
-- Optimized parameters as `ArrayPartition` (backward compatible with existing callers)
-
-# Example
-```julia
-m, n = 6, 6  # For 64×64 image
-pic = rand(ComplexF64, 2^m, 2^n)
-# L1 norm loss
-theta = fft_with_training(m, n, pic, L1Norm(); steps=200)
-# MSE loss with truncation (keep top 100 elements)
-theta = fft_with_training(m, n, pic, MSELoss(100); steps=200)
-```
-"""
-function fft_with_training(m::Int, n::Int, pic::Matrix, loss::AbstractLoss; steps::Int=1000, use_cuda::Bool=false)
-    optcode, tensors = qft_code(m, n)
-
-    # Generate inverse code if needed for MSE loss
-    inverse_code = nothing
-    if loss isa MSELoss
-        inverse_code, _ = qft_code(m, n; inverse=true)
-    end
-
-    # Convert tensors to Matrix{ComplexF64} for optimize!
-    mat_tensors = Matrix{ComplexF64}[Matrix{ComplexF64}(t) for t in tensors]
-
-    loss_fn = ts -> loss_function(ts, m, n, optcode, pic, loss; inverse_code=inverse_code)
-    grad_fn = ts -> begin
-        _, back = Zygote.pullback(loss_fn, ts)
-        return back(one(Float64))[1]
-    end
-
-    opt = RiemannianGD(lr=0.01)
-    optimized = optimize!(opt, mat_tensors, loss_fn, grad_fn;
-                           max_iter=steps, tol=1e-5, verbose=true)
-
-    # Return an ArrayPartition for backward compatibility with existing callers
-    return ArrayPartition(optimized...)
-end
-
-# ============================================================================
 # Helper Functions
 # ============================================================================
 

@@ -3,7 +3,6 @@ module ParametricDFT
 using Yao
 using OMEinsum
 using Zygote
-using RecursiveArrayTools
 using ChainRulesCore
 using SHA
 using JSON3
@@ -17,7 +16,7 @@ export AbstractLoss, L1Norm, L2Norm, MSELoss
 export topk_truncate, loss_function
 
 # QFT circuit exports
-export fft_with_training, qft_code, ft_mat, ift_mat
+export qft_code, ft_mat, ift_mat
 
 # Entangled QFT circuit exports
 export entangled_qft_code, entanglement_gate
@@ -60,7 +59,7 @@ export recover, save_compressed, load_compressed, compression_stats
 # Include files in dependency order:
 # 1. Loss functions (no internal dependencies)
 include("loss.jl")
-# 2. QFT circuit (uses loss_function from loss.jl for fft_with_training)
+# 2. QFT circuit
 include("qft.jl")
 # 3. Entangled QFT circuit (standalone circuit code)
 include("entangled_qft.jl")

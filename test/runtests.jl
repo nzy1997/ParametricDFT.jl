@@ -3,7 +3,6 @@ using Test
 using OMEinsum
 using LinearAlgebra
 using Random
-using RecursiveArrayTools
 using Yao
 using JSON3
 using Statistics
@@ -18,14 +17,6 @@ using Zygote
     pic = rand(ComplexF64, 2^m, 2^n)
     result = reshape(optcode(tensors..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
     @test size(result) == (2^m, 2^n)
-end
-
-@testset "fft with training" begin
-    Random.seed!(1234)
-    m, n = 2, 2
-    pic = rand(ComplexF64, 2^m, 2^n)
-    theta = ParametricDFT.fft_with_training(m, n, pic, ParametricDFT.L1Norm(); steps=10)
-    @test theta isa ArrayPartition
 end
 
 @testset "fft and ifft are inverses" begin
