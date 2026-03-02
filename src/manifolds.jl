@@ -50,14 +50,8 @@ function batched_matmul(A::AbstractArray{T,3}, B::AbstractArray{T,3}) where T
     @assert d2A == d2B "Inner dimensions must match: got $d2A and $d2B"
     @assert n == n2 "Batch sizes must match: got $n and $n2"
     C = similar(A, T, d1, d3, n)
-    @inbounds for k in 1:n
-        for j in 1:d3, i in 1:d1
-            s = zero(T)
-            for p in 1:d2A
-                s += A[i, p, k] * B[p, j, k]
-            end
-            C[i, j, k] = s
-        end
+    for k in 1:n
+        mul!(view(C, :, :, k), view(A, :, :, k), view(B, :, :, k))
     end
     return C
 end

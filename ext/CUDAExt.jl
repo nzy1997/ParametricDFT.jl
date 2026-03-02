@@ -80,4 +80,16 @@ function __init__()
     ParametricDFT._nvtx_pop_fn[] = () -> (CUDA.NVTX.range_pop(); nothing)
 end
 
+function ParametricDFT.batched_matmul(A::CuArray{T,3}, B::CuArray{T,3}) where T
+    d1, d2A, n = size(A)
+    d2B, d3, n2 = size(B)
+    @assert d2A == d2B "Inner dimensions must match: got $d2A and $d2B"
+    @assert n == n2 "Batch sizes must match: got $n and $n2"
+    C = similar(A, T, d1, d3, n)
+    for k in 1:n
+        C[:, :, k] .= A[:, :, k] * B[:, :, k]
+    end
+    return C
+end
+
 end # module
