@@ -37,7 +37,9 @@ Returns `nothing` if NaN or Inf values are detected.
 function _compute_gradients(grad_fn, tensors, verbose::Bool, iter::Int)
     _nvtx_range_push("gradient")
     euclidean_grads_raw = grad_fn(tensors)
-    euclidean_grads = euclidean_grads_raw isa Tuple ? collect(euclidean_grads_raw) : euclidean_grads_raw
+    euclidean_grads = euclidean_grads_raw isa Tuple ?
+        AbstractArray[euclidean_grads_raw[i] for i in eachindex(euclidean_grads_raw)] :
+        euclidean_grads_raw
     _nvtx_range_pop()
 
     # Replace ChainRules tangent types (ZeroTangent, etc.) with actual zero arrays
@@ -79,7 +81,7 @@ function _batched_project(
     _nvtx_range_push("projection")
 
     RT = real(eltype(first(values(point_batches))))
-    rg_batches = Dict{AbstractRiemannianManifold, Any}()
+    rg_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
     grad_norm_sq = zero(RT)
 
     for (manifold, indices) in manifold_groups
@@ -147,8 +149,8 @@ function optimize!(
     end
 
     # Pre-loop: build persistent batched state + pre-allocate reusable buffers
-    point_batches = Dict{AbstractRiemannianManifold, Any}()
-    grad_buf_batches = Dict{AbstractRiemannianManifold, Any}()
+    point_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
+    grad_buf_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
 
     for (manifold, indices) in manifold_groups
         n_m = length(indices)
@@ -203,7 +205,7 @@ function optimize!(
 
         for _ls in 1:opt.max_ls_steps
             # Trial retraction at step size alpha
-            cand_batches = Dict{AbstractRiemannianManifold, Any}()
+            cand_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
             for (manifold, indices) in manifold_groups
                 pb = point_batches[manifold]
                 rg = rg_batches[manifold]
@@ -301,13 +303,13 @@ function optimize!(
     end
 
     # Pre-loop: build persistent batched state + pre-allocate reusable buffers
-    point_batches = Dict{AbstractRiemannianManifold, Any}()
-    grad_buf_batches = Dict{AbstractRiemannianManifold, Any}()
-    dir_buf_batches = Dict{AbstractRiemannianManifold, Any}()
+    point_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
+    grad_buf_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
+    dir_buf_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
 
     # Adam state: first moment (complex) and second moment (real) per manifold
-    m_batches = Dict{AbstractRiemannianManifold, Any}()
-    v_batches = Dict{AbstractRiemannianManifold, Any}()
+    m_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
+    v_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
 
     for (manifold, indices) in manifold_groups
         n_m = length(indices)
