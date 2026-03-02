@@ -142,13 +142,9 @@ function _train_basis_core(
             # Run optimizer
             current_tensors = optimize!(opt, current_tensors, batch_loss_fn, batch_grad_fn;
                                          max_iter=steps_per_image, tol=1e-8)
-            tensors_for_loss = current_tensors
 
-            # Compute average loss over batch for tracking
-            batch_loss = sum(
-                loss_function(tensors_for_loss, m, n, optcode, img, loss; inverse_code=inverse_code)
-                for img in batch
-            ) / length(batch)
+            # Reuse batched loss function for tracking (avoids redundant per-image evaluation)
+            batch_loss = Float64(batch_loss_fn(current_tensors))
             push!(epoch_losses, batch_loss)
             push!(step_train_losses, batch_loss)
             push!(loss_records, Dict{String, Any}("epoch" => epoch, "step" => batch_idx, "loss" => batch_loss))

@@ -13,38 +13,39 @@ function ParametricDFT.to_device(x::AbstractArray{T}, ::Val{:gpu}) where T
 end
 ParametricDFT.to_device(x, ::Val{:gpu}) = x  # scalars pass through
 
-# GPU-compatible top-k truncation with frequency weighting
+# GPU-native top-k truncation with frequency weighting (no CPU round-trip)
 
-function _topk_mask(x_cpu::Array{T}, k::Integer) where T
-    m, n = size(x_cpu)
-    k2 = min(Int(k), length(x_cpu))
-    center_i, center_j = (m + 1) ÷ 2, (n + 1) ÷ 2
-    max_dist = sqrt((m/2)^2 + (n/2)^2)
-    scores = similar(x_cpu, Float64)
-    mags = abs.(x_cpu)
-    for j in 1:n, i in 1:m
-        freq_dist = sqrt((i - center_i)^2 + (j - center_j)^2)
-        freq_weight = 1.0 - (freq_dist / max_dist) * 0.5
-        scores[i, j] = mags[i, j] * (1.0 + freq_weight)
-    end
-    idx = partialsortperm(vec(scores), 1:k2, rev=true)
+function _topk_mask_gpu(x::CuArray{T}, k::Integer) where T
+    m, n = size(x)
+    k2 = min(Int(k), m * n)
     RT = real(T)
-    mask_cpu = zeros(RT, m, n)
-    for flat_idx in idx
-        mask_cpu[flat_idx] = one(RT)
-    end
-    return CuArray{RT}(mask_cpu)
+    center_i = (m + 1) / 2
+    center_j = (n + 1) / 2
+    max_dist = sqrt((m / 2)^2 + (n / 2)^2)
+
+    # Frequency weights via broadcasting (stays on GPU)
+    is = CuArray(Float64.(1:m))
+    js = CuArray(Float64.(1:n)')
+    freq_dists = sqrt.((is .- center_i) .^ 2 .+ (js .- center_j) .^ 2)
+    freq_weights = 1.0 .- (freq_dists ./ max_dist) .* 0.5
+    scores = abs.(x) .* (1.0 .+ freq_weights)
+
+    # Threshold-based top-k: sort on GPU, read single scalar
+    sorted = sort(vec(scores); rev=true)
+    threshold = CUDA.@allowscalar sorted[k2]
+    mask = RT.(scores .>= threshold)
+    return mask
 end
 
 function ParametricDFT.topk_truncate(x::CuArray{T}, k::Integer) where {T}
-    mask_gpu = _topk_mask(Array(x), k)
+    mask_gpu = _topk_mask_gpu(x, k)
     return x .* mask_gpu
 end
 
 # rrule for topk_truncate on GPU (gradient flows through kept elements)
 
 function ChainRulesCore.rrule(::typeof(ParametricDFT.topk_truncate), x::CuArray{T}, k::Integer) where {T}
-    mask_gpu = _topk_mask(Array(x), k)
+    mask_gpu = _topk_mask_gpu(x, k)
     y = x .* mask_gpu
     function topk_truncate_pullback(ȳ)
         return (ChainRulesCore.NoTangent(), ȳ .* mask_gpu, ChainRulesCore.NoTangent())
@@ -58,9 +59,7 @@ function ParametricDFT.batched_matmul(A::CuArray{T,3}, B::CuArray{T,3}) where T
     @assert d2A == d2B "Inner dimensions must match: got $d2A and $d2B"
     @assert n == n2 "Batch sizes must match: got $n and $n2"
     C = similar(A, T, d1, d3, n)
-    for k in 1:n
-        C[:, :, k] .= A[:, :, k] * B[:, :, k]
-    end
+    CUDA.CUBLAS.gemm_strided_batched!('N', 'N', one(T), A, B, zero(T), C)
     return C
 end
 

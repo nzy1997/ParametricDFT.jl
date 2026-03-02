@@ -119,8 +119,7 @@
             QFTBasis, dataset;
             m=m, n=n,
             epochs=1,
-            steps_per_image=2,
-            verbose=false
+            steps_per_image=2
         )
         
         # Save and load

@@ -37,6 +37,20 @@
         )
     end
 
+    @testset "batched_matmul strided batched path" begin
+        Random.seed!(53)
+        for d in [2, 3, 4]
+            n = 20
+            A = randn(ComplexF64, d, d, n)
+            B = randn(ComplexF64, d, d, n)
+            C = ParametricDFT.batched_matmul(A, B)
+            @test size(C) == (d, d, n)
+            for k in 1:n
+                @test C[:, :, k] ≈ A[:, :, k] * B[:, :, k] atol=1e-12
+            end
+        end
+    end
+
     @testset "batched_adjoint generalized" begin
         Random.seed!(44)
         for d in [2, 3, 4]

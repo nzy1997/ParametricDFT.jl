@@ -26,12 +26,12 @@ function _compute_gradients(grad_fn, tensors)
     # Build typed Vector, replacing any non-matrix ChainRules tangents (ZeroTangent, etc.)
     # with zero arrays. collect() first ensures the guard runs before typed conversion.
     euclidean_grads = AbstractMatrix[
-        raw[i] isa AbstractMatrix ? raw[i] : zeros(eltype(tensors[i]), size(tensors[i]))
+        raw[i] isa AbstractMatrix ? raw[i] : fill!(similar(tensors[i]), zero(eltype(tensors[i])))
         for i in eachindex(raw)
     ]
 
     # Check for NaN/Inf in gradients
-    if any(g -> any(x -> isnan(x) || isinf(x), g), euclidean_grads)
+    if any(g -> !all(isfinite, g), euclidean_grads)
         return nothing
     end
 

@@ -73,7 +73,7 @@ Check if a square matrix satisfies `U*U' ≈ I`. Returns `false` for non-square 
 function is_unitary_general(t::AbstractMatrix{T}) where T
     n = size(t, 1)
     size(t, 2) == n || return false
-    return isapprox(t * t', Matrix{T}(I, n, n), atol=1e-6)
+    return isapprox(t * t', I, atol=1e-6)
 end
 
 """Classify a tensor as `UnitaryManifold` or `PhaseManifold` based on unitarity."""
@@ -83,7 +83,7 @@ function classify_manifold end  # forward declaration
 function group_by_manifold(tensors::Vector{<:AbstractMatrix})
     groups = Dict{AbstractRiemannianManifold, Vector{Int}}()
     for (i, t) in enumerate(tensors)
-        push!(get!(groups, classify_manifold(Array(t)), Int[]), i)
+        push!(get!(groups, classify_manifold(t), Int[]), i)
     end
     return groups
 end
