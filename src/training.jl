@@ -8,18 +8,10 @@ to_cpu(x::AbstractArray) = Array(x)
 to_cpu(x) = x
 
 function to_device(x, device::Symbol)
-    if device === :cpu
-        return to_device(x, Val(:cpu))
-    elseif device === :gpu
-        # Check if the CUDAExt has added the Val{:gpu} method
-        if hasmethod(to_device, Tuple{typeof(x), Val{:gpu}})
-            return to_device(x, Val(:gpu))
-        else
-            error("GPU support requires CUDA.jl. Install and load CUDA.jl first: `using CUDA`")
-        end
-    else
-        error("Unknown device: $device. Supported: :cpu, :gpu")
-    end
+    device === :cpu && return to_device(x, Val(:cpu))
+    device === :gpu && hasmethod(to_device, Tuple{typeof(x), Val{:gpu}}) && return to_device(x, Val(:gpu))
+    device === :gpu && error("GPU support requires CUDA.jl. Install and load CUDA.jl first: `using CUDA`")
+    error("Unknown device: $device. Supported: :cpu, :gpu")
 end
 
 
@@ -40,7 +32,6 @@ function _train_basis_core(
     shuffle::Bool,
     early_stopping_patience::Int,
     basis_name::String;
-    extra_info::String = "",
     save_loss_path::Union{Nothing, String} = nothing,
     optimizer::Union{Symbol, AbstractRiemannianOptimizer} = :gradient_descent,
     batch_size::Int = 1,
@@ -185,6 +176,7 @@ function _train_basis_core(
         # Check for improvement
         if val_loss < best_val_loss
             best_val_loss = val_loss
+            # Snapshot current tensors for early stopping
             best_tensors = copy.(current_tensors)
             patience_counter = 0
         else
@@ -313,7 +305,6 @@ function train_basis(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, "EntangledQFTBasis";
-        extra_info = "  Entanglement gates: $n_entangle",
         save_loss_path=save_loss_path, optimizer=optimizer,
         batch_size=batch_size, device=device,
         checkpoint_interval=checkpoint_interval, checkpoint_dir=checkpoint_dir,
@@ -391,7 +382,6 @@ function train_basis(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
         early_stopping_patience, "TEBDBasis";
-        extra_info = "  Row qubits: $m, Col qubits: $n\n  Row ring gates: $n_row_gates, Col ring gates: $n_col_gates",
         save_loss_path=save_loss_path, optimizer=optimizer,
         batch_size=batch_size, device=device,
         checkpoint_interval=checkpoint_interval, checkpoint_dir=checkpoint_dir,
