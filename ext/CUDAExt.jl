@@ -52,13 +52,6 @@ function ChainRulesCore.rrule(::typeof(ParametricDFT.topk_truncate), x::CuArray{
     return y, topk_truncate_pullback
 end
 
-# NVTX profiling callbacks
-
-function __init__()
-    ParametricDFT._nvtx_push_fn[] = name -> (CUDA.NVTX.range_push(; message=name); nothing)
-    ParametricDFT._nvtx_pop_fn[] = () -> (CUDA.NVTX.range_pop(); nothing)
-end
-
 function ParametricDFT.batched_matmul(A::CuArray{T,3}, B::CuArray{T,3}) where T
     d1, d2A, n = size(A)
     d2B, d3, n2 = size(B)

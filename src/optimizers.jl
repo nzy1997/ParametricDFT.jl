@@ -4,20 +4,6 @@
 using LinearAlgebra
 
 # ============================================================================
-# NVTX Profiling Callbacks
-# ============================================================================
-# No-ops by default; CUDAExt sets real callbacks at init time.
-
-const _nvtx_push_fn = Ref{Any}(nothing)
-const _nvtx_pop_fn = Ref{Any}(nothing)
-
-"""NVTX range push. No-op unless CUDAExt sets the callback."""
-_nvtx_range_push(name::String) = (_nvtx_push_fn[] !== nothing && _nvtx_push_fn[](name); nothing)
-
-"""NVTX range pop. No-op unless CUDAExt sets the callback."""
-_nvtx_range_pop() = (_nvtx_pop_fn[] !== nothing && _nvtx_pop_fn[](); nothing)
-
-# ============================================================================
 # Abstract Optimizer Type
 # ============================================================================
 
@@ -35,10 +21,8 @@ Compute Euclidean gradients via `grad_fn`, converting Tuple to Vector if needed.
 Returns `nothing` if NaN or Inf values are detected.
 """
 function _compute_gradients(grad_fn, tensors, verbose::Bool, iter::Int)
-    _nvtx_range_push("gradient")
     euclidean_grads_raw = grad_fn(tensors)
     raw = euclidean_grads_raw isa Tuple ? collect(euclidean_grads_raw) : euclidean_grads_raw
-    _nvtx_range_pop()
 
     # Build typed Vector, replacing any non-matrix ChainRules tangents (ZeroTangent, etc.)
     # with zero arrays. collect() first ensures the guard runs before typed conversion.
@@ -75,8 +59,6 @@ function _batched_project(
     grad_buf_batches::Dict,
     euclidean_grads
 )
-    _nvtx_range_push("projection")
-
     RT = real(eltype(first(values(point_batches))))
     rg_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
     grad_norm_sq = zero(RT)
@@ -89,8 +71,6 @@ function _batched_project(
         rg_batches[manifold] = rg
         grad_norm_sq += real(sum(abs2, rg))
     end
-
-    _nvtx_range_pop()
 
     return rg_batches, sqrt(grad_norm_sq)
 end
@@ -135,9 +115,7 @@ function optimize!(
     RT = real(ET)
 
     # Classify manifold types ONCE
-    _nvtx_range_push("classify_tensors")
     manifold_groups = group_by_manifold(tensors)
-    _nvtx_range_pop()
 
     if verbose
         for (m, idx) in manifold_groups
@@ -189,8 +167,6 @@ function optimize!(
         end
 
         # Armijo backtracking line search
-        _nvtx_range_push("line_search")
-
         current_loss = isnan(cached_loss) ? RT(loss_fn(current_tensors)) : cached_loss
 
         if verbose && (iter % 10 == 0 || iter == 1)
@@ -225,18 +201,15 @@ function optimize!(
             end
             alpha *= RT(opt.armijo_tau)
         end
-        _nvtx_range_pop()
 
         if !accepted
             # Fall back: take the smallest step tried
-            _nvtx_range_push("retraction_fallback")
             for (manifold, indices) in manifold_groups
                 pb = point_batches[manifold]
                 rg = rg_batches[manifold]
                 point_batches[manifold] = retract(manifold, pb, .-rg, alpha)
             end
             cached_loss = RT(NaN)  # unknown after fallback
-            _nvtx_range_pop()
         end
     end
 
@@ -289,9 +262,7 @@ function optimize!(
     beta1, beta2 = RT(opt.beta1), RT(opt.beta2)
 
     # Classify manifold types ONCE
-    _nvtx_range_push("classify_tensors")
     manifold_groups = group_by_manifold(tensors)
-    _nvtx_range_pop()
 
     if verbose
         for (m, idx) in manifold_groups
@@ -358,7 +329,6 @@ function optimize!(
         bc2 = one(RT) - beta2^iter
 
         # Per-manifold Adam update
-        _nvtx_range_push("retraction")
         for (manifold, indices) in manifold_groups
             rg = rg_batches[manifold]
             m_state = m_batches[manifold]
@@ -380,7 +350,6 @@ function optimize!(
             m_batches[manifold] = transport(manifold, old_batch, new_batch, m_state)
             point_batches[manifold] = new_batch
         end
-        _nvtx_range_pop()
     end
 
     # Final unstack
