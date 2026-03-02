@@ -368,7 +368,6 @@ function main()
         epochs=TRAINING_EPOCHS,
         steps_per_image=STEPS_PER_IMAGE,
         validation_split=0.2,
-        verbose=true,
         save_loss_path=joinpath(loss_dir, "qft_loss.json")
     )
 
@@ -382,7 +381,6 @@ function main()
         epochs=TRAINING_EPOCHS,
         steps_per_image=STEPS_PER_IMAGE,
         validation_split=0.2,
-        verbose=true,
         save_loss_path=joinpath(loss_dir, "entangled_qft_loss.json")
     )
 
@@ -395,7 +393,6 @@ function main()
         epochs=TRAINING_EPOCHS,
         steps_per_image=STEPS_PER_IMAGE,
         validation_split=0.2,
-        verbose=true,
         save_loss_path=joinpath(loss_dir, "tebd_loss.json")
     )
     
@@ -430,6 +427,124 @@ function main()
         relpath_str = relpath(plot_path, plots_dir)
         println("  ✓ $relpath_str")
     end
+
+    # ============================================================================
+    # Step 3.6: Optimizer Comparison Benchmark
+    # ============================================================================
+    #
+    # Runs a small QFTBasis training benchmark with different optimizer
+    # configurations (GD vs Adam, batch_size=1 vs 4, CPU vs GPU), prints
+    # a comparison table, and generates a CairoMakie loss-curve plot.
+    # ============================================================================
+
+    println("\n" * "="^80)
+    println("Step 3.6: Optimizer Comparison Benchmark")
+    println("="^80)
+
+    # Use a small subset and fewer steps so the benchmark finishes quickly
+    bench_images = training_images[1:min(8, length(training_images))]
+    bench_k = round(Int, total_coefficients * 0.1)
+    bench_steps = 20
+    bench_epochs = 1
+
+    println("\nBenchmark configuration:")
+    println("  Images: $(length(bench_images)) | Epochs: $bench_epochs | Steps/image: $bench_steps")
+    println("  Basis: QFTBasis($M_QUBITS, $N_QUBITS) | Loss: MSELoss($bench_k)")
+
+    # Determine if CUDA is available
+    has_cuda_bench = @static if isdefined(Main, :CUDA)
+        Main.CUDA.functional()
+    else
+        false
+    end
+
+    # Build list of (label, optimizer, device, batch_size) configurations
+    bench_configs = [
+        ("GD",   :gradient_descent, :cpu, 1),
+        ("Adam", :adam,             :cpu, 1),
+        ("GD",   :gradient_descent, :cpu, 4),
+        ("Adam", :adam,             :cpu, 4),
+    ]
+    if has_cuda_bench
+        append!(bench_configs, [
+            ("GD",   :gradient_descent, :gpu, 1),
+            ("Adam", :adam,             :gpu, 1),
+            ("GD",   :gradient_descent, :gpu, 4),
+            ("Adam", :adam,             :gpu, 4),
+        ])
+    else
+        println("  GPU: skipped (CUDA not available)")
+    end
+
+    # Run each configuration, collecting results
+    bench_results = []
+    for (label, opt_sym, dev, bs) in bench_configs
+        bs_clamped = min(bs, length(bench_images))
+        print("  Running $label ($dev, batch=$bs_clamped)... ")
+        flush(stdout)
+        Random.seed!(42)
+        elapsed = @elapsed begin
+            _, bench_hist = train_basis(
+                QFTBasis, bench_images;
+                m=M_QUBITS, n=N_QUBITS,
+                loss=ParametricDFT.MSELoss(bench_k),
+                epochs=bench_epochs,
+                steps_per_image=bench_steps,
+                validation_split=0.0,
+                shuffle=false,
+                early_stopping_patience=0,
+                optimizer=opt_sym,
+                device=dev,
+                batch_size=bs_clamped
+            )
+        end
+        final_loss = bench_hist.step_train_losses[end]
+        println(@sprintf("%.1fs  (final loss: %.6f)", elapsed, final_loss))
+        push!(bench_results, (;
+            label, optimizer=opt_sym, device=dev,
+            batch_size=bs_clamped, final_loss, elapsed,
+            step_losses=copy(bench_hist.step_train_losses)
+        ))
+    end
+
+    # Print comparison table
+    println("\n" * "-"^70)
+    @printf("  %-12s  %-6s  %5s  %14s  %10s\n",
+            "Optimizer", "Device", "Batch", "Final Loss", "Time")
+    println("  " * "-"^55)
+    for r in bench_results
+        @printf("  %-12s  %-6s  %5d  %14.6f  %9.1fs\n",
+                r.label, r.device, r.batch_size, r.final_loss, r.elapsed)
+    end
+    println("-"^70)
+
+    # Generate comparison plot using CairoMakie
+    println("\nGenerating optimizer comparison plot...")
+    optim_fig = Figure(size=(900, 500))
+    optim_ax = Axis(optim_fig[1, 1];
+        title="Optimizer Comparison: Step-Level Training Loss",
+        xlabel="Training Step",
+        ylabel="Loss",
+        yscale=log10
+    )
+
+    # Color and linestyle palette
+    _colors = [:blue, :red, :green, :orange, :purple, :cyan, :magenta, :brown]
+    _styles = [:solid, :dash, :dot, :dashdot, :solid, :dash, :dot, :dashdot]
+
+    for (idx, r) in enumerate(bench_results)
+        ci = mod1(idx, length(_colors))
+        si = mod1(idx, length(_styles))
+        config_label = "$(r.label) $(r.device) bs=$(r.batch_size)"
+        lines!(optim_ax, 1:length(r.step_losses), r.step_losses;
+            color=_colors[ci], linestyle=_styles[si], label=config_label)
+    end
+
+    axislegend(optim_ax; position=:rt, framevisible=true, labelsize=10)
+
+    optim_plot_path = joinpath(plots_dir, "optimizer_comparison.png")
+    save(optim_plot_path, optim_fig; px_per_unit=2)
+    println("  Saved: $optim_plot_path")
 
     # ============================================================================
     # Step 4: Save Trained Bases
@@ -625,6 +740,7 @@ function main()
     │  ├─ entangled_qft_loss.json    : Entangled QFT epoch/step losses
     │  └─ tebd_loss.json             : TEBD epoch/step losses
     └─ plots/                        : Training loss visualizations
+       ├─ optimizer_comparison.png   : GD vs Adam loss curves (log-scale)
        ├─ log/                       : Log-scale (y-axis) plots
        │  ├─ *_loss.png              : Per-epoch loss curves
        │  ├─ *_step_loss.png         : Per-step loss curves

@@ -136,8 +136,7 @@ function main()
             loss=ParametricDFT.MSELoss(k),
             epochs=TRAINING_EPOCHS,
             steps_per_image=STEPS_PER_IMAGE,
-            validation_split=0.2,
-            verbose=true
+            validation_split=0.2
         )
         println("  [$pos] Parameters: $(num_parameters(trained[pos]))")
         println("  [$pos] Phases:     $(round.(get_entangle_phases(trained[pos]), digits=4))")
