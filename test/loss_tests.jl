@@ -227,4 +227,30 @@ end
         @test isapprox(ParametricDFT.batched_loss_l2(batched_opt, tensors, batch, m, n), per_image, rtol=1e-10)
     end
 
+    @testset "Zygote gradient through batched_loss_mse" begin
+        Random.seed!(42)
+        m, n = 2, 2
+        optcode, tensors_raw = ParametricDFT.qft_code(m, n)
+        optcode_inv, _ = ParametricDFT.qft_code(m, n; inverse=true)
+        tensors = [ComplexF64.(t) for t in tensors_raw]
+        n_gates = length(tensors)
+        B, k = 3, 5
+        batch = [rand(ComplexF64, 2^m, 2^n) for _ in 1:B]
+        batched_flat, blabel = ParametricDFT.make_batched_code(optcode, n_gates)
+        batched_opt = ParametricDFT.optimize_batched_code(batched_flat, blabel, B)
+        zg = Zygote.gradient(
+            ts -> ParametricDFT.batched_loss_mse(batched_opt, ts, batch, m, n, k, optcode_inv),
+            tensors)[1]
+        @test zg isa Vector
+        @test length(zg) == n_gates
+        @test all(g isa AbstractMatrix for g in zg)
+        # Finite-difference check for tensors[1][1,1]
+        ε = 1e-5
+        ts_p = deepcopy(tensors); ts_m = deepcopy(tensors)
+        ts_p[1][1, 1] += ε; ts_m[1][1, 1] -= ε
+        fd = (ParametricDFT.batched_loss_mse(batched_opt, ts_p, batch, m, n, k, optcode_inv) -
+              ParametricDFT.batched_loss_mse(batched_opt, ts_m, batch, m, n, k, optcode_inv)) / (2*ε)
+        @test isapprox(real(zg[1][1, 1]), fd, rtol=1e-3)
+    end
+
 end
