@@ -1,7 +1,6 @@
 # GPU Optimizer Redesign: Clean Rewrite
 
 **Date:** 2026-03-03
-**Branch:** new branch from `feature/riemannian-optimizers`
 **Status:** Design (reviewed, corrections applied)
 **Approach:** Delete existing optimizer/manifold/training flow, rebuild from scratch around materialized unitary + typed parameter groups.
 
@@ -1008,6 +1007,54 @@ These exist in the current code and are inherited by the redesign. They are not 
 8. **GPU/CPU parity**: same results on both devices (within floating-point tolerance).
 9. **Convergence smoke test**: training loss decreases on a small problem.
 10. **Benchmark**: kernel counts and wall-clock time via updated `profile_gpu.jl`.
+
+---
+
+## Git Workflow
+
+### Step 1: Merge current work into main
+
+```
+main ◄── squash merge ── feature/riemannian-optimizers (42 commits)
+```
+
+Squash merge `feature/riemannian-optimizers` into `main` via PR.
+This preserves the current working code (manifolds, optimizers, training,
+materialized, CUDA extension, tests) as the baseline on `main`.
+
+The 42 commits are squashed into a single clean commit on `main`.
+
+### Step 2: Create redesign branch from main
+
+```
+main (with current code) ──► feature/gpu-optimizer-redesign
+```
+
+Branch from the updated `main`. The redesign work happens here.
+
+### Step 3: Implement redesign in phases
+
+Each phase is a logically complete unit with passing tests.
+Commit after each phase so progress is never lost.
+
+```
+feature/gpu-optimizer-redesign
+  ├── Phase 1: rewrite manifolds.jl + tests
+  ├── Phase 2: rewrite materialized.jl + tests (including MSE gradient test)
+  ├── Phase 3: rewrite optimizers.jl + tests
+  ├── Phase 4: rewrite training.jl + integration tests
+  ├── Phase 5: update exports, benchmarks, final verification
+  └── PR back to main
+```
+
+### Step 4: Merge redesign into main
+
+```
+main ◄── PR ── feature/gpu-optimizer-redesign
+```
+
+Regular merge (not squash) to preserve the per-phase commit history,
+which is useful for understanding the redesign if something breaks later.
 
 ---
 
