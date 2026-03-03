@@ -197,18 +197,6 @@ function basis_hash(basis::QFTBasis)
     return bytes2hex(sha256(take!(data)))
 end
 
-"""
-    get_manifold(basis::QFTBasis)
-
-Get the product manifold for Riemannian optimization of basis parameters.
-
-# Returns
-- `ProductManifold`: Manifold structure for the tensors
-"""
-function get_manifold(basis::QFTBasis)
-    return generate_manifold(basis.tensors)
-end
-
 # ============================================================================
 # Utility Functions
 # ============================================================================
@@ -462,18 +450,6 @@ function basis_hash(basis::EntangledQFTBasis)
         end
     end
     return bytes2hex(sha256(take!(data)))
-end
-
-"""
-    get_manifold(basis::EntangledQFTBasis)
-
-Get the product manifold for Riemannian optimization of basis parameters.
-
-# Returns
-- `ProductManifold`: Manifold structure for the tensors
-"""
-function get_manifold(basis::EntangledQFTBasis)
-    return generate_manifold(basis.tensors)
 end
 
 # ============================================================================
@@ -771,18 +747,6 @@ function basis_hash(basis::TEBDBasis)
         end
     end
     return bytes2hex(sha256(take!(data)))
-end
-
-"""
-    get_manifold(basis::TEBDBasis)
-
-Get the product manifold for Riemannian optimization of basis parameters.
-
-# Returns
-- `ProductManifold`: Manifold structure for the tensors
-"""
-function get_manifold(basis::TEBDBasis)
-    return generate_manifold(basis.tensors)
 end
 
 # ============================================================================

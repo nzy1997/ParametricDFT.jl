@@ -114,8 +114,7 @@
             QFTBasis, dataset;
             m=m, n=n,
             epochs=1,
-            steps_per_image=5,
-            verbose=false
+            steps_per_image=5
         )
         
         img = rand(16, 16)
@@ -272,8 +271,7 @@
             QFTBasis, dataset;
             m=m, n=n,
             epochs=1,
-            steps_per_image=2,
-            verbose=false
+            steps_per_image=2
         )
         
         # Compress and recover with trained basis

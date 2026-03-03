@@ -266,12 +266,6 @@ end
         @test isapprox(freq_entangled, freq_standard, rtol=1e-10)
     end
     
-    @testset "get_manifold" begin
-        basis = EntangledQFTBasis(3, 3)
-        M = get_manifold(basis)
-        @test M isa Manifolds.ProductManifold
-    end
-    
     @testset "Base.show" begin
         basis = EntangledQFTBasis(4, 4)
         io = IOBuffer()

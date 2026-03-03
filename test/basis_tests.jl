@@ -122,12 +122,6 @@
         @test isapprox(norm(freq), norm(img), rtol=1e-10)
     end
     
-    @testset "get_manifold" begin
-        basis = QFTBasis(3, 3)
-        M = get_manifold(basis)
-        @test M isa ProductManifold
-    end
-    
     @testset "QFTBasis with custom tensors" begin
         # Get initial tensors
         m, n = 3, 3
