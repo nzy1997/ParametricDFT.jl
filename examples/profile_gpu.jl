@@ -161,72 +161,14 @@ t_gpu = bench_gpu(() -> ParametricDFT.optimize!(opt, copy.(tensors_gpu), fn2_gpu
 @printf("  CPU: %.3f ms   GPU: %.3f ms   ratio: %.1fx\n", t_cpu*1000, t_gpu*1000, t_cpu/t_gpu)
 
 println("\n" * "="^70)
-println("  Materialized Unitary Benchmarks")
-println("="^70)
-println()
-
-# Build materialized unitary
-D = 2^(m + n)
-flat_u, blabel_u = ParametricDFT.make_batched_code(optcode, n_gates)
-unitary_optcode = ParametricDFT.optimize_batched_code(flat_u, blabel_u, D)
-
-println("--- 13. Build circuit unitary (D=$D) ---")
-t_cpu = bench(() -> ParametricDFT.build_circuit_unitary(unitary_optcode, Tuple(tensors_cpu), m, n))
-t_gpu = bench_gpu(() -> ParametricDFT.build_circuit_unitary(unitary_optcode, Tuple(tensors_gpu), m, n))
-@printf("  CPU: %.3f ms   GPU: %.3f ms   ratio: %.1fx\n", t_cpu*1000, t_gpu*1000, t_cpu/t_gpu)
-
-U_cpu = ParametricDFT.build_circuit_unitary(unitary_optcode, Tuple(tensors_cpu), m, n)
-U_gpu = CuArray(U_cpu)
-
-println("\n--- 14. Materialized forward (single image, matmul) ---")
-img_vec_cpu = vec(images_cpu[1])
-img_vec_gpu = CuArray(img_vec_cpu)
-t_cpu = bench(() -> U_cpu * img_vec_cpu)
-t_gpu = bench_gpu(() -> U_gpu * img_vec_gpu)
-@printf("  CPU: %.3f ms   GPU: %.3f ms   ratio: %.1fx\n", t_cpu*1000, t_gpu*1000, t_cpu/t_gpu)
-
-println("\n--- 15. Materialized forward (batch=8, matmul) ---")
-X_cpu = hcat([vec(img) for img in images_cpu]...)
-X_gpu = CuArray(X_cpu)
-t_cpu = bench(() -> U_cpu * X_cpu)
-t_gpu = bench_gpu(() -> U_gpu * X_gpu)
-@printf("  CPU: %.3f ms   GPU: %.3f ms   ratio: %.1fx\n", t_cpu*1000, t_gpu*1000, t_cpu/t_gpu)
-
-println("\n--- 16. Materialized L1 loss + gradient (8 images) ---")
-mat_fn_cpu = ts -> begin
-    U = ParametricDFT.build_circuit_unitary(unitary_optcode, Tuple(ts), m, n)
-    ParametricDFT.materialized_loss_l1(U, images_cpu, m, n)
-end
-mat_fn_gpu = ts -> begin
-    U = ParametricDFT.build_circuit_unitary(unitary_optcode, Tuple(ts), m, n)
-    ParametricDFT.materialized_loss_l1(U, images_gpu, m, n)
-end
-t_cpu = bench(() -> Zygote.gradient(mat_fn_cpu, tensors_cpu))
-t_gpu = bench_gpu(() -> Zygote.gradient(mat_fn_gpu, tensors_gpu))
-@printf("  CPU: %.3f ms   GPU: %.3f ms   ratio: %.1fx\n", t_cpu*1000, t_gpu*1000, t_cpu/t_gpu)
-
-println("\n--- 17. Full optimize! (1 iter, Adam, materialized L1, batch=8) ---")
-mat_gfn_cpu = ts -> begin _, back = Zygote.pullback(mat_fn_cpu, ts); back(1.0)[1]; end
-mat_gfn_gpu = ts -> begin _, back = Zygote.pullback(mat_fn_gpu, ts); back(1.0)[1]; end
-t_cpu = bench(() -> ParametricDFT.optimize!(opt, copy.(tensors_cpu), mat_fn_cpu, mat_gfn_cpu; max_iter=1))
-t_gpu = bench_gpu(() -> ParametricDFT.optimize!(opt, copy.(tensors_gpu), mat_fn_gpu, mat_gfn_gpu; max_iter=1))
-@printf("  CPU: %.3f ms   GPU: %.3f ms   ratio: %.1fx\n", t_cpu*1000, t_gpu*1000, t_cpu/t_gpu)
-
-println("\n" * "="^70)
 println("  Analysis")
 println("="^70)
 println("""
-  Key insight: For 32×32 images with 2×2 gate tensors, each GPU kernel
-  launch (~5-10μs overhead) costs more than the actual computation.
+  Key insight: For 32x32 images with 2x2 gate tensors, each GPU kernel
+  launch (~5-10us overhead) costs more than the actual computation.
   The einsum contracts many tiny tensors, each becoming a separate kernel.
   Zygote's AD tape multiplies this: backward pass launches ~2x more kernels.
 
-  The materialized unitary path (benchmarks 13-17) builds the full D×D
-  unitary matrix once via batched einsum with identity input, then uses
-  a single cuBLAS GEMM (U*X) for the forward pass. This eliminates
-  hundreds of kernel launches. Compare benchmark 8 (einsum) vs 16
-  (materialized) for the same workload.
-
-  GPU wins when: larger images (128×128+), materialized unitary path,
-  or when computation per kernel dominates launch overhead.
+  GPU wins when: larger images (256x256+) where per-kernel compute
+  dominates launch overhead, or batched einsum with batch_size >= 2.
 """)
