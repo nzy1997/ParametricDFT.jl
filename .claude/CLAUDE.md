@@ -5,7 +5,7 @@ Julia library building quantum circuit for finding sparse basis in image compres
 
 ## Skills
 - [check-code-quality](skills/check-code-quality/SKILL.md) — Review code changes for design principles (DRY, KISS, SOLID, HC/LC), Julia-specific quality (type stability, AD safety, performance), and test quality.
-- [create-pr](skills/create-pr/SKILL.md) — Create a pull request from the current branch.
+- [issue-pr](skills/issue-pr/SKILL.md) — Create an issue and a pull request from the current branch.
 
 ## Commands
 ```bash
