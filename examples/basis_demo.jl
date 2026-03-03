@@ -9,10 +9,10 @@
 # The demo trains all bases on a configurable dataset, compares compression 
 # quality, and outputs a comprehensive comparison table.
 #
-# Run with: 
-#   julia --project=examples examples/basis_demo.jl              # Default: MNIST
-#   julia --project=examples examples/basis_demo.jl mnist        # MNIST dataset
-#   julia --project=examples examples/basis_demo.jl quickdraw    # Quick Draw dataset
+# Run with:
+#   julia --project=examples examples/basis_demo.jl              # Default MNIST (auto-detects GPU)
+#   julia --project=examples examples/basis_demo.jl quickdraw    # Quick Draw (auto-detects GPU)
+#   CUDA_VISIBLE_DEVICES=1 julia --project=examples examples/basis_demo.jl  # Force specific GPU
 #
 # Quick Draw dataset requires downloading numpy files first:
 #   mkdir -p data/quickdraw
@@ -32,6 +32,7 @@ using Printf
 using FFTW
 using NPZ
 using CairoMakie  # Used for training loss visualization
+using CUDA         # GPU support (gracefully handled if no GPU available)
 
 # ================================================================================
 # Dataset Configuration
@@ -49,7 +50,7 @@ const IMG_SIZE = 32
 
 # Training configuration
 const NUM_TRAINING_IMAGES = 20
-const TRAINING_EPOCHS = 2
+const TRAINING_EPOCHS = 4
 const STEPS_PER_IMAGE = 50
 const NUM_TEST_IMAGES = 5
 
@@ -62,6 +63,9 @@ const OUTPUT_DIR = joinpath(@__DIR__, DATASET == "mnist" ? "BasisDemo" : "BasisD
 # Quick Draw configuration
 const QUICKDRAW_CATEGORIES = ["cat", "dog", "airplane", "apple", "bicycle"]
 const QUICKDRAW_DATA_DIR = joinpath(@__DIR__, "..", "data", "quickdraw")
+
+# CUDA auto-detection
+const HAS_CUDA = CUDA.functional()
 
 # ================================================================================
 # Utility Functions
@@ -234,6 +238,67 @@ function print_improvement_analysis(results::Dict, ratios::Vector{Float64})
     println("="^100)
 end
 
+"""Build list of (label, optimizer_symbol, device, batch_size) configs."""
+function build_training_configs()
+    configs = Tuple{String, Symbol, Symbol, Int}[]
+    for (opt_label, opt_sym) in [("GD", :gradient_descent), ("Adam", :adam)]
+        for bs in [1, 4, 8]
+            push!(configs, (opt_label, opt_sym, :cpu, bs))
+        end
+    end
+    if HAS_CUDA
+        for (opt_label, opt_sym) in [("GD", :gradient_descent), ("Adam", :adam)]
+            for bs in [1, 4, 8]
+                push!(configs, (opt_label, opt_sym, :gpu, bs))
+            end
+        end
+    end
+    return configs
+end
+
+"""Train a basis type across all optimizer configs. Returns vector of named tuples + best trained basis."""
+function train_basis_sweep(
+    ::Type{BT}, training_images, configs, k;
+    basis_kwargs...
+) where {BT <: AbstractSparseBasis}
+    results = []
+    for (opt_label, opt_sym, dev, bs) in configs
+        bs_clamped = min(bs, length(training_images))
+        print("  $(nameof(BT)) | $opt_label | $dev | bs=$bs_clamped ... ")
+        flush(stdout)
+        Random.seed!(42)
+        elapsed = @elapsed begin
+            basis, hist = train_basis(
+                BT, training_images;
+                m=M_QUBITS, n=N_QUBITS,
+                loss=ParametricDFT.MSELoss(k),
+                epochs=TRAINING_EPOCHS,
+                steps_per_image=STEPS_PER_IMAGE,
+                validation_split=0.2,
+                shuffle=true,
+                optimizer=opt_sym,
+                device=dev,
+                batch_size=bs_clamped,
+                basis_kwargs...
+            )
+        end
+        final_loss = hist.step_train_losses[end]
+        @printf("%.1fs  loss=%.6f\n", elapsed, final_loss)
+        push!(results, (;
+            basis_type=nameof(BT), label=opt_label, optimizer=opt_sym,
+            device=dev, batch_size=bs_clamped,
+            final_loss, elapsed,
+            step_losses=copy(hist.step_train_losses),
+            train_losses=copy(hist.train_losses),
+            val_losses=copy(hist.val_losses),
+            basis, hist
+        ))
+    end
+    # Select best config (lowest final loss)
+    best_idx = argmin([r.final_loss for r in results])
+    return results, results[best_idx]
+end
+
 # ================================================================================
 # Main Demo
 # ================================================================================
@@ -341,69 +406,62 @@ function main()
     println("  TEBD:             $(num_parameters(tebd_default)) parameters ($(num_gates(tebd_default)) ring gates)")
     
     # ============================================================================
-    # Step 3: Train All Bases
+    # Step 3: Train All Bases (Full Optimizer Sweep)
     # ============================================================================
-    
+
     println("\n" * "="^80)
-    println("Step 3: Training All Bases")
+    println("Step 3: Training All Bases (Full Optimizer Sweep)")
     println("="^80)
-    
+
     total_coefficients = IMG_SIZE * IMG_SIZE
-    k = round(Int, total_coefficients * 0.1)  # Keep 10% for MSE loss
-    
+    k = round(Int, total_coefficients * 0.1)
+
+    configs = build_training_configs()
+    n_configs = length(configs)
+
     println("\nTraining configuration:")
     println("  Images: $NUM_TRAINING_IMAGES | Epochs: $TRAINING_EPOCHS | Steps/image: $STEPS_PER_IMAGE")
-    println("  Loss: MSELoss($k) - reconstruct from top $k/$total_coefficients coefficients")
-    
-    # Directory for saving training loss JSON files
-    loss_dir = joinpath(OUTPUT_DIR, "loss_history")
-    mkpath(loss_dir)
+    println("  Loss: MSELoss($k) | Configs per basis: $n_configs")
+    println("  Devices: CPU" * (HAS_CUDA ? " + GPU" : ""))
 
-    # Train QFT and capture training history
-    println("\n--- Training Standard QFT Basis ---")
-    trained_qft, qft_history = @time train_basis(
-        QFTBasis, training_images;
-        m=M_QUBITS, n=N_QUBITS,
-        loss=ParametricDFT.MSELoss(k),
-        epochs=TRAINING_EPOCHS,
-        steps_per_image=STEPS_PER_IMAGE,
-        validation_split=0.2,
-        verbose=true,
-        save_loss_path=joinpath(loss_dir, "qft_loss.json")
-    )
+    # Train QFT
+    println("\n--- QFTBasis ---")
+    qft_results, best_qft = train_basis_sweep(QFTBasis, training_images, configs, k)
+    trained_qft = best_qft.basis
 
-    # Train Entangled QFT and capture training history
-    println("\n--- Training Entangled QFT Basis ---")
-    trained_entangled, entangled_history = @time train_basis(
-        EntangledQFTBasis, training_images;
-        m=M_QUBITS, n=N_QUBITS,
-        entangle_position=:back,
-        loss=ParametricDFT.MSELoss(k),
-        epochs=TRAINING_EPOCHS,
-        steps_per_image=STEPS_PER_IMAGE,
-        validation_split=0.2,
-        verbose=true,
-        save_loss_path=joinpath(loss_dir, "entangled_qft_loss.json")
+    # Train Entangled QFT
+    println("\n--- EntangledQFTBasis ---")
+    entangled_results, best_entangled = train_basis_sweep(
+        EntangledQFTBasis, training_images, configs, k;
+        entangle_position=:back
     )
+    trained_entangled = best_entangled.basis
 
-    # Train TEBD and capture training history
-    println("\n--- Training TEBD Basis ---")
-    trained_tebd, tebd_history = @time train_basis(
-        TEBDBasis, training_images;
-        m=M_QUBITS, n=N_QUBITS,
-        loss=ParametricDFT.MSELoss(k),
-        epochs=TRAINING_EPOCHS,
-        steps_per_image=STEPS_PER_IMAGE,
-        validation_split=0.2,
-        verbose=true,
-        save_loss_path=joinpath(loss_dir, "tebd_loss.json")
-    )
-    
-    println("\n✓ All training completed!")
-    println("  Trained QFT:          $(num_parameters(trained_qft)) parameters")
-    println("  Trained Entangled:    $(num_parameters(trained_entangled)) parameters")
-    println("  Trained TEBD:         $(num_parameters(trained_tebd)) parameters")
-    println("  Entanglement phases:  $(round.(get_entangle_phases(trained_entangled), digits=4))")
+    # Train TEBD
+    println("\n--- TEBDBasis ---")
+    tebd_results, best_tebd = train_basis_sweep(TEBDBasis, training_images, configs, k)
+    trained_tebd = best_tebd.basis
+
+    all_results = [qft_results; entangled_results; tebd_results]
+
+    # Print per-basis comparison tables
+    for (basis_name, results_vec, best) in [("QFTBasis", qft_results, best_qft), ("EntangledQFTBasis", entangled_results, best_entangled), ("TEBDBasis", tebd_results, best_tebd)]
+        println("\n" * "-"^75)
+        println("  $basis_name Comparison")
+        println("-"^75)
+        @printf("  %-6s  %-6s  %5s  %14s  %10s\n", "Optim", "Device", "Batch", "Final Loss", "Time")
+        println("  " * "-"^50)
+        for r in results_vec
+            marker = r === best ? " *" : ""
+            @printf("  %-6s  %-6s  %5d  %14.6f  %9.1fs%s\n",
+                    r.label, r.device, r.batch_size, r.final_loss, r.elapsed, marker)
+        end
+    end
+
+    println("\nBest configs:")
+    println("  QFT:       $(best_qft.label) $(best_qft.device) bs=$(best_qft.batch_size) (loss=$(round(best_qft.final_loss, digits=6)))")
+    println("  Entangled: $(best_entangled.label) $(best_entangled.device) bs=$(best_entangled.batch_size) (loss=$(round(best_entangled.final_loss, digits=6)))")
+    println("  TEBD:      $(best_tebd.label) $(best_tebd.device) bs=$(best_tebd.batch_size) (loss=$(round(best_tebd.final_loss, digits=6)))")
 
     # ============================================================================
     # Step 3.5: Visualize Training Losses
@@ -413,23 +471,44 @@ function main()
     println("Step 3.5: Visualizing Training Losses")
     println("="^80)
 
-    # Convert history tuples to TrainingHistory objects
+    # Best-config histories for per-basis comparison
     histories = [
-        TrainingHistory(qft_history.train_losses, qft_history.val_losses, qft_history.step_train_losses, "QFT"),
-        TrainingHistory(entangled_history.train_losses, entangled_history.val_losses, entangled_history.step_train_losses, "Entangled QFT"),
-        TrainingHistory(tebd_history.train_losses, tebd_history.val_losses, tebd_history.step_train_losses, "TEBD")
+        TrainingHistory(best_qft.train_losses, best_qft.val_losses, best_qft.step_losses, "QFT (best)"),
+        TrainingHistory(best_entangled.train_losses, best_entangled.val_losses, best_entangled.step_losses, "Entangled QFT (best)"),
+        TrainingHistory(best_tebd.train_losses, best_tebd.val_losses, best_tebd.step_losses, "TEBD (best)"),
     ]
 
-    # Generate and save all training plots to a dedicated subfolder
     plots_dir = joinpath(OUTPUT_DIR, "plots")
     println("\nGenerating training loss plots...")
     saved_plots = save_training_plots(histories, plots_dir)
 
-    println("\n✓ Training loss plots saved to: $plots_dir")
+    println("\nTraining loss plots saved to: $plots_dir")
     for plot_path in saved_plots
-        relpath_str = relpath(plot_path, plots_dir)
-        println("  ✓ $relpath_str")
+        println("  $(relpath(plot_path, plots_dir))")
     end
+
+    # Optimizer comparison plot: one subplot per basis type
+    println("\nGenerating optimizer comparison plot...")
+    _colors = [:blue, :red, :green, :orange, :purple, :cyan, :magenta, :brown, :pink, :gray, :olive, :teal]
+    _styles = [:solid, :dash, :dot, :dashdot, :solid, :dash, :dot, :dashdot, :solid, :dash, :dot, :dashdot]
+
+    fig = CairoMakie.Figure(size=(1400, 500))
+    for (col, (basis_name, results_vec)) in enumerate([("QFT", qft_results), ("Entangled QFT", entangled_results), ("TEBD", tebd_results)])
+        ax = CairoMakie.Axis(fig[1, col]; title=basis_name, xlabel="Step", ylabel="Loss", yscale=log10)
+        for (idx, r) in enumerate(results_vec)
+            ci = mod1(idx, length(_colors))
+            si = mod1(idx, length(_styles))
+            lbl = "$(r.label) $(r.device) bs=$(r.batch_size)"
+            CairoMakie.lines!(ax, 1:length(r.step_losses), r.step_losses;
+                   color=_colors[ci], linestyle=_styles[si], label=lbl)
+        end
+        if col == 3
+            CairoMakie.Legend(fig[1, 4], ax; framevisible=true, labelsize=9)
+        end
+    end
+    optim_plot_path = joinpath(plots_dir, "optimizer_comparison.png")
+    CairoMakie.save(optim_plot_path, fig; px_per_unit=2)
+    println("  Saved: $optim_plot_path")
 
     # ============================================================================
     # Step 4: Save Trained Bases
@@ -592,8 +671,8 @@ function main()
     ├─ Test images:         $NUM_TEST_IMAGES  
     ├─ Image size:          $(IMG_SIZE)×$(IMG_SIZE)
     ├─ Compression ratios:  $(join(["$(round(Int, (1-r)*100))%" for r in COMPRESSION_RATIOS], ", "))
-    └─ Training epochs:     $TRAINING_EPOCHS
-    
+    └─ Training epochs:     $TRAINING_EPOCHS (optimizer sweep: $n_configs configs/basis)
+
     Basis Architectures:
     ├─ QFT:          $(M_QUBITS) + $(N_QUBITS) qubits (2D separable)
     ├─ Entangled:    $(M_QUBITS) + $(N_QUBITS) qubits + $(min(M_QUBITS, N_QUBITS)) entangle gates
@@ -620,11 +699,8 @@ function main()
     ├─ trained_tebd.json             : Trained TEBD basis
     ├─ original_$(sample_label).png          : Original test image
     ├─ recovered_*.png               : Recovered images for each basis
-    ├─ loss_history/                 : Training loss data (JSON)
-    │  ├─ qft_loss.json              : QFT epoch/step losses
-    │  ├─ entangled_qft_loss.json    : Entangled QFT epoch/step losses
-    │  └─ tebd_loss.json             : TEBD epoch/step losses
     └─ plots/                        : Training loss visualizations
+       ├─ optimizer_comparison.png   : GD vs Adam sweep (per-basis subplots, log-scale)
        ├─ log/                       : Log-scale (y-axis) plots
        │  ├─ *_loss.png              : Per-epoch loss curves
        │  ├─ *_step_loss.png         : Per-step loss curves
