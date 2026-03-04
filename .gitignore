@@ -27,3 +27,5 @@ node_modules
 
 # Quick Draw dataset (large files)
 data/quickdraw/*.npy
+examples/data/
+.worktrees/
