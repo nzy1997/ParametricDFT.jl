@@ -1,4 +1,10 @@
 # Generated output directories (from running examples)
+OptimizerBenchmark/
+BenchmarkResults/
+CompressionResults_*/
+MNISTResults/
+BasisDemo/
+BasisDemo_QuickDraw/
 LineMakima/
 MNIST-small/
 MNIST-fashion-large/
@@ -9,3 +15,8 @@ results/
 # Output logs
 *.log
 
+# Julia artifacts
+Manifest.toml
+
+# Data (downloaded separately)
+data/
