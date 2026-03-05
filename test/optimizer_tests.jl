@@ -9,7 +9,6 @@ using ParametricDFT
 using LinearAlgebra
 using Random
 using OMEinsum
-using Yao
 using Zygote
 using Manifolds
 using Manopt
@@ -124,6 +123,33 @@ using RecursiveArrayTools
                 end
             end
         end
+    end
+
+    @testset "loss_trace records per-iteration losses" begin
+        tensors, loss_fn, grad_fn = make_test_problem(seed=42)
+
+        # GD with loss_trace
+        opt_gd = ParametricDFT.RiemannianGD(lr=0.05)
+        trace_gd = Float64[]
+        ParametricDFT.optimize!(opt_gd, tensors, loss_fn, grad_fn;
+            max_iter=20, tol=1e-10, loss_trace=trace_gd)
+
+        @test length(trace_gd) > 0
+        @test all(isfinite, trace_gd)
+        # Armijo line search should produce non-increasing losses
+        for i in 2:length(trace_gd)
+            @test trace_gd[i] <= trace_gd[i-1] + 1e-10
+        end
+
+        # Adam with loss_trace
+        tensors2, loss_fn2, grad_fn2 = make_test_problem(seed=42)
+        opt_adam = ParametricDFT.RiemannianAdam(lr=0.01)
+        trace_adam = Float64[]
+        ParametricDFT.optimize!(opt_adam, tensors2, loss_fn2, grad_fn2;
+            max_iter=20, tol=1e-10, loss_trace=trace_adam)
+
+        @test length(trace_adam) > 0
+        @test all(isfinite, trace_adam)
     end
 
     # ========================================================================
