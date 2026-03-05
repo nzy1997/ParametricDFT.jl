@@ -56,7 +56,7 @@ function _train_basis_core(
 
     # Split into training and validation sets
     n_images = length(complex_dataset)
-    n_validation = max(1, round(Int, n_images * validation_split))
+    n_validation = clamp(round(Int, n_images * validation_split), 0, n_images - 1)
 
     indices = shuffle ? Random.shuffle(1:n_images) : collect(1:n_images)
     validation_indices = indices[1:n_validation]
@@ -139,14 +139,23 @@ function _train_basis_core(
                 return grads
             end
 
-            # Run optimizer
+            # Run optimizer with per-iteration loss tracing
+            batch_loss_trace = Float64[]
             current_tensors = optimize!(opt, current_tensors, batch_loss_fn, batch_grad_fn;
-                                         max_iter=steps_per_image, tol=1e-8)
+                                         max_iter=steps_per_image, tol=1e-8,
+                                         loss_trace=batch_loss_trace)
 
-            # Reuse batched loss function for tracking (avoids redundant per-image evaluation)
-            batch_loss = Float64(batch_loss_fn(current_tensors))
+            # Collect per-iteration losses into step_train_losses
+            append!(step_train_losses, batch_loss_trace)
+
+            # Use last traced loss or recompute for epoch tracking
+            batch_loss = isempty(batch_loss_trace) ? Float64(batch_loss_fn(current_tensors)) : last(batch_loss_trace)
             push!(epoch_losses, batch_loss)
-            push!(step_train_losses, batch_loss)
+
+            # Ensure at least one entry per batch (optimizer may converge immediately)
+            if isempty(batch_loss_trace)
+                push!(step_train_losses, batch_loss)
+            end
             push!(loss_records, Dict{String, Any}("epoch" => epoch, "step" => batch_idx, "loss" => batch_loss))
             global_step += 1
 

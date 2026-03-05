@@ -44,7 +44,7 @@ function _topk_mask_gpu(x::CuArray{T}, k::Integer) where T
     # Sort on GPU, extract threshold via 1-element slice (no @allowscalar)
     sorted = sort(vec(scores); rev=true)
     threshold_arr = sorted[k2:k2]
-    mask = RT.(reshape(vec(scores) .>= repeat(threshold_arr, m * n), m, n))
+    mask = RT.(reshape(vec(scores) .>= threshold_arr, m, n))
     return mask
 end
 

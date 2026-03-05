@@ -81,9 +81,10 @@ RiemannianGD(; lr=0.01, armijo_c=1e-4, armijo_tau=0.5, max_ls_steps=10) =
     RiemannianGD(lr, armijo_c, armijo_tau, max_ls_steps)
 
 """
-    optimize!(opt::RiemannianGD, tensors, loss_fn, grad_fn; max_iter=100, tol=1e-6)
+    optimize!(opt::RiemannianGD, tensors, loss_fn, grad_fn; max_iter=100, tol=1e-6, loss_trace=nothing)
 
 Run Riemannian gradient descent with Armijo line search. Returns optimized tensors.
+When `loss_trace::Vector{Float64}` is provided, per-iteration losses are appended to it.
 """
 function optimize!(
     opt::RiemannianGD,
@@ -91,7 +92,8 @@ function optimize!(
     loss_fn,
     grad_fn;
     max_iter::Int = 100,
-    tol::Real = 1e-6
+    tol::Real = 1e-6,
+    loss_trace::Union{Nothing, Vector{Float64}} = nothing
 ) where T <: AbstractMatrix
 
     current_tensors = copy.(tensors)
@@ -144,15 +146,16 @@ function optimize!(
 
         alpha = RT(opt.lr)
         accepted = false
+        last_cand_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
 
         for _ls in 1:opt.max_ls_steps
             # Trial retraction at step size alpha
-            cand_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
+            last_cand_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
             for (manifold, indices) in manifold_groups
                 pb = point_batches[manifold]
                 rg = rg_batches[manifold]
                 cand = retract(manifold, pb, .-rg, alpha)
-                cand_batches[manifold] = cand
+                last_cand_batches[manifold] = cand
                 unstack_tensors!(current_tensors, cand, indices)
             end
 
@@ -162,7 +165,7 @@ function optimize!(
             if candidate_loss <= current_loss - RT(opt.armijo_c) * alpha * grad_norm_sq
                 # Accept: update persistent batches and cache the loss
                 for (manifold, _) in manifold_groups
-                    point_batches[manifold] = cand_batches[manifold]
+                    point_batches[manifold] = last_cand_batches[manifold]
                 end
                 cached_loss = candidate_loss
                 accepted = true
@@ -172,13 +175,24 @@ function optimize!(
         end
 
         if !accepted
-            # Fall back: take the smallest step tried
-            for (manifold, indices) in manifold_groups
-                pb = point_batches[manifold]
-                rg = rg_batches[manifold]
-                point_batches[manifold] = retract(manifold, pb, .-rg, alpha)
+            # Fall back: use the last candidates (smallest step actually tried)
+            for (manifold, _) in manifold_groups
+                point_batches[manifold] = last_cand_batches[manifold]
             end
             cached_loss = RT(NaN)  # unknown after fallback
+        end
+
+        # Record per-iteration loss
+        if loss_trace !== nothing
+            if !isnan(cached_loss)
+                push!(loss_trace, Float64(cached_loss))
+            else
+                # Need to unstack for loss evaluation
+                for (manifold, indices) in manifold_groups
+                    unstack_tensors!(current_tensors, point_batches[manifold], indices)
+                end
+                push!(loss_trace, Float64(loss_fn(current_tensors)))
+            end
         end
     end
 
@@ -206,9 +220,10 @@ RiemannianAdam(; lr=0.001, betas=(0.9, 0.999), eps=1e-8) =
     RiemannianAdam(lr, betas[1], betas[2], eps)
 
 """
-    optimize!(opt::RiemannianAdam, tensors, loss_fn, grad_fn; max_iter=100, tol=1e-6)
+    optimize!(opt::RiemannianAdam, tensors, loss_fn, grad_fn; max_iter=100, tol=1e-6, loss_trace=nothing)
 
 Run Riemannian Adam with momentum transport. Returns optimized tensors.
+When `loss_trace::Vector{Float64}` is provided, per-iteration losses are appended to it.
 """
 function optimize!(
     opt::RiemannianAdam,
@@ -216,7 +231,8 @@ function optimize!(
     loss_fn,
     grad_fn;
     max_iter::Int = 100,
-    tol::Real = 1e-6
+    tol::Real = 1e-6,
+    loss_trace::Union{Nothing, Vector{Float64}} = nothing
 ) where T <: AbstractMatrix
 
     current_tensors = copy.(tensors)
@@ -295,6 +311,14 @@ function optimize!(
             # Transport momentum (re-project onto new tangent space)
             m_batches[manifold] = transport(manifold, old_batch, new_batch, m_state)
             point_batches[manifold] = new_batch
+        end
+
+        # Record per-iteration loss
+        if loss_trace !== nothing
+            for (manifold, indices) in manifold_groups
+                unstack_tensors!(current_tensors, point_batches[manifold], indices)
+            end
+            push!(loss_trace, Float64(loss_fn(current_tensors)))
         end
     end
 
