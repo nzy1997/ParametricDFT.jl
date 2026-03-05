@@ -255,19 +255,14 @@
             tensors = [randn(ComplexF64, d, d) for _ in 1:n]
             indices = collect(1:n)
 
-            # Manually stack into batched array
-            batch = Array{ComplexF64}(undef, d, d, n)
-            for k in 1:n
-                batch[:, :, k] = tensors[k]
-            end
+            # stack_tensors should produce correct batched array
+            batch = ParametricDFT.stack_tensors(tensors, indices)
             @test size(batch) == (d, d, n)
-
-            # Verify each slice matches original
             for k in 1:n
                 @test batch[:, :, k] ≈ tensors[k]
             end
 
-            # Unstack back via ParametricDFT.unstack_tensors! and verify round-trip
+            # Unstack back and verify round-trip
             tensors_out = Vector{Matrix{ComplexF64}}(undef, n)
             for k in 1:n
                 tensors_out[k] = zeros(ComplexF64, d, d)
@@ -276,16 +271,12 @@
             for k in 1:n
                 @test tensors_out[k] ≈ tensors[k]
             end
-        end
 
-        # Also verify stack_tensors works correctly for d=2 (standard path)
-        let d = 2, n = 5
-            tensors = [randn(ComplexF64, d, d) for _ in 1:n]
-            indices = collect(1:n)
-            batch = ParametricDFT.stack_tensors(tensors, indices)
-            @test size(batch) == (d, d, n)
+            # In-place stack_tensors! round-trip
+            batch2 = similar(batch)
+            ParametricDFT.stack_tensors!(batch2, tensors, indices)
             for k in 1:n
-                @test batch[:, :, k] ≈ tensors[k]
+                @test batch2[:, :, k] ≈ tensors[k]
             end
         end
     end
