@@ -351,35 +351,56 @@ Key advantages of this approach:
 - Reduces to standard 2D QFT when all entanglement phases $phi_k = 0$
 
 == Alternative Basis: Time Evolving Block Decimation (TEBD)
-Time Evolving Block Decimation (TEBD) is a tensor network ansatz originally developed for simulating 1D quantum many-body systems. It employs a _brickwork_ pattern of nearest-neighbor two-qubit gates applied in alternating layers. For image processing on a $2^n times 2^n$ grid, TEBD can be adapted by treating the $n$ row qubits and $n$ column qubits as two coupled 1D chains.
+Time Evolving Block Decimation (TEBD) is a tensor network ansatz originally developed for simulating 1D quantum many-body systems. In our implementation, it employs a _ring topology_ of nearest-neighbor controlled-phase gates preceded by Hadamard gates on each qubit. For image processing on a $2^n times 2^n$ grid, the $n$ row qubits and $n$ column qubits each form an independent ring of controlled-phase gates.
+
+#let tebdgate(x, i, j, label, name: "T") = {
+  import draw: *
+  circle((x, i), radius: 0.05, fill: black, stroke: none, name: name + "c1")
+  circle((x, j), radius: 0.05, fill: black, stroke: none, name: name + "c2")
+  ngate((x, (i + j) / 2), 1, name, text: text(8pt)[#label], gap-y: 0.8, width: 0.6)
+  line(name + "c1", name + ".t")
+  line(name + "c2", name + ".b")
+}
 
 #figure(canvas({
   import draw: *
-  let n = 4
   let dy = 0.8
-  // Input tensor
-  ngate((-1.5, -(n - 1) * dy / 2), n, "x_n", text:[$bold(x)$], gap-y: dy, width: 0.7)
-  // Draw qubit lines from input to output
-  for i in range(n){
-    line("x_n.o" + str(i), (7.5, -i * dy), stroke: gray)
-    content((7.9, -i * dy), [$q_#i$])
+  let n = 4
+  let ysep = (n + 0.5) * dy
+  // Input tensors
+  ngate((-2.5, -(n - 1) * dy / 2), n, "x_n", text:[$bold(x)$], gap-y: dy, width: 0.7)
+  ngate((-2.5, -ysep - (n - 1) * dy / 2), n, "y_n", text:[$bold(y)$], gap-y: dy, width: 0.7)
+  // Draw qubit lines and labels
+  for i in range(n) {
+    line("x_n.o" + str(i), (9.5, -i * dy), stroke: gray)
+    content((-3.3, -i * dy), [$|x_#(i + 1) angle.r$])
+    content((9.9, -i * dy), [$x'_#(i + 1)$])
+    line("y_n.o" + str(i), (9.5, -ysep - i * dy), stroke: gray)
+    content((-3.3, -ysep - i * dy), [$|y_#(i + 1) angle.r$])
+    content((9.9, -ysep - i * dy), [$y'_#(i + 1)$])
   }
-  // Layer 1: even pairs (q0-q1, q2-q3)
-  ngate((0.6, -0.5 * dy), 2, "U1", text:[$U_1$], gap-y: dy, width: 0.7)
-  ngate((0.6, -2.5 * dy), 2, "U2", text:[$U_2$], gap-y: dy, width: 0.7)
-  // Layer 2: odd pairs (q1-q2)
-  ngate((2.0, -1.5 * dy), 2, "U3", text:[$U_3$], gap-y: dy, width: 0.7)
-  // Layer 3: even pairs again
-  ngate((3.4, -0.5 * dy), 2, "U4", text:[$U_4$], gap-y: dy, width: 0.7)
-  ngate((3.4, -2.5 * dy), 2, "U5", text:[$U_5$], gap-y: dy, width: 0.7)
-  // Layer 4: odd pairs
-  ngate((4.8, -1.5 * dy), 2, "U6", text:[$U_6$], gap-y: dy, width: 0.7)
-  // Layer 5: even pairs
-  ngate((6.2, -0.5 * dy), 2, "U7", text:[$U_7$], gap-y: dy, width: 0.7)
-  ngate((6.2, -2.5 * dy), 2, "U8", text:[$U_8$], gap-y: dy, width: 0.7)
-}), caption: [TEBD brickwork circuit for $n=4$ qubits with $L=5$ layers: alternating layers of nearest-neighbor two-qubit gates $U_k$.])
+  // Dashed separator between row and column qubits
+  line((-3.5, -(n - 0.25) * dy), (9.5, -(n - 0.25) * dy), stroke: (dash: "dashed", paint: gray))
+  // Hadamard gates for all qubits
+  for i in range(n) {
+    ngate((-1.0, -i * dy), 1, "Hx" + str(i), text:[$H$], gap-y: dy, width: 0.5)
+    ngate((-1.0, -ysep - i * dy), 1, "Hy" + str(i), text:[$H$], gap-y: dy, width: 0.5)
+  }
+  // Row ring: nearest-neighbor controlled-phase gates (staircase pattern)
+  tebdgate(0.8, 0, -dy, [$T_(x 1)$], name: "Tx1")
+  tebdgate(2.2, -dy, -2 * dy, [$T_(x 2)$], name: "Tx2")
+  tebdgate(3.6, -2 * dy, -3 * dy, [$T_(x 3)$], name: "Tx3")
+  // Wrap-around gate closing the row ring
+  tebdgate(5.5, 0, -3 * dy, [$T_(x 4)$], name: "Tx4")
+  // Column ring: nearest-neighbor controlled-phase gates
+  tebdgate(0.8, -ysep, -ysep - dy, [$T_(y 1)$], name: "Ty1")
+  tebdgate(2.2, -ysep - dy, -ysep - 2 * dy, [$T_(y 2)$], name: "Ty2")
+  tebdgate(3.6, -ysep - 2 * dy, -ysep - 3 * dy, [$T_(y 3)$], name: "Ty3")
+  // Wrap-around gate closing the column ring
+  tebdgate(5.5, -ysep, -ysep - 3 * dy, [$T_(y 4)$], name: "Ty4")
+}), caption: [TEBD circuit for $n = 4$ row and column qubits with ring topology. Hadamard gates $H$ are applied to all qubits, followed by nearest-neighbor controlled-phase gates $T_(x k)$ (row ring) and $T_(y k)$ (column ring). Wrap-around gates $T_(x 4)$ and $T_(y 4)$ close each ring.])
 
-In this diagram, each $U_k$ is a parameterized $4 times 4$ unitary matrix acting on two adjacent qubits. Common parameterization choices for $U_k$ include:
+Each two-qubit gate in the TEBD circuit is a parameterized controlled-phase gate acting on two adjacent qubits. In our implementation, we use $T_k = "diag"(1, 1, 1, e^(i phi_k))$ with a single learnable phase $phi_k$ per gate. More generally, common parameterization choices include:
 
 + *Full $U(4)$ unitary*: The most general form with 16 complex parameters constrained by unitarity ($U U^dagger = I$). This lies on the unitary manifold $U(4)$.
 
@@ -505,18 +526,142 @@ Intuitively, the fourier basis is not optimal for image processing, because:
 - the fourier basis assumes periodic boundary condition, which is not suitable for image processing.
 - the 2d fourier basis assumes the $X$ and $Y$ coordinates are independent, which is not suitable for image processing.
 
-== Tasks
-- Create an image dataset $cal(D) = {bold(x)_i}_(i=1)^N$.
-- Create a tensor network transformation based on the above QFT circuit, denoted as $cal(T)(bold(theta))$, where $bold(theta)$ is the parameters of the tensor network.
-- Variationally optimize the circuit parameters to capture the sparsity of the image. The cost function is
+== Loss Functions for Basis Learning
+
+=== L1 Norm Loss (Sparsity Regularization)
+
+The L1 norm loss is defined as:
+$cal(L)_(L 1)(bold(theta)) = sum_(i,j) |cal(T)(bold(theta))(bold(x))_(i,j)|$
+
+This promotes *sparsity*: under compressed sensing theory, minimizing $||bold(y)||_1$ approximates minimizing the $ell_0$ pseudo-norm $||bold(y)||_0 = |{i,j : bold(y)_(i,j) != 0}|$. The optimization drives the transform to concentrate energy in fewer frequency components.
+
+*Limitations*: The L1 norm does not directly optimize reconstruction quality. The loss is independent of $||bold(x) - cal(T)^(-1)("truncate"(bold(y), k))||_F^2$, so the sparsest transform may not yield the best reconstruction.
+
+=== L2 Norm Loss
+
+$cal(L)_(L 2)(bold(theta)) = sum_(i,j) |cal(T)(bold(theta))(bold(x))_(i,j)|^2$
+
+Encourages energy concentration with smoother gradients than L1, but less aggressive sparsity promotion.
+
+=== MSE Reconstruction Loss
+
+$cal(L)_"MSE"(bold(theta)) = ||bold(x) - cal(T)(bold(theta))^(-1)("truncate"(cal(T)(bold(theta))(bold(x)), k))||_F^2$
+
+Directly optimizes reconstruction quality after top-$k$ truncation. Requires computing the inverse transform.
+
+=== Hybrid Loss
+
+$cal(L)_"hybrid"(bold(theta)) = alpha cal(L)_(L 1)(bold(theta)) + beta cal(L)_"MSE"(bold(theta))$
+
+Balances sparsity promotion with reconstruction quality.
+
+== Sparse Basis in Parametric QFT
+
+=== Motivation
+
+A *sparse basis* is a transform basis in which a signal can be represented with few non-zero coefficients. For compression, the goal is to find a basis $cal(T)$ such that $bold(y) = cal(T)(bold(x))$ has most energy concentrated in a small number of components: $||bold(y)||_0 << dim(bold(y))$.
+
+Classical transforms (FFT, DCT) provide fixed bases optimized for specific signal classes. The parametric QFT learns a *data-adaptive sparse basis* by optimizing circuit parameters $bold(theta) in M$.
+
+=== QFT as Sparse Basis Transform
+
+The QFT circuit implements a unitary transform $cal(T)(bold(theta)): CC^(2^m times 2^n) -> CC^(2^m times 2^n)$ parameterized by Hadamard gates $H in U(2)$ and controlled phase gates $M_k in U(1)^4$. The standard QFT (fixed parameters) equals the classical DFT. Making parameters learnable on the unitary manifold $M$ searches for a transform with better sparsity for specific inputs.
+
+=== Frequency-Dependent Truncation
+
+For compression, low-frequency components carry structural information while high-frequency components capture fine details. The truncation uses a weighted score:
+
+$s_(i,j) = |bold(y)_(i,j)| dot (1 + w_(i,j))$, where $w_(i,j) = 1 - d_(i,j) / (2 d_"max")$
+
+Here $d_(i,j) = sqrt((i - c_i)^2 + (j - c_j)^2)$ is the frequency distance from the DC component, and $d_"max"$ is the maximum distance. This weighting favors low-frequency components.
+
+=== Sparse Basis Learning Objective
+
+The optimization finds parameters $bold(theta)^* = arg min_(bold(theta) in M) cal(L)(bold(theta))$ where:
+
++ *L1 Sparsity*: $cal(L)_(L 1) = ||cal(T)(bold(theta))(bold(x))||_1$ directly promotes sparse representations
++ *MSE Reconstruction*: $cal(L)_"MSE" = ||bold(x) - cal(T)^(-1)("topk"(cal(T)(bold(x)), k))||_F^2$ optimizes for reconstruction quality after truncation
+
+The learned basis $cal(T)(bold(theta)^*)$ is signal-adaptive: unlike fixed DCT/FFT bases, it can exploit structure specific to the input data (e.g., textures, edges in images).
+
+=== Comparison with Fixed Bases
+
+#table(
+  columns: 3,
+  [*Property*], [*Fixed Basis (FFT/DCT)*], [*Parametric QFT*],
+  [Adaptivity], [None (fixed transform)], [Data-dependent optimization],
+  [Sparsity], [Optimal for periodic/smooth signals], [Learned for specific input],
+  [Computation], [$O(N log N)$], [$O(N log N)$ + training cost],
+  [Unitarity], [Preserved], [Preserved (manifold constraint)],
+)
+
+== Riemannian Optimization on Unitary Manifolds
+
+The trainable parameters of our quantum circuits—Hadamard gates $H$, controlled-phase gates $M_k$, and TEBD gates $T_k$—live on Riemannian manifolds rather than Euclidean space. Standard gradient-based optimizers cannot be applied directly because Euclidean updates would violate the unitarity constraint. We employ _Riemannian optimization_ that respects the manifold geometry.
+
+=== Manifold Structure
+
+Our circuits involve two types of parameter manifolds:
+
++ *Unitary manifold $U(2)$*: Hadamard-like gates are $2 times 2$ unitary matrices satisfying $U U^dagger = I$. The tangent space at $U$ is
   $
-    cal(L)(bold(theta)) = sum_(i=1)^N ||bold(x)_i - cal(T)(bold(theta))^(-1)("truncate"(cal(T)(bold(theta))(bold(x)_i), k))||_2^2
+    T_U U(2) = { U S : S^dagger = -S }
   $
-  Here, we can choose a different loss function to capture details in the image, e.g. the edges. For simplicity, we use the $l_1$-norm instead:
+  where $S$ is skew-Hermitian.
+
++ *Product of unit circles $U(1)^4$*: Controlled-phase gates are $2 times 2$ diagonal matrices with entries on the unit circle $|z_i| = 1$. The tangent space at $z$ is
   $
-    cal(L)(bold(theta)) = sum_(i=1)^N ||cal(T)(bold(theta))(bold(x)_i)||_1
+    T_z U(1)^4 = { i theta dot.c z : theta in RR^4 }
   $
-  This loss will encourage the tensor network to output a sparse pattern in the "moment space". It is a standard trick that widely used in _compressed sensing_.
-- In the 2D Fourier transformation, the $X$ and $Y$ coordinates are independent. Here we allow $X$ and $Y$ coordinates to correlate with each other in the tensor network basis.
-- Add edge detection features.
-- Compare the performance with the Fourier basis.
+  corresponding to purely imaginary scalings of each component.
+
+=== Riemannian Gradient
+
+Given a Euclidean gradient $nabla_E f$ obtained via automatic differentiation, we project it onto the tangent space to obtain the Riemannian gradient:
+
+- *For $U(2)$*: $"grad" f(U) = U dot "skew"(U^dagger nabla_E f)$, where $"skew"(A) = (A - A^dagger) \/ 2$.
+- *For $U(1)^4$*: $"grad" f(z) = i dot "Im"(overline(z) circle.stroked.tiny nabla_E f) circle.stroked.tiny z$, applied element-wise.
+
+=== Retraction
+
+After computing a descent direction $xi in T_x cal(M)$, we map back to the manifold using a _retraction_:
+
+- *QR retraction for $U(2)$*: Given $U + alpha xi = Q R$ (QR decomposition), set $R_U (alpha xi) = Q dot "diag"("sgn"(R_(i i)))$. The sign correction ensures we remain on the correct connected component.
+- *Normalization for $U(1)^4$*: $R_z (alpha xi) = (z + alpha xi) \/ |z + alpha xi|$, applied element-wise to project back onto the unit circle.
+
+=== Riemannian Gradient Descent
+
+The basic optimization algorithm iterates:
+$
+  x_(t+1) = R_(x_t) (-eta dot "grad" f(x_t))
+$ <eq:rgd>
+where $eta > 0$ is the learning rate and $R$ is the retraction.
+
+=== Riemannian Adam
+
+For faster convergence, we implement the Riemannian Adam optimizer (Bécigneul & Ganea, 2019) that extends classical Adam to manifolds. Let $g_t = "grad" f(x_t)$ be the Riemannian gradient at step $t$. The algorithm maintains per-parameter first and second moment estimates:
+
+$
+  m_t &= beta_1 m_(t-1) + (1 - beta_1) g_t \
+  v_t &= beta_2 v_(t-1) + (1 - beta_2) |g_t|^2
+$ <eq:adam_moments>
+
+with bias-corrected estimates $hat(m)_t = m_t \/ (1 - beta_1^t)$ and $hat(v)_t = v_t \/ (1 - beta_2^t)$. The update direction is:
+
+$
+  d_t = hat(m)_t \/ (sqrt(hat(v)_t) + epsilon)
+$
+
+and the new iterate is obtained by retraction:
+
+$
+  x_(t+1) = R_(x_t) (-eta dot d_t)
+$
+
+After retraction, the first moment $m_t$ must be _parallel transported_ from the tangent space at $x_t$ to the tangent space at $x_(t+1)$. We use projection-based transport as a first-order approximation:
+
+$
+  Gamma_(x_t -> x_(t+1)) (m_t) = "proj"_(T_(x_(t+1)) cal(M)) (m_t)
+$
+
+which re-projects the old momentum onto the new tangent space. For $U(2)$ this is $U_(t+1) dot "skew"(U_(t+1)^dagger m_t)$; for $U(1)^4$ this re-applies the tangent projection at the new point.
