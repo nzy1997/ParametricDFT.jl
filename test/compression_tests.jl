@@ -106,31 +106,23 @@
     @testset "recover hash verification" begin
         Random.seed!(42)
         basis1 = QFTBasis(4, 4)
-        
-        # Create a basis with different (trained) parameters
-        m, n = 4, 4
-        dataset = [rand(Float64, 16, 16) for _ in 1:2]
-        basis2, _ = train_basis(
-            QFTBasis, dataset;
-            m=m, n=n,
-            epochs=1,
-            steps_per_image=5,
-            verbose=false
-        )
-        
+
+        # Use a different basis type to guarantee different hash
+        basis2 = EntangledQFTBasis(4, 4)
+
         img = rand(16, 16)
         compressed = compress(basis1, img; ratio=0.9)
-        
+
         # Recovery with same basis should work
         recovered = recover(basis1, compressed)
         @test size(recovered) == (16, 16)
-        
+
         # Verify that basis1 and basis2 have different hashes
         @test basis_hash(basis1) != basis_hash(basis2)
-        
+
         # Recovery with different basis should fail with verify_hash=true
         @test_throws ErrorException recover(basis2, compressed; verify_hash=true)
-        
+
         # Recovery with different basis should work with verify_hash=false
         recovered2 = recover(basis2, compressed; verify_hash=false)
         @test size(recovered2) == (16, 16)
@@ -272,8 +264,7 @@
             QFTBasis, dataset;
             m=m, n=n,
             epochs=1,
-            steps_per_image=2,
-            verbose=false
+            steps_per_image=2
         )
         
         # Compress and recover with trained basis

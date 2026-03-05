@@ -2,26 +2,21 @@ module ParametricDFT
 
 using Yao
 using OMEinsum
-using Manifolds
-using ManifoldDiff
 using Zygote
-using ADTypes
-using Manopt
-using RecursiveArrayTools
 using ChainRulesCore
 using SHA
 using JSON3
 using StructTypes
 using Random
 using CairoMakie
+using LinearAlgebra
 
 # Loss function exports
 export AbstractLoss, L1Norm, L2Norm, MSELoss
 export topk_truncate, loss_function
 
 # QFT circuit exports
-export fft_with_training, qft_code, ft_mat, ift_mat
-export point2tensors, tensors2point, generate_manifold
+export qft_code, ft_mat, ift_mat
 
 # Entangled QFT circuit exports
 export entangled_qft_code, entanglement_gate
@@ -34,12 +29,20 @@ export get_tebd_gate_indices, extract_tebd_phases
 # Sparse basis exports
 export AbstractSparseBasis, QFTBasis, EntangledQFTBasis, TEBDBasis
 export forward_transform, inverse_transform, image_size, num_parameters, basis_hash
-export get_manifold
 export num_entangle_parameters, get_entangle_phases
 export num_gates, get_phases
 
+# Manifold exports
+export AbstractRiemannianManifold, UnitaryManifold, PhaseManifold
+export classify_manifold, group_by_manifold
+
+# Optimizer exports
+export AbstractRiemannianOptimizer, RiemannianGD, RiemannianAdam
+export optimize!
+
 # Training exports
 export train_basis, save_loss_history, load_loss_history
+export to_device
 
 # Visualization exports
 export TrainingHistory, plot_training_loss, plot_training_loss_steps,
@@ -56,7 +59,7 @@ export recover, save_compressed, load_compressed, compression_stats
 # Include files in dependency order:
 # 1. Loss functions (no internal dependencies)
 include("loss.jl")
-# 2. QFT circuit (uses loss_function from loss.jl for fft_with_training)
+# 2. QFT circuit
 include("qft.jl")
 # 3. Entangled QFT circuit (standalone circuit code)
 include("entangled_qft.jl")
@@ -64,13 +67,17 @@ include("entangled_qft.jl")
 include("tebd.jl")
 # 4. Basis implementations (uses qft_code and entangled_qft_code)
 include("basis.jl")
-# 5. Training (uses basis types and loss functions)
+# 5. Manifold abstraction (abstract types, batched ops, stack/unstack)
+include("manifolds.jl")
+# 6. Riemannian optimizers (uses manifold API)
+include("optimizers.jl")
+# 7. Training (uses basis types, loss functions, and optimizers)
 include("training.jl")
-# 6. Serialization (uses basis types)
+# 8. Serialization (uses basis types)
 include("serialization.jl")
-# 7. Compression (uses basis types)
+# 9. Compression (uses basis types)
 include("compression.jl")
-# 8. Visualization (uses CairoMakie for training loss visualization)
+# 10. Visualization (uses CairoMakie for training loss visualization)
 include("visualization.jl")
 
 end # module
