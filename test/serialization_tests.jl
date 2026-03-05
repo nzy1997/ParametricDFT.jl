@@ -320,6 +320,112 @@
         end
     end
     
+    # ============================================================================
+    # TEBDBasis Serialization Tests
+    # ============================================================================
+
+    @testset "TEBDBasis save and load" begin
+        phases = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+        basis = TEBDBasis(3, 3; phases=phases)
+
+        path = joinpath(test_dir, "test_tebd_basis.json")
+        returned_path = save_basis(path, basis)
+        @test returned_path == path
+        @test isfile(path)
+
+        loaded_basis = load_basis(path)
+        @test loaded_basis isa TEBDBasis
+        @test loaded_basis.m == basis.m
+        @test loaded_basis.n == basis.n
+        @test loaded_basis.n_row_gates == basis.n_row_gates
+        @test loaded_basis.n_col_gates == basis.n_col_gates
+        @test loaded_basis.phases ≈ basis.phases
+
+        for (t1, t2) in zip(basis.tensors, loaded_basis.tensors)
+            @test t1 ≈ t2
+        end
+
+        @test basis_hash(loaded_basis) == basis_hash(basis)
+    end
+
+    @testset "TEBDBasis JSON structure" begin
+        phases = [0.1, 0.2, 0.3, 0.4]
+        basis = TEBDBasis(2, 2; phases=phases)
+        path = joinpath(test_dir, "test_tebd_json.json")
+        save_basis(path, basis)
+
+        json_str = read(path, String)
+        json_data = JSON3.read(json_str)
+        @test json_data.type == "TEBDBasis"
+        @test json_data.version == "2.0"
+        @test json_data.m == 2
+        @test json_data.n == 2
+        @test json_data.n_row_gates == 2
+        @test json_data.n_col_gates == 2
+        @test collect(Float64, json_data.phases) ≈ phases
+        @test haskey(json_data, :tensors)
+        @test haskey(json_data, :hash)
+    end
+
+    @testset "TEBDBasis round-trip preserves functionality" begin
+        Random.seed!(42)
+        phases = rand(6) .* 2π
+        basis = TEBDBasis(3, 3; phases=phases)
+
+        path = joinpath(test_dir, "test_tebd_roundtrip.json")
+        save_basis(path, basis)
+        loaded_basis = load_basis(path)
+
+        img = rand(8, 8)
+        freq_original = forward_transform(basis, img)
+        freq_loaded = forward_transform(loaded_basis, img)
+        @test freq_original ≈ freq_loaded
+
+        recovered_original = inverse_transform(basis, freq_original)
+        recovered_loaded = inverse_transform(loaded_basis, freq_loaded)
+        @test recovered_original ≈ recovered_loaded
+    end
+
+    @testset "TEBDBasis basis_to_dict and dict_to_basis" begin
+        phases = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+        basis = TEBDBasis(3, 3; phases=phases)
+
+        d = basis_to_dict(basis)
+        @test d isa Dict
+        @test d["type"] == "TEBDBasis"
+        @test d["version"] == "2.0"
+        @test d["m"] == 3
+        @test d["n"] == 3
+        @test d["n_row_gates"] == 3
+        @test d["n_col_gates"] == 3
+        @test d["phases"] ≈ phases
+
+        loaded = dict_to_basis(d)
+        @test loaded isa TEBDBasis
+        @test loaded.m == basis.m
+        @test loaded.n == basis.n
+        @test loaded.phases ≈ basis.phases
+        @test basis_hash(loaded) == basis_hash(basis)
+    end
+
+    @testset "TEBDBasis different sizes" begin
+        for (m, n) in [(2, 2), (3, 4), (4, 3)]
+            n_gates = m + n
+            phases = rand(n_gates)
+            basis = TEBDBasis(m, n; phases=phases)
+            path = joinpath(test_dir, "test_tebd_size_$(m)_$(n).json")
+
+            save_basis(path, basis)
+            loaded = load_basis(path)
+
+            @test loaded.m == m
+            @test loaded.n == n
+            @test loaded.n_row_gates == m
+            @test loaded.n_col_gates == n
+            @test image_size(loaded) == (2^m, 2^n)
+        end
+    end
+
     # Cleanup
     rm(test_dir, recursive=true)
 end
