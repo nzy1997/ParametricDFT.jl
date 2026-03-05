@@ -47,8 +47,10 @@
         )
         
         @test basis isa QFTBasis
+        @test basis.m == m
+        @test basis.n == n
     end
-    
+
     @testset "training with L2Norm" begin
         Random.seed!(42)
         
@@ -65,8 +67,10 @@
         )
         
         @test basis isa QFTBasis
+        @test basis.m == m
+        @test basis.n == n
     end
-    
+
     @testset "training without shuffle" begin
         Random.seed!(42)
         
@@ -82,8 +86,10 @@
         )
         
         @test basis isa QFTBasis
+        @test basis.m == m
+        @test basis.n == n
     end
-    
+
     @testset "validation split edge cases" begin
         Random.seed!(42)
         
@@ -100,8 +106,29 @@
             validation_split=0.1,
         )
         @test basis isa QFTBasis
+        @test basis.m == m
+        @test basis.n == n
     end
-    
+
+    @testset "single image dataset" begin
+        Random.seed!(42)
+
+        m, n = 2, 2
+        dataset = [rand(Float64, 4, 4)]  # Only 1 image
+
+        # Should not error — n_validation is clamped to n_images-1 = 0
+        basis, _ = train_basis(
+            QFTBasis, dataset;
+            m=m, n=n,
+            epochs=1,
+            steps_per_image=2,
+        )
+
+        @test basis isa QFTBasis
+        @test basis.m == m
+        @test basis.n == n
+    end
+
     @testset "input validation" begin
         m, n = 3, 3
         
@@ -143,8 +170,10 @@
         )
         
         @test basis isa QFTBasis
+        @test basis.m == m
+        @test basis.n == n
     end
-    
+
     @testset "trained basis produces valid transforms" begin
         Random.seed!(42)
         
@@ -183,6 +212,8 @@
         )
         
         @test basis isa QFTBasis
+        @test basis.m == m
+        @test basis.n == n
     end
 end
 
@@ -373,6 +404,93 @@ end
         
         # Cleanup
         rm(path)
+    end
+end
+
+# ============================================================================
+# Tests for TEBDBasis Training
+# ============================================================================
+
+@testset "train_basis TEBDBasis" begin
+
+    @testset "basic TEBD training" begin
+        Random.seed!(42)
+
+        m, n = 2, 2  # 4×4 images
+        dataset = [rand(Float64, 4, 4) for _ in 1:4]
+
+        basis, _ = train_basis(
+            TEBDBasis, dataset;
+            m=m, n=n,
+            loss=ParametricDFT.L1Norm(),
+            epochs=1,
+            steps_per_image=3,
+            validation_split=0.25,
+        )
+
+        @test basis isa TEBDBasis
+        @test basis.m == m
+        @test basis.n == n
+        @test length(basis.phases) == m + n
+    end
+
+    @testset "TEBD training produces valid transforms" begin
+        Random.seed!(42)
+
+        m, n = 2, 2
+        dataset = [rand(Float64, 4, 4) for _ in 1:4]
+
+        basis, _ = train_basis(
+            TEBDBasis, dataset;
+            m=m, n=n,
+            epochs=1,
+            steps_per_image=3,
+        )
+
+        # Test that trained basis can transform images
+        test_img = rand(4, 4)
+        freq = forward_transform(basis, test_img)
+        @test size(freq) == (4, 4)
+
+        # Test round-trip
+        recovered = inverse_transform(basis, freq)
+        @test isapprox(real.(recovered), test_img, rtol=1e-10)
+    end
+
+    @testset "TEBD training input validation" begin
+        m, n = 2, 2
+
+        # Test empty dataset
+        @test_throws AssertionError train_basis(
+            TEBDBasis, Matrix{Float64}[];
+            m=m, n=n,
+        )
+
+        # Test wrong image size
+        wrong_dataset = [rand(Float64, 8, 8)]  # 8×8 instead of 4×4
+        @test_throws AssertionError train_basis(
+            TEBDBasis, wrong_dataset;
+            m=m, n=n,
+        )
+    end
+
+    @testset "TEBD training with custom phases" begin
+        Random.seed!(42)
+
+        m, n = 2, 2
+        initial_phases = [0.1, 0.2, 0.3, 0.4]  # m + n = 4 phases
+        dataset = [rand(Float64, 4, 4) for _ in 1:4]
+
+        basis, _ = train_basis(
+            TEBDBasis, dataset;
+            m=m, n=n,
+            phases=initial_phases,
+            epochs=1,
+            steps_per_image=3,
+        )
+
+        @test basis isa TEBDBasis
+        @test length(basis.phases) == 4
     end
 end
 
