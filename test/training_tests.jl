@@ -2,41 +2,79 @@
 # Tests for Sparse Basis Training (training.jl)
 # ============================================================================
 
-@testset "train_basis" begin
-    
-    @testset "basic training" begin
-        Random.seed!(42)
-        
-        # Create small dataset for quick testing
-        m, n = 3, 3  # 8×8 images
-        num_images = 5
-        dataset = [rand(Float64, 8, 8) for _ in 1:num_images]
-        
-        # Train with minimal steps for testing
-        basis, _ = train_basis(
-            QFTBasis, dataset;
-            m=m, n=n,
-            loss=ParametricDFT.L1Norm(),
-            epochs=1,
-            steps_per_image=5,
-            validation_split=0.2,
-        )
+# ============================================================================
+# Common training: basic smoke test for all basis types
+# ============================================================================
 
-        @test basis isa QFTBasis
-        @test basis.m == m
-        @test basis.n == n
-        @test image_size(basis) == (8, 8)
+TRAINING_CONFIGS = [
+    (
+        type = QFTBasis,
+        m = 3, n = 3,
+        extra_kwargs = (loss=ParametricDFT.L1Norm(),),
+        extra_checks = (basis, m, n) -> begin
+            @test image_size(basis) == (2^m, 2^n)
+        end,
+    ),
+    (
+        type = EntangledQFTBasis,
+        m = 3, n = 3,
+        extra_kwargs = (loss=ParametricDFT.MSELoss(10),),
+        extra_checks = (basis, m, n) -> begin
+            @test basis.n_entangle == min(m, n)
+            @test image_size(basis) == (2^m, 2^n)
+        end,
+    ),
+    (
+        type = TEBDBasis,
+        m = 2, n = 2,
+        extra_kwargs = (loss=ParametricDFT.L1Norm(),),
+        extra_checks = (basis, m, n) -> begin
+            @test length(basis.phases) == m + n
+        end,
+    ),
+]
+
+for cfg in TRAINING_CONFIGS
+    type_name = string(cfg.type)
+    m, n = cfg.m, cfg.n
+    img_size = (2^m, 2^n)
+
+    @testset "train_basis $type_name" begin
+        @testset "basic training" begin
+            Random.seed!(42)
+
+            dataset = [rand(Float64, img_size...) for _ in 1:5]
+
+            basis, _ = train_basis(
+                cfg.type, dataset;
+                m=m, n=n,
+                cfg.extra_kwargs...,
+                epochs=1,
+                steps_per_image=5,
+                validation_split=0.2,
+            )
+
+            @test basis isa cfg.type
+            @test basis.m == m
+            @test basis.n == n
+            cfg.extra_checks(basis, m, n)
+        end
     end
+end
+
+# ============================================================================
+# QFTBasis training pipeline features (shared _train_basis_core code path)
+# ============================================================================
+
+@testset "train_basis pipeline" begin
 
     @testset "training with MSELoss" begin
         Random.seed!(42)
-        
+
         m, n = 3, 3
         dataset = [rand(Float64, 8, 8) for _ in 1:4]
-        
-        # Keep 50% of coefficients
         k = round(Int, 2^(m+n) * 0.5)
-        
+
         basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
@@ -45,7 +83,7 @@
             steps_per_image=3,
             validation_split=0.25,
         )
-        
+
         @test basis isa QFTBasis
         @test basis.m == m
         @test basis.n == n
@@ -53,10 +91,10 @@
 
     @testset "training with L2Norm" begin
         Random.seed!(42)
-        
+
         m, n = 3, 3
         dataset = [rand(Float64, 8, 8) for _ in 1:4]
-        
+
         basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
@@ -65,7 +103,7 @@
             steps_per_image=3,
             validation_split=0.25,
         )
-        
+
         @test basis isa QFTBasis
         @test basis.m == m
         @test basis.n == n
@@ -73,10 +111,10 @@
 
     @testset "training without shuffle" begin
         Random.seed!(42)
-        
+
         m, n = 3, 3
         dataset = [rand(Float64, 8, 8) for _ in 1:4]
-        
+
         basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
@@ -84,7 +122,7 @@
             steps_per_image=2,
             shuffle=false,
         )
-        
+
         @test basis isa QFTBasis
         @test basis.m == m
         @test basis.n == n
@@ -92,12 +130,10 @@
 
     @testset "validation split edge cases" begin
         Random.seed!(42)
-        
+
         m, n = 3, 3
         dataset = [rand(Float64, 8, 8) for _ in 1:5]
-        
-        # Test with no validation (0.0 split)
-        # Note: validation_split must be < 1.0, but 0.0 will still create at least 1 validation sample
+
         basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
@@ -114,9 +150,8 @@
         Random.seed!(42)
 
         m, n = 2, 2
-        dataset = [rand(Float64, 4, 4)]  # Only 1 image
+        dataset = [rand(Float64, 4, 4)]
 
-        # Should not error — n_validation is clamped to n_images-1 = 0
         basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
@@ -131,21 +166,18 @@
 
     @testset "input validation" begin
         m, n = 3, 3
-        
-        # Test empty dataset
+
         @test_throws AssertionError train_basis(
             QFTBasis, Matrix{Float64}[];
             m=m, n=n,
         )
-        
-        # Test wrong image size
-        wrong_dataset = [rand(Float64, 16, 16)]  # 16×16 instead of 8×8
+
+        wrong_dataset = [rand(Float64, 16, 16)]
         @test_throws AssertionError train_basis(
             QFTBasis, wrong_dataset;
             m=m, n=n,
         )
-        
-        # Test invalid validation_split
+
         dataset = [rand(Float64, 8, 8) for _ in 1:3]
         @test_throws AssertionError train_basis(
             QFTBasis, dataset;
@@ -153,22 +185,21 @@
             validation_split=1.5,
         )
     end
-    
+
     @testset "early stopping" begin
         Random.seed!(42)
-        
+
         m, n = 3, 3
         dataset = [rand(Float64, 8, 8) for _ in 1:6]
-        
-        # Train with early stopping enabled
+
         basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
-            epochs=10,  # Many epochs to trigger early stopping
+            epochs=10,
             steps_per_image=2,
             early_stopping_patience=1,
         )
-        
+
         @test basis isa QFTBasis
         @test basis.m == m
         @test basis.n == n
@@ -176,41 +207,38 @@
 
     @testset "trained basis produces valid transforms" begin
         Random.seed!(42)
-        
+
         m, n = 3, 3
         dataset = [rand(Float64, 8, 8) for _ in 1:4]
-        
+
         basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
             epochs=1,
             steps_per_image=3,
         )
-        
-        # Test that trained basis can transform images
+
         test_img = rand(8, 8)
         freq = forward_transform(basis, test_img)
         @test size(freq) == (8, 8)
-        
-        # Test round-trip
+
         recovered = inverse_transform(basis, freq)
         @test isapprox(real.(recovered), test_img, rtol=1e-10)
     end
-    
+
     @testset "complex input images" begin
         Random.seed!(42)
-        
+
         m, n = 3, 3
-        # Dataset with complex images
         dataset = [rand(ComplexF64, 8, 8) for _ in 1:4]
-        
+
         basis, _ = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
             epochs=1,
             steps_per_image=2,
         )
-        
+
         @test basis isa QFTBasis
         @test basis.m == m
         @test basis.n == n
@@ -218,7 +246,52 @@
 end
 
 # ============================================================================
-# Tests for Batched Training
+# Type-specific training kwargs
+# ============================================================================
+
+@testset "type-specific training" begin
+
+    @testset "EntangledQFTBasis custom initial phases" begin
+        Random.seed!(42)
+
+        m, n = 3, 3
+        initial_phases = [0.1, 0.2, 0.3]
+        dataset = [rand(Float64, 8, 8) for _ in 1:4]
+
+        basis, _ = train_basis(
+            EntangledQFTBasis, dataset;
+            m=m, n=n,
+            entangle_phases=initial_phases,
+            epochs=1,
+            steps_per_image=3,
+        )
+
+        @test basis isa EntangledQFTBasis
+        @test basis.n_entangle == 3
+    end
+
+    @testset "TEBDBasis custom phases" begin
+        Random.seed!(42)
+
+        m, n = 2, 2
+        initial_phases = [0.1, 0.2, 0.3, 0.4]
+        dataset = [rand(Float64, 4, 4) for _ in 1:4]
+
+        basis, _ = train_basis(
+            TEBDBasis, dataset;
+            m=m, n=n,
+            phases=initial_phases,
+            epochs=1,
+            steps_per_image=3,
+        )
+
+        @test basis isa TEBDBasis
+        @test length(basis.phases) == 4
+    end
+end
+
+# ============================================================================
+# Batched training
 # ============================================================================
 
 @testset "batched training" begin
@@ -289,208 +362,3 @@ end
     end
 
 end
-
-# ============================================================================
-# Tests for EntangledQFTBasis Training
-# ============================================================================
-
-@testset "train_basis EntangledQFTBasis" begin
-
-    @testset "basic entangled training" begin
-        Random.seed!(42)
-        
-        m, n = 3, 3  # 8×8 images
-        num_images = 5
-        dataset = [rand(Float64, 8, 8) for _ in 1:num_images]
-        
-        # Train with minimal steps for testing
-        basis, _ = train_basis(
-            EntangledQFTBasis, dataset;
-            m=m, n=n,
-            loss=ParametricDFT.MSELoss(10),
-            epochs=1,
-            steps_per_image=5,
-            validation_split=0.2,
-        )
-        
-        @test basis isa EntangledQFTBasis
-        @test basis.m == m
-        @test basis.n == n
-        @test basis.n_entangle == min(m, n)
-        @test image_size(basis) == (8, 8)
-    end
-    
-    @testset "entangled training with custom initial phases" begin
-        Random.seed!(42)
-        
-        m, n = 3, 3
-        initial_phases = [0.1, 0.2, 0.3]
-        dataset = [rand(Float64, 8, 8) for _ in 1:4]
-        
-        basis, _ = train_basis(
-            EntangledQFTBasis, dataset;
-            m=m, n=n,
-            entangle_phases=initial_phases,
-            epochs=1,
-            steps_per_image=3,
-        )
-        
-        @test basis isa EntangledQFTBasis
-        @test basis.n_entangle == 3
-    end
-    
-    @testset "entangled training produces valid transforms" begin
-        Random.seed!(42)
-        
-        m, n = 3, 3
-        dataset = [rand(Float64, 8, 8) for _ in 1:4]
-        
-        basis, _ = train_basis(
-            EntangledQFTBasis, dataset;
-            m=m, n=n,
-            epochs=1,
-            steps_per_image=3,
-        )
-        
-        # Test that trained basis can transform images
-        test_img = rand(8, 8)
-        freq = forward_transform(basis, test_img)
-        @test size(freq) == (8, 8)
-        
-        # Test round-trip
-        recovered = inverse_transform(basis, freq)
-        @test isapprox(real.(recovered), test_img, rtol=1e-10)
-    end
-    
-    @testset "entangled training input validation" begin
-        m, n = 3, 3
-        
-        # Test empty dataset
-        @test_throws AssertionError train_basis(
-            EntangledQFTBasis, Matrix{Float64}[];
-            m=m, n=n,
-        )
-        
-        # Test wrong image size
-        wrong_dataset = [rand(Float64, 16, 16)]  # 16×16 instead of 8×8
-        @test_throws AssertionError train_basis(
-            EntangledQFTBasis, wrong_dataset;
-            m=m, n=n,
-        )
-    end
-    
-    @testset "entangled trained basis can be saved and loaded" begin
-        Random.seed!(42)
-        
-        m, n = 3, 3
-        dataset = [rand(Float64, 8, 8) for _ in 1:4]
-        
-        trained_basis, _ = train_basis(
-            EntangledQFTBasis, dataset;
-            m=m, n=n,
-            epochs=1,
-            steps_per_image=2,
-        )
-        
-        # Save and load
-        path = tempname() * ".json"
-        save_basis(path, trained_basis)
-        loaded = load_basis(path)
-        
-        @test loaded isa EntangledQFTBasis
-        @test loaded.m == trained_basis.m
-        @test loaded.n == trained_basis.n
-        @test loaded.n_entangle == trained_basis.n_entangle
-        
-        # Cleanup
-        rm(path)
-    end
-end
-
-# ============================================================================
-# Tests for TEBDBasis Training
-# ============================================================================
-
-@testset "train_basis TEBDBasis" begin
-
-    @testset "basic TEBD training" begin
-        Random.seed!(42)
-
-        m, n = 2, 2  # 4×4 images
-        dataset = [rand(Float64, 4, 4) for _ in 1:4]
-
-        basis, _ = train_basis(
-            TEBDBasis, dataset;
-            m=m, n=n,
-            loss=ParametricDFT.L1Norm(),
-            epochs=1,
-            steps_per_image=3,
-            validation_split=0.25,
-        )
-
-        @test basis isa TEBDBasis
-        @test basis.m == m
-        @test basis.n == n
-        @test length(basis.phases) == m + n
-    end
-
-    @testset "TEBD training produces valid transforms" begin
-        Random.seed!(42)
-
-        m, n = 2, 2
-        dataset = [rand(Float64, 4, 4) for _ in 1:4]
-
-        basis, _ = train_basis(
-            TEBDBasis, dataset;
-            m=m, n=n,
-            epochs=1,
-            steps_per_image=3,
-        )
-
-        # Test that trained basis can transform images
-        test_img = rand(4, 4)
-        freq = forward_transform(basis, test_img)
-        @test size(freq) == (4, 4)
-
-        # Test round-trip
-        recovered = inverse_transform(basis, freq)
-        @test isapprox(real.(recovered), test_img, rtol=1e-10)
-    end
-
-    @testset "TEBD training input validation" begin
-        m, n = 2, 2
-
-        # Test empty dataset
-        @test_throws AssertionError train_basis(
-            TEBDBasis, Matrix{Float64}[];
-            m=m, n=n,
-        )
-
-        # Test wrong image size
-        wrong_dataset = [rand(Float64, 8, 8)]  # 8×8 instead of 4×4
-        @test_throws AssertionError train_basis(
-            TEBDBasis, wrong_dataset;
-            m=m, n=n,
-        )
-    end
-
-    @testset "TEBD training with custom phases" begin
-        Random.seed!(42)
-
-        m, n = 2, 2
-        initial_phases = [0.1, 0.2, 0.3, 0.4]  # m + n = 4 phases
-        dataset = [rand(Float64, 4, 4) for _ in 1:4]
-
-        basis, _ = train_basis(
-            TEBDBasis, dataset;
-            m=m, n=n,
-            phases=initial_phases,
-            epochs=1,
-            steps_per_image=3,
-        )
-
-        @test basis isa TEBDBasis
-        @test length(basis.phases) == 4
-    end
-end
-
