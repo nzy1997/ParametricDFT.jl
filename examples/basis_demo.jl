@@ -25,7 +25,7 @@ println("Image size: $(2^m)×$(2^n) (m=$m, n=$n)")
 println()
 
 # Store results for summary
-results = []
+results = NamedTuple{(:name, :full_err, :trunc_err), Tuple{String, Float64, Float64}}[]
 
 for (name, basis) in [
     ("QFTBasis",          QFTBasis(m, n)),
