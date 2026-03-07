@@ -106,6 +106,8 @@ optcode, tensors, n_row, n_col = mera_code(4, 4; phases=phases)
 ```
 """
 function mera_code(m::Int, n::Int; phases::Union{Nothing, Vector{<:Real}}=nothing, inverse=false)
+    @assert m >= 1 "m must be >= 1, got $m"
+    @assert n >= 1 "n must be >= 1, got $n"
     total = m + n
     n_row_gates = m >= 2 ? _n_mera_gates(m) : 0
     n_col_gates = n >= 2 ? _n_mera_gates(n) : 0

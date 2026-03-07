@@ -119,6 +119,14 @@ using Yao: mat, H
 
         # Non-power-of-2
         @test_throws AssertionError ParametricDFT.mera_code(3, 3)
+
+        # Asymmetric non-power-of-2
+        @test_throws AssertionError ParametricDFT.mera_code(3, 4)
+        @test_throws AssertionError ParametricDFT.mera_code(4, 3)
+
+        # Invalid m or n (< 1)
+        @test_throws AssertionError ParametricDFT.mera_code(0, 2)
+        @test_throws AssertionError ParametricDFT.mera_code(2, 0)
     end
 
     @testset "all tensors are 2x2" begin
