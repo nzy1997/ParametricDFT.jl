@@ -24,16 +24,18 @@ julia --project=. -e 'using Pkg; Pkg.status()'  # Check dependencies
 ### Core Modules
 - `src/ParametricDFT.jl` — Main module, exports, dependency ordering via `include()`
 - `src/loss.jl` — Loss functions (`L1Norm`, `L2Norm`, `MSELoss`) with batched evaluation
-- `src/basis.jl` — Sparse basis abstractions (`QFTBasis`, `EntangledQFTBasis`, `TEBDBasis`)
+- `src/basis.jl` — Sparse basis abstractions (`QFTBasis`, `EntangledQFTBasis`, `TEBDBasis`, `MERABasis`)
 - `src/manifolds.jl` — Riemannian manifold abstraction (`UnitaryManifold`, `PhaseManifold`), batched linear algebra
 - `src/optimizers.jl` — Riemannian optimizers (`RiemannianGD`, `RiemannianAdam`) with unified `optimize!` interface
 - `src/training.jl` — Training pipeline (`_train_basis_core`), device management, checkpointing, early stopping
 - `src/qft.jl` — QFT circuit code generation
 - `src/entangled_qft.jl` — Entangled QFT circuit implementation
 - `src/tebd.jl` — TEBD circuit implementation
+- `src/mera.jl` — MERA circuit implementation
 - `src/serialization.jl` — Basis save/load (JSON3)
 - `src/compression.jl` — Image compression using learned bases
 - `src/visualization.jl` — Training loss visualization (CairoMakie)
+- `src/circuit_visualization.jl` — Circuit diagram generation (`plot_circuit` for all basis types)
 - `ext/CUDAExt.jl` — GPU extension module for CUDA support
 
 ### Abstract Hierarchy Tree
@@ -41,7 +43,8 @@ julia --project=. -e 'using Pkg; Pkg.status()'  # Check dependencies
 AbstractSparseBasis
 ├── QFTBasis              # Quantum Fourier Transform basis
 ├── EntangledQFTBasis     # QFT with entanglement gates
-└── TEBDBasis             # Time-Evolving Block Decimation
+├── TEBDBasis             # Time-Evolving Block Decimation
+└── MERABasis             # Multi-scale Entanglement Renormalization Ansatz
 
 AbstractLoss
 ├── L1Norm
