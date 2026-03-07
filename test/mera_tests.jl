@@ -298,3 +298,18 @@ end
         @test isapprox(real.(recovered), image, rtol=1e-10)
     end
 end
+
+@testset "MERABasis Training" begin
+    @testset "training smoke test" begin
+        Random.seed!(42)
+        m, n = 2, 2
+        images = [rand(4, 4) for _ in 1:3]
+
+        basis, history = train_basis(MERABasis, images; m=m, n=n, epochs=1,
+                                     steps_per_image=2, validation_split=0.0)
+        @test basis isa MERABasis
+        @test basis.m == m
+        @test basis.n == n
+        @test length(history.train_losses) > 0
+    end
+end

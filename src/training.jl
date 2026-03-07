@@ -407,6 +407,79 @@ function train_basis(
     return trained_basis, history
 end
 
+"""Train a MERABasis on images. Same kwargs as TEBDBasis."""
+function train_basis(
+    ::Type{MERABasis},
+    dataset::Vector{<:AbstractMatrix};
+    m::Int, n::Int,
+    phases::Union{Nothing, Vector{<:Real}} = nothing,
+    loss::AbstractLoss = MSELoss(round(Int, 2^(m+n) * 0.1)),
+    epochs::Int = 3,
+    steps_per_image::Int = 200,
+    validation_split::Float64 = 0.2,
+    shuffle::Bool = true,
+    early_stopping_patience::Int = 2,
+    save_loss_path::Union{Nothing, String} = nothing,
+    optimizer::Union{Symbol, AbstractRiemannianOptimizer} = :gradient_descent,
+    batch_size::Int = 1,
+    device::Symbol = :cpu,
+    checkpoint_interval::Int = 0,
+    checkpoint_dir::Union{Nothing, String} = nothing
+)
+    @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
+    @assert length(dataset) > 0 "Dataset must not be empty"
+    expected_size = (2^m, 2^n)
+    for (i, img) in enumerate(dataset)
+        @assert size(img) == expected_size "Image $i has size $(size(img)), expected $expected_size"
+    end
+
+    n_row_gates = m >= 2 ? 2 * (m - 1) : 0
+    n_col_gates = n >= 2 ? 2 * (n - 1) : 0
+    n_gates = n_row_gates + n_col_gates
+
+    # Initialize phases: use small random values if not provided
+    # Zero phases create a symmetric point where gradients are zero,
+    # preventing the optimizer from learning. Small random values break symmetry.
+    if phases === nothing
+        phases = randn(n_gates) * 0.1
+    end
+
+    # Initialize circuit
+    optcode, initial_tensors, _, _ = mera_code(m, n; phases=phases)
+    inverse_code, _, _, _ = mera_code(m, n; phases=phases, inverse=true)
+
+    # Checkpoint callback: construct MERABasis from tensors
+    build_fn = tensors -> begin
+        gidx = get_mera_gate_indices(tensors, n_gates)
+        p = !isempty(gidx) ? extract_mera_phases(tensors, gidx) :
+            (phases === nothing ? zeros(n_gates) : Float64.(phases))
+        MERABasis(m, n, tensors, optcode, inverse_code, n_row_gates, n_col_gates, p)
+    end
+
+    final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
+        dataset, optcode, inverse_code, initial_tensors, m, n, loss,
+        epochs, steps_per_image, validation_split, shuffle,
+        early_stopping_patience, "MERABasis";
+        save_loss_path=save_loss_path, optimizer=optimizer,
+        batch_size=batch_size, device=device,
+        checkpoint_interval=checkpoint_interval, checkpoint_dir=checkpoint_dir,
+        build_basis_fn=build_fn
+    )
+
+    # Extract trained phases
+    gate_indices = get_mera_gate_indices(final_tensors, n_gates)
+    trained_phases = if !isempty(gate_indices)
+        extract_mera_phases(final_tensors, gate_indices)
+    else
+        phases === nothing ? zeros(n_gates) : Float64.(phases)
+    end
+
+    trained_basis = MERABasis(m, n, final_tensors, optcode, inverse_code, n_row_gates, n_col_gates, trained_phases)
+    history = (train_losses=train_losses, val_losses=val_losses, step_train_losses=step_train_losses, basis_name="MERA")
+
+    return trained_basis, history
+end
+
 
 """Save a training checkpoint (basis + loss history)."""
 function _save_checkpoint(
