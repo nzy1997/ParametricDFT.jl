@@ -336,3 +336,412 @@ function plot_circuit(basis::QFTBasis; output_path=nothing)
     spec = _QFTCircuitSpec(m, n; title=title)
     return _plot_circuit(spec; output_path=output_path)
 end
+
+# ============================================================================
+# Entangled QFT Circuit Drawing
+# ============================================================================
+
+"""
+    _draw_entangle_layer!(ax, x_start, m, n, phases, y_offset_row, y_offset_col)
+
+Draw entanglement gates connecting row and column qubits.
+
+# Arguments
+- `ax`: CairoMakie axis
+- `x_start`: horizontal position for the first gate
+- `m`: number of row qubits
+- `n`: number of column qubits
+- `phases`: entanglement phase values
+- `y_offset_row`: vertical offset for row qubits
+- `y_offset_col`: vertical offset for column qubits
+
+# Returns
+- `x_pos`: the horizontal position after the last gate drawn
+"""
+function _draw_entangle_layer!(ax, x_start, m, n, phases, y_offset_row, y_offset_col)
+    x_pos = x_start
+    n_entangle = min(m, n)
+
+    for i in 1:n_entangle
+        y_row = y_offset_row - i * CIRCUIT_QUBIT_SPACING
+        y_col = y_offset_col - i * CIRCUIT_QUBIT_SPACING
+        phase = i <= length(phases) ? phases[i] : 0.0
+        _draw_two_qubit_gate!(ax, x_pos, y_row, y_col, "E", phase;
+                              color=CIRCUIT_COLORS.entangle_gate)
+        x_pos += CIRCUIT_GATE_SPACING
+    end
+
+    return x_pos
+end
+
+"""
+    _plot_circuit(spec::_EntangledQFTCircuitSpec; output_path=nothing)
+
+Render a full Entangled QFT circuit diagram. Shows QFT blocks for row and column
+qubits with entanglement gates placed according to `spec.entangle_position`.
+
+# Arguments
+- `spec::_EntangledQFTCircuitSpec`: circuit layout specification
+- `output_path`: optional file path; when provided the figure is saved as PNG
+
+# Returns
+- `Figure`: the CairoMakie figure object
+"""
+function _plot_circuit(spec::_EntangledQFTCircuitSpec; output_path=nothing)
+    m = spec.n_row_qubits
+    n = spec.n_col_qubits
+    total = m + n
+
+    n_m_gates = div(m * (m - 1), 2)
+    n_n_gates = div(n * (n - 1), 2)
+    n_entangle = min(m, n)
+    total_gates = m + n_m_gates + n + n_n_gates + n_entangle
+
+    width = max(700, 150 + total_gates * 55)
+    height = 120 + total * 70
+
+    fig = Figure(size=(width, height), backgroundcolor=:white)
+    ax = Axis(fig[1, 1], title=spec.title, titlesize=20, aspect=DataAspect())
+    hidedecorations!(ax)
+    hidespines!(ax)
+
+    x_start = 1.5
+    x_end = x_start + (total_gates + 2) * CIRCUIT_GATE_SPACING
+
+    # Draw qubit wires
+    for q in 1:m
+        y = -q * CIRCUIT_QUBIT_SPACING
+        _draw_qubit!(ax, y, x_start, x_end, "|x$q⟩", "kx$q")
+    end
+    for q in 1:n
+        y = -(m + q) * CIRCUIT_QUBIT_SPACING
+        _draw_qubit!(ax, y, x_start, x_end, "|y$q⟩", "ky$q")
+    end
+
+    # Separator between row and column qubits
+    y_sep = -(m + 0.5) * CIRCUIT_QUBIT_SPACING
+    lines!(ax, [x_start, x_end], [y_sep, y_sep],
+           color=CIRCUIT_COLORS.label, linewidth=1, linestyle=:dash)
+
+    x_pos = x_start + CIRCUIT_GATE_SPACING
+
+    if spec.entangle_position == :front
+        x_pos = _draw_entangle_layer!(ax, x_pos, m, n, spec.entangle_phases, 0, -m * CIRCUIT_QUBIT_SPACING)
+        x_pos += CIRCUIT_GATE_SPACING * 0.5
+    end
+
+    # QFT for row qubits
+    x_row = _draw_qft_layer!(ax, x_pos, m, 0)
+
+    # QFT for column qubits (same x start)
+    _draw_qft_layer!(ax, x_pos, n, -m * CIRCUIT_QUBIT_SPACING)
+
+    x_pos = x_row
+
+    if spec.entangle_position == :middle
+        x_pos += CIRCUIT_GATE_SPACING * 0.5
+        x_pos = _draw_entangle_layer!(ax, x_pos, m, n, spec.entangle_phases, 0, -m * CIRCUIT_QUBIT_SPACING)
+    end
+
+    if spec.entangle_position == :back
+        x_pos += CIRCUIT_GATE_SPACING * 0.5
+        x_pos = _draw_entangle_layer!(ax, x_pos, m, n, spec.entangle_phases, 0, -m * CIRCUIT_QUBIT_SPACING)
+    end
+
+    xlims!(ax, x_start - 1.5, x_end + 1.5)
+    ylims!(ax, -(total + 0.5) * CIRCUIT_QUBIT_SPACING, 0.7 * CIRCUIT_QUBIT_SPACING)
+
+    if output_path !== nothing
+        save(output_path, fig)
+    end
+
+    return fig
+end
+
+"""
+    plot_circuit(basis::EntangledQFTBasis; output_path=nothing)
+
+Draw an Entangled QFT circuit diagram showing QFT blocks and entanglement gates.
+
+# Arguments
+- `basis::EntangledQFTBasis`: the entangled QFT basis to visualize
+- `output_path`: optional file path to save the figure
+
+# Returns
+- `Figure`: the CairoMakie figure object
+"""
+function plot_circuit(basis::EntangledQFTBasis; output_path=nothing)
+    title = "Entangled QFT Circuit ($(basis.m)x$(basis.n), $(basis.entangle_position))"
+    spec = _EntangledQFTCircuitSpec(basis.m, basis.n,
+                                     Float64.(basis.entangle_phases),
+                                     basis.entangle_position, title)
+    return _plot_circuit(spec; output_path=output_path)
+end
+
+# ============================================================================
+# TEBD Circuit Drawing
+# ============================================================================
+
+"""
+    _draw_tebd_layer!(ax, x_start, n_qubits, phases, y_offset)
+
+Draw TEBD nearest-neighbour two-qubit gates in a ring topology.
+
+# Arguments
+- `ax`: CairoMakie axis
+- `x_start`: horizontal position for the first gate
+- `n_qubits`: number of qubits in this TEBD layer
+- `phases`: phase values for each gate
+- `y_offset`: vertical offset applied to all qubit positions
+
+# Returns
+- `x_pos`: the horizontal position after the last gate drawn
+"""
+function _draw_tebd_layer!(ax, x_start, n_qubits, phases, y_offset)
+    x_pos = x_start
+
+    for i in 1:n_qubits
+        q1 = i
+        q2 = mod1(i + 1, n_qubits)
+        y1 = y_offset - q1 * CIRCUIT_QUBIT_SPACING
+        y2 = y_offset - q2 * CIRCUIT_QUBIT_SPACING
+        phase = i <= length(phases) ? phases[i] : 0.0
+
+        if q2 == 1 && n_qubits > 2
+            # Wrap-around gate (last connects to first)
+            _draw_two_qubit_gate!(ax, x_pos, y1, y2, "T", phase;
+                                  color=CIRCUIT_COLORS.wrap_gate, show_phase=true)
+        else
+            _draw_two_qubit_gate!(ax, x_pos, y1, y2, "T", phase;
+                                  color=CIRCUIT_COLORS.tebd_gate, show_phase=true)
+        end
+        x_pos += CIRCUIT_GATE_SPACING
+    end
+
+    return x_pos
+end
+
+"""
+    _plot_circuit(spec::_TEBDCircuitSpec; output_path=nothing)
+
+Render a full TEBD circuit diagram with nearest-neighbour gates in ring topology.
+
+# Arguments
+- `spec::_TEBDCircuitSpec`: circuit layout specification
+- `output_path`: optional file path; when provided the figure is saved as PNG
+
+# Returns
+- `Figure`: the CairoMakie figure object
+"""
+function _plot_circuit(spec::_TEBDCircuitSpec; output_path=nothing)
+    m = spec.n_row_qubits
+    n = spec.n_col_qubits
+    total = m + n
+    n_gates = m + n
+
+    width = max(700, 150 + n_gates * 55)
+    height = 120 + total * 70
+
+    fig = Figure(size=(width, height), backgroundcolor=:white)
+    ax = Axis(fig[1, 1], title=spec.title, titlesize=20, aspect=DataAspect())
+    hidedecorations!(ax)
+    hidespines!(ax)
+
+    x_start = 1.5
+    x_end = x_start + (n_gates + 2) * CIRCUIT_GATE_SPACING
+
+    # Draw qubit wires
+    for q in 1:m
+        y = -q * CIRCUIT_QUBIT_SPACING
+        _draw_qubit!(ax, y, x_start, x_end, "|x$q⟩", "kx$q")
+    end
+    for q in 1:n
+        y = -(m + q) * CIRCUIT_QUBIT_SPACING
+        _draw_qubit!(ax, y, x_start, x_end, "|y$q⟩", "ky$q")
+    end
+
+    # Separator
+    y_sep = -(m + 0.5) * CIRCUIT_QUBIT_SPACING
+    lines!(ax, [x_start, x_end], [y_sep, y_sep],
+           color=CIRCUIT_COLORS.label, linewidth=1, linestyle=:dash)
+
+    x_pos = x_start + CIRCUIT_GATE_SPACING
+
+    # Row TEBD gates
+    row_phases = spec.phases[1:min(m, length(spec.phases))]
+    x_pos = _draw_tebd_layer!(ax, x_pos, m, row_phases, 0)
+
+    # Column TEBD gates
+    col_phases = length(spec.phases) > m ? spec.phases[m+1:end] : Float64[]
+    _draw_tebd_layer!(ax, x_pos, n, col_phases, -m * CIRCUIT_QUBIT_SPACING)
+
+    xlims!(ax, x_start - 1.5, x_end + 1.5)
+    ylims!(ax, -(total + 0.5) * CIRCUIT_QUBIT_SPACING, 0.7 * CIRCUIT_QUBIT_SPACING)
+
+    if output_path !== nothing
+        save(output_path, fig)
+    end
+
+    return fig
+end
+
+"""
+    plot_circuit(basis::TEBDBasis; output_path=nothing)
+
+Draw a TEBD circuit diagram showing nearest-neighbour two-qubit gates in ring topology.
+
+# Arguments
+- `basis::TEBDBasis`: the TEBD basis to visualize
+- `output_path`: optional file path to save the figure
+
+# Returns
+- `Figure`: the CairoMakie figure object
+"""
+function plot_circuit(basis::TEBDBasis; output_path=nothing)
+    title = "TEBD Circuit ($(basis.m)x$(basis.n))"
+    spec = _TEBDCircuitSpec(basis.m, basis.n, Float64.(basis.phases), title)
+    return _plot_circuit(spec; output_path=output_path)
+end
+
+# ============================================================================
+# MERA Circuit Drawing
+# ============================================================================
+
+"""
+    _draw_mera_layer!(ax, x_start, n_qubits, phases, y_offset)
+
+Draw MERA disentangler and isometry gates for a group of qubits.
+MERA uses stride-doubling layers: disentanglers on pairs (1,2), (3,4), ...
+followed by isometries on pairs (2,3), (4,5), ...
+
+# Arguments
+- `ax`: CairoMakie axis
+- `x_start`: horizontal position for the first gate
+- `n_qubits`: number of qubits in this MERA layer
+- `phases`: phase values for each gate
+- `y_offset`: vertical offset applied to all qubit positions
+
+# Returns
+- `x_pos`: the horizontal position after the last gate drawn
+"""
+function _draw_mera_layer!(ax, x_start, n_qubits, phases, y_offset)
+    x_pos = x_start
+    phase_idx = 0
+
+    if n_qubits < 2
+        return x_pos
+    end
+
+    # Disentanglers: pairs (1,2), (3,4), ...
+    for i in 1:2:(n_qubits - 1)
+        y1 = y_offset - i * CIRCUIT_QUBIT_SPACING
+        y2 = y_offset - (i + 1) * CIRCUIT_QUBIT_SPACING
+        phase_idx += 1
+        phase = phase_idx <= length(phases) ? phases[phase_idx] : 0.0
+        _draw_two_qubit_gate!(ax, x_pos, y1, y2, "D", phase;
+                              color=CIRCUIT_COLORS.mera_gate, show_phase=true)
+        x_pos += CIRCUIT_GATE_SPACING
+    end
+
+    x_pos += CIRCUIT_GATE_SPACING * 0.3
+
+    # Isometries: pairs (2,3), (4,5), ...
+    for i in 2:2:(n_qubits - 1)
+        y1 = y_offset - i * CIRCUIT_QUBIT_SPACING
+        y2 = y_offset - (i + 1) * CIRCUIT_QUBIT_SPACING
+        phase_idx += 1
+        phase = phase_idx <= length(phases) ? phases[phase_idx] : 0.0
+        _draw_two_qubit_gate!(ax, x_pos, y1, y2, "I", phase;
+                              color=CIRCUIT_COLORS.mera_gate, show_phase=true)
+        x_pos += CIRCUIT_GATE_SPACING
+    end
+
+    return x_pos
+end
+
+"""
+    _plot_circuit(spec::_MERACircuitSpec; output_path=nothing)
+
+Render a full MERA circuit diagram with disentangler and isometry layers.
+
+# Arguments
+- `spec::_MERACircuitSpec`: circuit layout specification
+- `output_path`: optional file path; when provided the figure is saved as PNG
+
+# Returns
+- `Figure`: the CairoMakie figure object
+"""
+function _plot_circuit(spec::_MERACircuitSpec; output_path=nothing)
+    m = spec.n_row_qubits
+    n = spec.n_col_qubits
+    total = m + n
+
+    n_row_gates = m >= 2 ? 2 * (m - 1) : 0
+    n_col_gates = n >= 2 ? 2 * (n - 1) : 0
+    total_gates = n_row_gates + n_col_gates
+
+    width = max(700, 150 + max(total_gates, 4) * 55)
+    height = 120 + total * 70
+
+    fig = Figure(size=(width, height), backgroundcolor=:white)
+    ax = Axis(fig[1, 1], title=spec.title, titlesize=20, aspect=DataAspect())
+    hidedecorations!(ax)
+    hidespines!(ax)
+
+    x_start = 1.5
+    x_end = x_start + (max(total_gates, 4) + 2) * CIRCUIT_GATE_SPACING
+
+    # Draw qubit wires
+    for q in 1:m
+        y = -q * CIRCUIT_QUBIT_SPACING
+        _draw_qubit!(ax, y, x_start, x_end, "|x$q⟩", "kx$q")
+    end
+    for q in 1:n
+        y = -(m + q) * CIRCUIT_QUBIT_SPACING
+        _draw_qubit!(ax, y, x_start, x_end, "|y$q⟩", "ky$q")
+    end
+
+    # Separator
+    if n > 0
+        y_sep = -(m + 0.5) * CIRCUIT_QUBIT_SPACING
+        lines!(ax, [x_start, x_end], [y_sep, y_sep],
+               color=CIRCUIT_COLORS.label, linewidth=1, linestyle=:dash)
+    end
+
+    x_pos = x_start + CIRCUIT_GATE_SPACING
+
+    # Row MERA gates
+    row_phases = spec.phases[1:min(n_row_gates, length(spec.phases))]
+    x_pos = _draw_mera_layer!(ax, x_pos, m, row_phases, 0)
+
+    # Column MERA gates
+    col_phases = length(spec.phases) > n_row_gates ? spec.phases[n_row_gates+1:end] : Float64[]
+    _draw_mera_layer!(ax, x_pos, n, col_phases, -m * CIRCUIT_QUBIT_SPACING)
+
+    xlims!(ax, x_start - 1.5, x_end + 1.5)
+    ylims!(ax, -(total + 0.5) * CIRCUIT_QUBIT_SPACING, 0.7 * CIRCUIT_QUBIT_SPACING)
+
+    if output_path !== nothing
+        save(output_path, fig)
+    end
+
+    return fig
+end
+
+"""
+    plot_circuit(basis::MERABasis; output_path=nothing)
+
+Draw a MERA circuit diagram showing disentangler and isometry layers.
+
+# Arguments
+- `basis::MERABasis`: the MERA basis to visualize
+- `output_path`: optional file path to save the figure
+
+# Returns
+- `Figure`: the CairoMakie figure object
+"""
+function plot_circuit(basis::MERABasis; output_path=nothing)
+    title = "MERA Circuit ($(basis.m)x$(basis.n))"
+    spec = _MERACircuitSpec(basis.m, basis.n, Float64.(basis.phases), title)
+    return _plot_circuit(spec; output_path=output_path)
+end
