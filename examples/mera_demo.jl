@@ -30,9 +30,9 @@ const M_QUBITS = 4              # 2^4 = 16 rows (must be power of 2 for MERA)
 const N_QUBITS = 4              # 2^4 = 16 columns
 const IMG_SIZE = 2^M_QUBITS     # 16×16 images
 
-const NUM_TRAINING_IMAGES = 15
-const TRAINING_EPOCHS = 2
-const STEPS_PER_IMAGE = 30
+const NUM_TRAINING_IMAGES = 20
+const TRAINING_EPOCHS = 5
+const STEPS_PER_IMAGE = 100
 const NUM_TEST_IMAGES = 5
 
 const COMPRESSION_RATIOS = [0.95, 0.90, 0.80, 0.70]  # Keep 5%, 10%, 20%, 30%
