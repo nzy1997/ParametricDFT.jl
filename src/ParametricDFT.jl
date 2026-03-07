@@ -26,6 +26,10 @@ export get_entangle_tensor_indices, extract_entangle_phases
 export tebd_code
 export get_tebd_gate_indices, extract_tebd_phases
 
+# MERA circuit exports
+export mera_code
+export get_mera_gate_indices, extract_mera_phases
+
 # Sparse basis exports
 export AbstractSparseBasis, QFTBasis, EntangledQFTBasis, TEBDBasis
 export forward_transform, inverse_transform, image_size, num_parameters, basis_hash
@@ -65,6 +69,8 @@ include("qft.jl")
 include("entangled_qft.jl")
 # 3b. TEBD circuit (standalone circuit code)
 include("tebd.jl")
+# 3c. MERA circuit (standalone circuit code)
+include("mera.jl")
 # 4. Basis implementations (uses qft_code and entangled_qft_code)
 include("basis.jl")
 # 5. Manifold abstraction (abstract types, batched ops, stack/unstack)
