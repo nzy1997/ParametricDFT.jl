@@ -47,5 +47,6 @@ include("compression_tests.jl")
 include("loss_tests.jl")
 include("manifold_tests.jl")
 include("optimizer_tests.jl")
+include("circuit_visualization_tests.jl")
 
 end  # @testset "ParametricDFT.jl"

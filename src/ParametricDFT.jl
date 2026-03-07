@@ -60,6 +60,9 @@ export save_basis, load_basis, basis_to_dict, dict_to_basis
 export CompressedImage, compress, compress_with_k
 export recover, save_compressed, load_compressed, compression_stats
 
+# Circuit visualization exports
+export plot_circuit
+
 # Include files in dependency order:
 # 1. Loss functions (no internal dependencies)
 include("loss.jl")
@@ -85,5 +88,7 @@ include("serialization.jl")
 include("compression.jl")
 # 10. Visualization (uses CairoMakie for training loss visualization)
 include("visualization.jl")
+# 11. Circuit visualization (uses CairoMakie for circuit diagrams)
+include("circuit_visualization.jl")
 
 end # module
