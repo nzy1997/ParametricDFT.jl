@@ -15,7 +15,8 @@ const CIRCUIT_COLORS = (
     phase_gate = "#34A853",     # Green
     entangle_gate = "#EA4335",  # Red
     tebd_gate = "#9C27B0",      # Purple
-    mera_gate = "#FF9800",      # Orange
+    mera_disentangler = "#FF9800", # Orange
+    mera_isometry = "#E65100",  # Dark Orange
     wrap_gate = "#FF5722",      # Deep Orange
     text = "#333333",
     label = "#666666"
@@ -246,26 +247,27 @@ function _plot_circuit(spec::_QFTCircuitSpec; output_path=nothing)
 
     x_start = 1.5
     x_qft_end = x_start + (m + n_m_gates + 1) * CIRCUIT_GATE_SPACING
-    x_end = x_qft_end
+    legend_width = 4.0
+    x_end = x_qft_end + legend_width
 
     # Draw qubit wires
     if _is_1d(spec)
         for q in 1:m
             y = -q * CIRCUIT_QUBIT_SPACING
-            _draw_qubit!(ax, y, x_start, x_end, "|q$q>", "k$q")
+            _draw_qubit!(ax, y, x_start, x_qft_end, "|q$q⟩", "k$q")
         end
     else
         for q in 1:m
             y = -q * CIRCUIT_QUBIT_SPACING
-            _draw_qubit!(ax, y, x_start, x_end, "|x$q>", "kx$q")
+            _draw_qubit!(ax, y, x_start, x_qft_end, "|x$q⟩", "kx$q")
         end
         for q in 1:n
             y = -(m + q) * CIRCUIT_QUBIT_SPACING
-            _draw_qubit!(ax, y, x_start, x_end, "|y$q>", "ky$q")
+            _draw_qubit!(ax, y, x_start, x_qft_end, "|y$q⟩", "ky$q")
         end
         # Separator between row and column qubits
         y_sep = -(m + 0.5) * CIRCUIT_QUBIT_SPACING
-        lines!(ax, [x_start, x_end], [y_sep, y_sep],
+        lines!(ax, [x_start, x_qft_end], [y_sep, y_sep],
                color=CIRCUIT_COLORS.label, linewidth=1, linestyle=:dash)
     end
 
@@ -278,6 +280,12 @@ function _plot_circuit(spec::_QFTCircuitSpec; output_path=nothing)
         x_pos_col = x_start + CIRCUIT_GATE_SPACING
         _draw_qft_layer!(ax, x_pos_col, n, -m * CIRCUIT_QUBIT_SPACING)
     end
+
+    # Legend
+    _draw_legend!(ax, x_qft_end + 1.5, -0.3, [
+        (CIRCUIT_COLORS.hadamard, "H", "Hadamard"),
+        (CIRCUIT_COLORS.phase_gate, "M", "Phase (2π/2ᵏ)"),
+    ])
 
     xlims!(ax, x_start - 1.5, x_end + 1.5)
     ylims!(ax, -(total + 0.5) * CIRCUIT_QUBIT_SPACING, 0.7 * CIRCUIT_QUBIT_SPACING)
@@ -396,8 +404,9 @@ function _plot_circuit(spec::_EntangledQFTCircuitSpec; output_path=nothing)
     n_n_gates = div(n * (n - 1), 2)
     n_entangle = min(m, n)
     total_gates = m + n_m_gates + n + n_n_gates + n_entangle
+    legend_width = 3.5
 
-    width = max(700, 150 + total_gates * 55)
+    width = max(700, 150 + (total_gates + 3) * 55)
     height = 120 + total * 70
 
     fig = Figure(size=(width, height), backgroundcolor=:white)
@@ -406,49 +415,83 @@ function _plot_circuit(spec::_EntangledQFTCircuitSpec; output_path=nothing)
     hidespines!(ax)
 
     x_start = 1.5
-    x_end = x_start + (total_gates + 2) * CIRCUIT_GATE_SPACING
+
+    # Calculate wire end based on gate content
+    x_pos = x_start + CIRCUIT_GATE_SPACING
+
+    if spec.entangle_position == :front
+        # E gates + separator + row QFT + col QFT
+        x_pos = _draw_entangle_layer!(ax, x_pos, m, n, spec.entangle_phases, 0, -m * CIRCUIT_QUBIT_SPACING)
+        x_pos += CIRCUIT_GATE_SPACING * 0.5
+
+        # Separator
+        x_sep = x_pos - CIRCUIT_GATE_SPACING * 0.25
+        lines!(ax, [x_sep, x_sep], [0, -(total + 0.3) * CIRCUIT_QUBIT_SPACING],
+               color=CIRCUIT_COLORS.label, linewidth=1, linestyle=:dot)
+
+        x_row = _draw_qft_layer!(ax, x_pos, m, 0)
+        _draw_qft_layer!(ax, x_pos, n, -m * CIRCUIT_QUBIT_SPACING)
+        x_pos = x_row
+    elseif spec.entangle_position == :middle
+        # Row QFT, then E gates, then col QFT
+        x_pos = _draw_qft_layer!(ax, x_pos, m, 0)
+        x_pos += CIRCUIT_GATE_SPACING * 0.5
+
+        # Separator before E
+        x_sep = x_pos - CIRCUIT_GATE_SPACING * 0.25
+        lines!(ax, [x_sep, x_sep], [0, -(total + 0.3) * CIRCUIT_QUBIT_SPACING],
+               color=CIRCUIT_COLORS.label, linewidth=1, linestyle=:dot)
+
+        x_pos = _draw_entangle_layer!(ax, x_pos, m, n, spec.entangle_phases, 0, -m * CIRCUIT_QUBIT_SPACING)
+        x_pos += CIRCUIT_GATE_SPACING * 0.5
+
+        # Separator after E
+        x_sep2 = x_pos - CIRCUIT_GATE_SPACING * 0.25
+        lines!(ax, [x_sep2, x_sep2], [0, -(total + 0.3) * CIRCUIT_QUBIT_SPACING],
+               color=CIRCUIT_COLORS.label, linewidth=1, linestyle=:dot)
+
+        x_col = _draw_qft_layer!(ax, x_pos, n, -m * CIRCUIT_QUBIT_SPACING)
+        x_pos = max(x_pos, x_col)
+    else  # :back
+        # Row QFT + col QFT, then E gates
+        x_row = _draw_qft_layer!(ax, x_pos, m, 0)
+        _draw_qft_layer!(ax, x_pos, n, -m * CIRCUIT_QUBIT_SPACING)
+        x_pos = x_row + CIRCUIT_GATE_SPACING * 0.5
+
+        # Separator before E
+        x_sep = x_pos - CIRCUIT_GATE_SPACING * 0.25
+        lines!(ax, [x_sep, x_sep], [0, -(total + 0.3) * CIRCUIT_QUBIT_SPACING],
+               color=CIRCUIT_COLORS.label, linewidth=1, linestyle=:dot)
+
+        x_pos = _draw_entangle_layer!(ax, x_pos, m, n, spec.entangle_phases, 0, -m * CIRCUIT_QUBIT_SPACING)
+    end
+
+    x_wire_end = x_pos + CIRCUIT_GATE_SPACING * 0.5
+    x_end = x_wire_end + legend_width
 
     # Draw qubit wires
     for q in 1:m
         y = -q * CIRCUIT_QUBIT_SPACING
-        _draw_qubit!(ax, y, x_start, x_end, "|x$q⟩", "kx$q")
+        _draw_qubit!(ax, y, x_start, x_wire_end, "|x$q⟩", "kx$q")
     end
     for q in 1:n
         y = -(m + q) * CIRCUIT_QUBIT_SPACING
-        _draw_qubit!(ax, y, x_start, x_end, "|y$q⟩", "ky$q")
+        _draw_qubit!(ax, y, x_start, x_wire_end, "|y$q⟩", "ky$q")
     end
 
     # Separator between row and column qubits
     y_sep = -(m + 0.5) * CIRCUIT_QUBIT_SPACING
-    lines!(ax, [x_start, x_end], [y_sep, y_sep],
+    lines!(ax, [x_start, x_wire_end], [y_sep, y_sep],
            color=CIRCUIT_COLORS.label, linewidth=1, linestyle=:dash)
 
-    x_pos = x_start + CIRCUIT_GATE_SPACING
+    # Legend
+    _draw_legend!(ax, x_wire_end + 1.5, -0.3, [
+        (CIRCUIT_COLORS.hadamard, "H", "Hadamard"),
+        (CIRCUIT_COLORS.phase_gate, "M", "Phase (2π/2ᵏ)"),
+        (CIRCUIT_COLORS.entangle_gate, "E", "Entangle (φ)"),
+    ])
 
-    if spec.entangle_position == :front
-        x_pos = _draw_entangle_layer!(ax, x_pos, m, n, spec.entangle_phases, 0, -m * CIRCUIT_QUBIT_SPACING)
-        x_pos += CIRCUIT_GATE_SPACING * 0.5
-    end
-
-    # QFT for row qubits
-    x_row = _draw_qft_layer!(ax, x_pos, m, 0)
-
-    # QFT for column qubits (same x start)
-    _draw_qft_layer!(ax, x_pos, n, -m * CIRCUIT_QUBIT_SPACING)
-
-    x_pos = x_row
-
-    if spec.entangle_position == :middle
-        x_pos += CIRCUIT_GATE_SPACING * 0.5
-        x_pos = _draw_entangle_layer!(ax, x_pos, m, n, spec.entangle_phases, 0, -m * CIRCUIT_QUBIT_SPACING)
-    end
-
-    if spec.entangle_position == :back
-        x_pos += CIRCUIT_GATE_SPACING * 0.5
-        x_pos = _draw_entangle_layer!(ax, x_pos, m, n, spec.entangle_phases, 0, -m * CIRCUIT_QUBIT_SPACING)
-    end
-
-    xlims!(ax, x_start - 1.5, x_end + 1.5)
+    xlims!(ax, x_start - 1.5, x_end + 1.0)
     ylims!(ax, -(total + 0.5) * CIRCUIT_QUBIT_SPACING, 0.7 * CIRCUIT_QUBIT_SPACING)
 
     if output_path !== nothing
@@ -538,8 +581,10 @@ function _plot_circuit(spec::_TEBDCircuitSpec; output_path=nothing)
     n = spec.n_col_qubits
     total = m + n
     n_gates = m + n
+    legend_width = 3.5
 
-    width = max(700, 150 + n_gates * 55)
+    # +1 for H layer, +1 for separator gap
+    width = max(700, 150 + (n_gates + 4) * 55)
     height = 120 + total * 70
 
     fig = Figure(size=(width, height), backgroundcolor=:white)
@@ -548,34 +593,59 @@ function _plot_circuit(spec::_TEBDCircuitSpec; output_path=nothing)
     hidespines!(ax)
 
     x_start = 1.5
-    x_end = x_start + (n_gates + 2) * CIRCUIT_GATE_SPACING
+    x_pos = x_start + CIRCUIT_GATE_SPACING
+
+    # Layer 1: Hadamard gates on all qubits
+    for q in 1:total
+        y_q = -q * CIRCUIT_QUBIT_SPACING
+        _draw_gate!(ax, x_pos, y_q, "H"; color=CIRCUIT_COLORS.hadamard)
+    end
+    x_pos += CIRCUIT_GATE_SPACING
+
+    # Separator between H layer and phase gates
+    x_sep = x_pos + CIRCUIT_GATE_SPACING * 0.15
+    lines!(ax, [x_sep, x_sep], [-0.3 * CIRCUIT_QUBIT_SPACING, -(total + 0.3) * CIRCUIT_QUBIT_SPACING],
+           color=CIRCUIT_COLORS.label, linewidth=1, linestyle=:dot)
+    x_pos += CIRCUIT_GATE_SPACING * 0.5
+
+    # Layer 2a: Row TEBD gates
+    row_phases = spec.phases[1:min(m, length(spec.phases))]
+    x_pos = _draw_tebd_layer!(ax, x_pos, m, row_phases, 0)
+
+    # Small gap between row and column rings
+    x_pos += CIRCUIT_GATE_SPACING * 0.3
+
+    # Layer 2b: Column TEBD gates
+    col_phases = length(spec.phases) > m ? spec.phases[m+1:end] : Float64[]
+    x_col_end = _draw_tebd_layer!(ax, x_pos, n, col_phases, -m * CIRCUIT_QUBIT_SPACING)
+
+    x_wire_end = x_col_end + CIRCUIT_GATE_SPACING * 0.3
+    x_end = x_wire_end + legend_width
 
     # Draw qubit wires
     for q in 1:m
         y = -q * CIRCUIT_QUBIT_SPACING
-        _draw_qubit!(ax, y, x_start, x_end, "|x$q⟩", "kx$q")
+        _draw_qubit!(ax, y, x_start, x_wire_end, "|x$q⟩", "x'$q")
     end
     for q in 1:n
         y = -(m + q) * CIRCUIT_QUBIT_SPACING
-        _draw_qubit!(ax, y, x_start, x_end, "|y$q⟩", "ky$q")
+        _draw_qubit!(ax, y, x_start, x_wire_end, "|y$q⟩", "y'$q")
     end
 
-    # Separator
+    # Separator between row and column qubits
     y_sep = -(m + 0.5) * CIRCUIT_QUBIT_SPACING
-    lines!(ax, [x_start, x_end], [y_sep, y_sep],
+    lines!(ax, [x_start, x_wire_end], [y_sep, y_sep],
            color=CIRCUIT_COLORS.label, linewidth=1, linestyle=:dash)
 
-    x_pos = x_start + CIRCUIT_GATE_SPACING
+    # Legend
+    _draw_legend!(ax, x_wire_end + 1.5, -0.3, [
+        (CIRCUIT_COLORS.hadamard, "H", "Hadamard"),
+        (CIRCUIT_COLORS.tebd_gate, "T", "Row phase"),
+        (CIRCUIT_COLORS.tebd_gate, "T", "Col phase"),
+        (CIRCUIT_COLORS.wrap_gate, "T", "Wrap-around"),
+    ])
 
-    # Row TEBD gates
-    row_phases = spec.phases[1:min(m, length(spec.phases))]
-    x_pos = _draw_tebd_layer!(ax, x_pos, m, row_phases, 0)
-
-    # Column TEBD gates
-    col_phases = length(spec.phases) > m ? spec.phases[m+1:end] : Float64[]
-    _draw_tebd_layer!(ax, x_pos, n, col_phases, -m * CIRCUIT_QUBIT_SPACING)
-
-    xlims!(ax, x_start - 1.5, x_end + 1.5)
+    xlims!(ax, x_start - 1.5, x_end + 1.0)
     ylims!(ax, -(total + 0.5) * CIRCUIT_QUBIT_SPACING, 0.7 * CIRCUIT_QUBIT_SPACING)
 
     if output_path !== nothing
@@ -610,14 +680,18 @@ end
 """
     _draw_mera_layer!(ax, x_start, n_qubits, phases, y_offset)
 
-Draw MERA disentangler and isometry gates for a group of qubits.
-MERA uses stride-doubling layers: disentanglers on pairs (1,2), (3,4), ...
-followed by isometries on pairs (2,3), (4,5), ...
+Draw hierarchical MERA disentangler and isometry gates for a group of qubits.
+Matches the actual circuit structure in `_mera_single_dim`: k = log2(n_qubits)
+layers with stride s = 2^(l-1) at each layer l.
+
+Layer l has n_pairs = n_qubits ÷ (2s) pairs of gates:
+- Disentanglers: control q1 = 2p·s+2, target q2 = mod1(2p·s+s+2, n_qubits)
+- Isometries:    control q1 = 2p·s+1, target q2 = 2p·s+s+1
 
 # Arguments
 - `ax`: CairoMakie axis
 - `x_start`: horizontal position for the first gate
-- `n_qubits`: number of qubits in this MERA layer
+- `n_qubits`: number of qubits in this MERA layer (must be power of 2)
 - `phases`: phase values for each gate
 - `y_offset`: vertical offset applied to all qubit positions
 
@@ -632,28 +706,50 @@ function _draw_mera_layer!(ax, x_start, n_qubits, phases, y_offset)
         return x_pos
     end
 
-    # Disentanglers: pairs (1,2), (3,4), ...
-    for i in 1:2:(n_qubits - 1)
-        y1 = y_offset - i * CIRCUIT_QUBIT_SPACING
-        y2 = y_offset - (i + 1) * CIRCUIT_QUBIT_SPACING
-        phase_idx += 1
-        phase = phase_idx <= length(phases) ? phases[phase_idx] : 0.0
-        _draw_two_qubit_gate!(ax, x_pos, y1, y2, "D", phase;
-                              color=CIRCUIT_COLORS.mera_gate, show_phase=true)
-        x_pos += CIRCUIT_GATE_SPACING
-    end
+    k = Int(log2(n_qubits))
 
-    x_pos += CIRCUIT_GATE_SPACING * 0.3
+    for l in 1:k
+        s = 2^(l - 1)
+        n_pairs = n_qubits ÷ (2 * s)
 
-    # Isometries: pairs (2,3), (4,5), ...
-    for i in 2:2:(n_qubits - 1)
-        y1 = y_offset - i * CIRCUIT_QUBIT_SPACING
-        y2 = y_offset - (i + 1) * CIRCUIT_QUBIT_SPACING
-        phase_idx += 1
-        phase = phase_idx <= length(phases) ? phases[phase_idx] : 0.0
-        _draw_two_qubit_gate!(ax, x_pos, y1, y2, "I", phase;
-                              color=CIRCUIT_COLORS.mera_gate, show_phase=true)
-        x_pos += CIRCUIT_GATE_SPACING
+        # Disentanglers
+        for p in 0:(n_pairs - 1)
+            q1 = 2 * p * s + 2
+            q2 = mod1(2 * p * s + s + 2, n_qubits)
+            y1 = y_offset - q1 * CIRCUIT_QUBIT_SPACING
+            y2 = y_offset - q2 * CIRCUIT_QUBIT_SPACING
+            phase_idx += 1
+            phase = phase_idx <= length(phases) ? phases[phase_idx] : 0.0
+            _draw_two_qubit_gate!(ax, x_pos, y1, y2, "D", phase;
+                                  color=CIRCUIT_COLORS.mera_disentangler, show_phase=false)
+            x_pos += CIRCUIT_GATE_SPACING
+        end
+
+        x_pos += CIRCUIT_GATE_SPACING * 0.3
+
+        # Isometries
+        for p in 0:(n_pairs - 1)
+            q1 = 2 * p * s + 1
+            q2 = 2 * p * s + s + 1
+            y1 = y_offset - q1 * CIRCUIT_QUBIT_SPACING
+            y2 = y_offset - q2 * CIRCUIT_QUBIT_SPACING
+            phase_idx += 1
+            phase = phase_idx <= length(phases) ? phases[phase_idx] : 0.0
+            _draw_two_qubit_gate!(ax, x_pos, y1, y2, "I", phase;
+                                  color=CIRCUIT_COLORS.mera_isometry, show_phase=false)
+            x_pos += CIRCUIT_GATE_SPACING
+        end
+
+        # Separator between layers
+        if l < k
+            x_pos += CIRCUIT_GATE_SPACING * 0.2
+            x_sep = x_pos - CIRCUIT_GATE_SPACING * 0.1
+            y_top = y_offset - 0.3 * CIRCUIT_QUBIT_SPACING
+            y_bot = y_offset - (n_qubits + 0.3) * CIRCUIT_QUBIT_SPACING
+            lines!(ax, [x_sep, x_sep], [y_top, y_bot],
+                   color=CIRCUIT_COLORS.label, linewidth=1, linestyle=:dot)
+            x_pos += CIRCUIT_GATE_SPACING * 0.2
+        end
     end
 
     return x_pos
@@ -678,9 +774,12 @@ function _plot_circuit(spec::_MERACircuitSpec; output_path=nothing)
 
     n_row_gates = m >= 2 ? 2 * (m - 1) : 0
     n_col_gates = n >= 2 ? 2 * (n - 1) : 0
-    total_gates = n_row_gates + n_col_gates
+    # Each layer l has n_qubits/(2s) D gates + n_qubits/(2s) I gates + separators
+    # Plus H layer + separator. Estimate width generously.
+    total_gate_slots = 1 + n_row_gates + n_col_gates + (m >= 2 ? Int(log2(m)) : 0) + (n >= 2 ? Int(log2(n)) : 0)
+    legend_width = 4.0
 
-    width = max(700, 150 + max(total_gates, 4) * 55)
+    width = max(700, 150 + (max(total_gate_slots, 4) + 3) * 55)
     height = 120 + total * 70
 
     fig = Figure(size=(width, height), backgroundcolor=:white)
@@ -689,36 +788,57 @@ function _plot_circuit(spec::_MERACircuitSpec; output_path=nothing)
     hidespines!(ax)
 
     x_start = 1.5
-    x_end = x_start + (max(total_gates, 4) + 2) * CIRCUIT_GATE_SPACING
+    x_pos = x_start + CIRCUIT_GATE_SPACING
+
+    # Layer 1: Hadamard gates on all qubits (matches mera_code)
+    for q in 1:total
+        y_q = -q * CIRCUIT_QUBIT_SPACING
+        _draw_gate!(ax, x_pos, y_q, "H"; color=CIRCUIT_COLORS.hadamard)
+    end
+    x_pos += CIRCUIT_GATE_SPACING
+
+    # Separator between H layer and MERA gates
+    x_sep = x_pos + CIRCUIT_GATE_SPACING * 0.15
+    lines!(ax, [x_sep, x_sep], [-0.3 * CIRCUIT_QUBIT_SPACING, -(total + 0.3) * CIRCUIT_QUBIT_SPACING],
+           color=CIRCUIT_COLORS.label, linewidth=1, linestyle=:dot)
+    x_pos += CIRCUIT_GATE_SPACING * 0.5
+
+    # Row MERA gates (hierarchical layers)
+    row_phases = spec.phases[1:min(n_row_gates, length(spec.phases))]
+    x_row_end = _draw_mera_layer!(ax, x_pos, m, row_phases, 0)
+
+    # Column MERA gates (hierarchical layers, start after row gates)
+    col_phases = length(spec.phases) > n_row_gates ? spec.phases[n_row_gates+1:end] : Float64[]
+    x_col_end = _draw_mera_layer!(ax, x_pos, n, col_phases, -m * CIRCUIT_QUBIT_SPACING)
+
+    x_wire_end = max(x_row_end, x_col_end) + CIRCUIT_GATE_SPACING * 0.3
+    x_end = x_wire_end + legend_width
 
     # Draw qubit wires
     for q in 1:m
         y = -q * CIRCUIT_QUBIT_SPACING
-        _draw_qubit!(ax, y, x_start, x_end, "|x$q⟩", "kx$q")
+        _draw_qubit!(ax, y, x_start, x_wire_end, "|x$q⟩", "kx$q")
     end
     for q in 1:n
         y = -(m + q) * CIRCUIT_QUBIT_SPACING
-        _draw_qubit!(ax, y, x_start, x_end, "|y$q⟩", "ky$q")
+        _draw_qubit!(ax, y, x_start, x_wire_end, "|y$q⟩", "ky$q")
     end
 
-    # Separator
+    # Separator between row and column qubits
     if n > 0
         y_sep = -(m + 0.5) * CIRCUIT_QUBIT_SPACING
-        lines!(ax, [x_start, x_end], [y_sep, y_sep],
+        lines!(ax, [x_start, x_wire_end], [y_sep, y_sep],
                color=CIRCUIT_COLORS.label, linewidth=1, linestyle=:dash)
     end
 
-    x_pos = x_start + CIRCUIT_GATE_SPACING
+    # Legend
+    _draw_legend!(ax, x_wire_end + 1.5, -0.3, [
+        (CIRCUIT_COLORS.hadamard, "H", "Hadamard"),
+        (CIRCUIT_COLORS.mera_disentangler, "D", "Disentangler"),
+        (CIRCUIT_COLORS.mera_isometry, "I", "Isometry"),
+    ])
 
-    # Row MERA gates
-    row_phases = spec.phases[1:min(n_row_gates, length(spec.phases))]
-    x_pos = _draw_mera_layer!(ax, x_pos, m, row_phases, 0)
-
-    # Column MERA gates
-    col_phases = length(spec.phases) > n_row_gates ? spec.phases[n_row_gates+1:end] : Float64[]
-    _draw_mera_layer!(ax, x_pos, n, col_phases, -m * CIRCUIT_QUBIT_SPACING)
-
-    xlims!(ax, x_start - 1.5, x_end + 1.5)
+    xlims!(ax, x_start - 1.5, x_end + 1.0)
     ylims!(ax, -(total + 0.5) * CIRCUIT_QUBIT_SPACING, 0.7 * CIRCUIT_QUBIT_SPACING)
 
     if output_path !== nothing
