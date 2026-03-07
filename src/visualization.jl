@@ -54,7 +54,7 @@ Plot training and validation loss curves for a single basis.
 - `history::TrainingHistory`: Training history to plot
 
 # Keyword Arguments
-- `title::String`: Plot title (default: "Training Loss - \$(history.basis_name)")
+- `title::String`: Plot title (default: "Training Loss - \\\$(history.basis_name)")
 - `xlabel::String`: X-axis label (default: "Epoch")
 - `ylabel::String`: Y-axis label (default: "Loss")
 - `yscale::Function`: Y-axis scale function (default: log10)
@@ -123,7 +123,7 @@ Plot per-step training loss curve for a single basis.
 - `history::TrainingHistory`: Training history to plot
 
 # Keyword Arguments
-- `title::String`: Plot title (default: "Step Training Loss - \$(history.basis_name)")
+- `title::String`: Plot title (default: "Step Training Loss - \\\$(history.basis_name)")
 - `xlabel::String`: X-axis label (default: "Step")
 - `ylabel::String`: Y-axis label (default: "Loss")
 - `yscale::Function`: Y-axis scale function (default: log10)
