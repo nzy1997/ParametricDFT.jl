@@ -31,7 +31,7 @@ export mera_code
 export get_mera_gate_indices, extract_mera_phases
 
 # Sparse basis exports
-export AbstractSparseBasis, QFTBasis, EntangledQFTBasis, TEBDBasis
+export AbstractSparseBasis, QFTBasis, EntangledQFTBasis, TEBDBasis, MERABasis
 export forward_transform, inverse_transform, image_size, num_parameters, basis_hash
 export num_entangle_parameters, get_entangle_phases
 export num_gates, get_phases

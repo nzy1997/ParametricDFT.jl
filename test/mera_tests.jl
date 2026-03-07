@@ -204,3 +204,97 @@ using Yao: mat, H
     end
 
 end
+
+@testset "MERABasis" begin
+
+    @testset "construction" begin
+        basis = MERABasis(2, 2)
+        @test basis.m == 2
+        @test basis.n == 2
+        @test basis.n_row_gates == 2
+        @test basis.n_col_gates == 2
+        @test length(basis.phases) == 4
+    end
+
+    @testset "construction with custom phases" begin
+        phases = [0.1, 0.2, 0.3, 0.4]
+        basis = MERABasis(2, 2; phases=phases)
+        @test isapprox(basis.phases, phases, atol=1e-10)
+    end
+
+    @testset "image_size" begin
+        basis = MERABasis(2, 4)
+        @test image_size(basis) == (4, 16)
+    end
+
+    @testset "num_gates" begin
+        basis = MERABasis(4, 4)
+        @test num_gates(basis) == 12
+    end
+
+    @testset "forward and inverse transform matrix" begin
+        Random.seed!(42)
+        basis = MERABasis(2, 2)
+        image = rand(4, 4)
+
+        freq = forward_transform(basis, image)
+        @test size(freq) == size(image)
+
+        recovered = inverse_transform(basis, freq)
+        @test isapprox(real.(recovered), image, rtol=1e-10)
+    end
+
+    @testset "forward and inverse transform vector" begin
+        Random.seed!(42)
+        basis = MERABasis(2, 2)
+        data = rand(16)
+
+        freq = forward_transform(basis, data)
+        @test length(freq) == length(data)
+
+        recovered = inverse_transform(basis, freq)
+        @test isapprox(real.(recovered), data, rtol=1e-10)
+    end
+
+    @testset "basis_hash deterministic" begin
+        basis1 = MERABasis(2, 2)
+        basis2 = MERABasis(2, 2)
+        @test basis_hash(basis1) == basis_hash(basis2)
+    end
+
+    @testset "show" begin
+        basis = MERABasis(2, 2)
+        str = sprint(show, basis)
+        @test occursin("MERABasis", str)
+        @test occursin("4×4", str)
+    end
+
+    @testset "equality" begin
+        basis1 = MERABasis(2, 2)
+        basis2 = MERABasis(2, 2)
+        @test basis1 == basis2
+    end
+
+    @testset "minimum size m=1, n=1" begin
+        basis = MERABasis(1, 1)
+        @test basis.n_row_gates == 0
+        @test basis.n_col_gates == 0
+        @test image_size(basis) == (2, 2)
+
+        image = rand(2, 2)
+        freq = forward_transform(basis, image)
+        recovered = inverse_transform(basis, freq)
+        @test isapprox(real.(recovered), image, rtol=1e-10)
+    end
+
+    @testset "asymmetric m=2, n=4" begin
+        basis = MERABasis(2, 4)
+        @test basis.n_row_gates == 2
+        @test basis.n_col_gates == 6
+
+        image = rand(4, 16)
+        freq = forward_transform(basis, image)
+        recovered = inverse_transform(basis, freq)
+        @test isapprox(real.(recovered), image, rtol=1e-10)
+    end
+end
