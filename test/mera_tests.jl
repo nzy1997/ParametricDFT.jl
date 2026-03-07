@@ -313,3 +313,31 @@ end
         @test length(history.train_losses) > 0
     end
 end
+
+@testset "MERABasis Serialization" begin
+    @testset "save and load roundtrip" begin
+        basis = MERABasis(2, 2; phases=[0.1, 0.2, 0.3, 0.4])
+        path = tempname() * ".json"
+        try
+            save_basis(path, basis)
+            loaded = load_basis(path)
+            @test loaded isa MERABasis
+            @test loaded == basis
+            @test basis_hash(loaded) == basis_hash(basis)
+        finally
+            isfile(path) && rm(path)
+        end
+    end
+
+    @testset "basis_to_dict and dict_to_basis" begin
+        basis = MERABasis(2, 2; phases=[0.1, 0.2, 0.3, 0.4])
+        d = basis_to_dict(basis)
+        @test d["type"] == "MERABasis"
+        @test d["m"] == 2
+        @test d["n"] == 2
+
+        loaded = dict_to_basis(d)
+        @test loaded isa MERABasis
+        @test loaded == basis
+    end
+end
