@@ -31,8 +31,9 @@ const N_QUBITS = 4              # 2^4 = 16 columns
 const IMG_SIZE = 2^M_QUBITS     # 16×16 images
 
 const NUM_TRAINING_IMAGES = 20
-const TRAINING_EPOCHS = 5
+const TRAINING_EPOCHS = 10
 const STEPS_PER_IMAGE = 100
+const BATCH_SIZE = 16
 const NUM_TEST_IMAGES = 5
 
 const COMPRESSION_RATIOS = [0.95, 0.90, 0.80, 0.70]  # Keep 5%, 10%, 20%, 30%
@@ -216,7 +217,7 @@ function main()
     k = round(Int, total_coefficients * 0.1)
 
     println("  Loss: MSELoss($k) — reconstruct from top $k/$total_coefficients coefficients")
-    println("  Epochs: $TRAINING_EPOCHS | Steps/image: $STEPS_PER_IMAGE")
+    println("  Epochs: $TRAINING_EPOCHS | Steps/batch: $STEPS_PER_IMAGE | Batch size: $BATCH_SIZE")
 
     loss_dir = joinpath(OUTPUT_DIR, "loss_history")
     mkpath(loss_dir)
@@ -228,6 +229,7 @@ function main()
         loss=ParametricDFT.MSELoss(k),
         epochs=TRAINING_EPOCHS,
         steps_per_image=STEPS_PER_IMAGE,
+        batch_size=BATCH_SIZE,
         validation_split=0.2,
         save_loss_path=joinpath(loss_dir, "qft_loss.json")
     )
@@ -239,6 +241,7 @@ function main()
         loss=ParametricDFT.MSELoss(k),
         epochs=TRAINING_EPOCHS,
         steps_per_image=STEPS_PER_IMAGE,
+        batch_size=BATCH_SIZE,
         validation_split=0.2,
         save_loss_path=joinpath(loss_dir, "mera_loss.json")
     )
