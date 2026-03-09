@@ -26,8 +26,12 @@ export get_entangle_tensor_indices, extract_entangle_phases
 export tebd_code
 export get_tebd_gate_indices, extract_tebd_phases
 
+# MERA circuit exports
+export mera_code
+export get_mera_gate_indices, extract_mera_phases
+
 # Sparse basis exports
-export AbstractSparseBasis, QFTBasis, EntangledQFTBasis, TEBDBasis
+export AbstractSparseBasis, QFTBasis, EntangledQFTBasis, TEBDBasis, MERABasis
 export forward_transform, inverse_transform, image_size, num_parameters, basis_hash
 export num_entangle_parameters, get_entangle_phases
 export num_gates, get_phases
@@ -56,6 +60,9 @@ export save_basis, load_basis, basis_to_dict, dict_to_basis
 export CompressedImage, compress, compress_with_k
 export recover, save_compressed, load_compressed, compression_stats
 
+# Circuit visualization exports
+export plot_circuit
+
 # Include files in dependency order:
 # 1. Loss functions (no internal dependencies)
 include("loss.jl")
@@ -65,6 +72,8 @@ include("qft.jl")
 include("entangled_qft.jl")
 # 3b. TEBD circuit (standalone circuit code)
 include("tebd.jl")
+# 3c. MERA circuit (standalone circuit code)
+include("mera.jl")
 # 4. Basis implementations (uses qft_code and entangled_qft_code)
 include("basis.jl")
 # 5. Manifold abstraction (abstract types, batched ops, stack/unstack)
@@ -79,5 +88,7 @@ include("serialization.jl")
 include("compression.jl")
 # 10. Visualization (uses CairoMakie for training loss visualization)
 include("visualization.jl")
+# 11. Circuit visualization (uses CairoMakie for circuit diagrams)
+include("circuit_visualization.jl")
 
 end # module
