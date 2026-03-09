@@ -41,11 +41,12 @@ The codebase evolves through three stages, each solving problems from the previo
 src/
 ├── ParametricDFT.jl          # Main module: exports, include() ordering
 ├── qft.jl                    # QFT circuit → einsum contraction code
+├── entangled_qft.jl          # Entangled QFT circuit (XY correlation)
+├── tebd.jl                   # TEBD circuit (ring topology)
+├── mera.jl                   # MERA-inspired circuit (hierarchical topology)
 ├── loss.jl                   # Loss functions: L1Norm, L2Norm, MSELoss
 ├── basis.jl                  # AbstractSparseBasis: QFTBasis,
-│                             #   EntangledQFTBasis, TEBDBasis
-├── entangled_qft.jl          # Entangled QFT circuit (XY correlation)
-├── tebd.jl                   # TEBD circuit (brickwork topology)
+│                             #   EntangledQFTBasis, TEBDBasis, MERABasis
 ├── manifolds.jl              # Riemannian manifolds: UnitaryManifold,
 │                             #   PhaseManifold, batched linear algebra
 ├── optimizers.jl             # RiemannianGD (Armijo), RiemannianAdam
@@ -53,7 +54,8 @@ src/
 │                             #   early stopping
 ├── compression.jl            # Image compression using learned bases
 ├── serialization.jl          # Basis save/load (JSON3)
-└── visualization.jl          # Training loss plots (CairoMakie)
+├── visualization.jl          # Training loss plots (CairoMakie)
+└── circuit_visualization.jl  # Circuit diagram generation (plot_circuit)
 
 ext/
 └── CUDAExt.jl                # GPU: batched CUBLAS, 2×2 inverse formula
@@ -68,6 +70,8 @@ test/
 ├── compression_tests.jl      # Compression round-trip tests
 ├── entangled_qft_tests.jl    # Entangled QFT tests
 ├── tebd_tests.jl             # TEBD circuit tests
+├── mera_tests.jl             # MERA circuit tests
+├── circuit_visualization_tests.jl  # Circuit visualization tests
 ├── serialization_tests.jl    # Save/load round-trip tests
 └── cuda_tests.jl             # GPU-specific tests (requires CUDA)
 ```
@@ -185,7 +189,7 @@ Two manifold types implemented:
 - Transport: $Gamma_(bold(U) arrow.r bold(U)') (bold(v)) = "proj"(bold(U)', bold(v))$ (re-project onto new tangent space)
 
 *`PhaseManifold`* --- $U(1)^d$ product of unit circles:
-- Projection: $"proj"(bold(z), bold(g)) = upright(i) dot "Im"(overline(bold(z)) dot.o bold(g)) dot.o bold(z)$  #h(1em) ($upright(i) = sqrt(-1)$)
+- Projection: $"proj"(bold(z), bold(g)) = upright(i) dot "Im"(overline(bold(z)) circle.stroked.tiny bold(g)) circle.stroked.tiny bold(z)$  #h(1em) ($upright(i) = sqrt(-1)$)
 - Retraction: $"Retr"_(bold(z))(bold(xi)) = (bold(z) + alpha bold(xi)) ⊘ |bold(z) + alpha bold(xi)|$ (element-wise normalize)
 - Transport: $Gamma_(bold(z) arrow.r bold(z)') (bold(v)) = "proj"(bold(z)', bold(v))$
 
@@ -533,7 +537,7 @@ On GPU, the batched operations dispatch to optimized kernels:
 
 = Sparse Basis Types
 
-Three basis types are implemented, each a subtype of `AbstractSparseBasis`:
+Four basis types are implemented, each a subtype of `AbstractSparseBasis`:
 
 #table(
   columns: 3,
@@ -545,9 +549,22 @@ Three basis types are implemented, each a subtype of `AbstractSparseBasis`:
   [QFT + entanglement gates $E_k$ between row/column qubits (captures XY correlation)],
   [QFT params + $n$ additional phases $phi_k$],
   [`TEBDBasis`],
-  [Ring topology of Hadamard + controlled-phase gates (brickwork pattern)],
+  [Ring topology of Hadamard + controlled-phase gates],
   [$H in U(2)$, $T_k in U(1)^4$],
+  [`MERABasis`],
+  [MERA-inspired hierarchical topology of Hadamard + controlled-phase gates (multi-scale)],
+  [$H in U(2)$, $D_k, W_k in U(1)^4$],
 )
+
+== MERA-inspired vs TEBD: Connectivity Patterns
+
+The key difference between TEBD and the MERA-inspired basis is the _connectivity pattern_ of controlled-phase gates. Both use the same gate parameterization ($"diag"(1, 1, 1, e^(i phi_k))$), but they wire gates to different qubit pairs:
+
+- *TEBD (ring topology)*: Each qubit connects to its nearest neighbor in a ring: $(1,2), (2,3), dots, (n-1,n), (n,1)$. This gives $n$ gates per dimension with $O(n)$ depth. The ring captures _local_ correlations with periodic boundary conditions.
+
+- *MERA-inspired (hierarchical topology)*: Gates are organized in $log_2 n$ layers with increasing stride $s = 2^(l-1)$. Layer 1 connects nearby qubits (fine-scale correlations), layer 2 connects qubits at distance 2 (medium-scale), and so on. This gives $2(n-1)$ gates per dimension with $O(log n)$ depth. The hierarchy naturally captures _multi-scale_ features --- analogous to how image features exist at different scales (edges $arrow.r$ textures $arrow.r$ objects). Unlike true MERA, all gates are unitary controlled-phase gates rather than coarse-graining isometries, since image compression requires an invertible transform.
+
+Both basis types require power-of-2 qubit counts per dimension. For 2D images, row and column dimensions are processed independently (separable structure).
 
 Frequency-dependent truncation (`topk_truncate`) for compression. The score for coefficient $(i,j)$ is:
 
@@ -567,7 +584,7 @@ Run `examples/optimizer_benchmark.jl` to compare:
 == Image Compression
 
 Run `examples/basis_demo.jl` for a complete image compression workflow:
-1. Load image and create a sparse basis (`QFTBasis`, `EntangledQFTBasis`, or `TEBDBasis`)
+1. Load image and create a sparse basis (`QFTBasis`, `EntangledQFTBasis`, `TEBDBasis`, or `MERABasis`)
 2. Train the basis on the image using `train_basis!`
 3. Compress the image using `compress_image`
 4. Compare reconstruction quality with the standard Fourier basis
@@ -577,6 +594,6 @@ Run `examples/basis_demo.jl` for a complete image compression workflow:
 - Train the tensor network on the dataset and compare with Fourier basis
 - Use GPU to speed up training (see `ext/CUDAExt.jl`)
 - Experiment with different loss functions (L1, MSE, Hybrid)
-- Experiment with different basis types (QFT, Entangled QFT, TEBD)
+- Experiment with different basis types (QFT, Entangled QFT, TEBD, MERA-inspired)
 - Add edge detection features
 - Compare compression quality at different compression ratios (60%, 70%, 95%)

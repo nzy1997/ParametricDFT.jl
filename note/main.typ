@@ -113,7 +113,7 @@ $
   F_n bold(x) = (mat(
   1, 1;
   1, -1
-) times.o I_(n/2)) mat(I_(n/2), 0; 0, D_(n/2)) vec(
+) times.circle I_(n/2)) mat(I_(n/2), 0; 0, D_(n/2)) vec(
   F_(n/2) bold(x)_("odd"),
   F_(n/2) bold(x)_("even")
 ),
@@ -150,11 +150,11 @@ This diagonal matrix corresponds to operation: if $q_0$ is $0$ (odd index), the 
 // Similarly, we can define $"ctrl"_2(A)$, $"ctrl"_3(A)$, ..., $"ctrl"_n(A)$ if $q_2 = 1$, $q_3 = 1$, ..., $q_n = 1$, the operation $A$ is applied.
 // Then we have:
 // $
-//   mat(I_A times.o I_B, 0; 0, A times.o B) = "ctrl"_1(A times.o I_B) "ctrl"_1(I_A times.o B)
+//   mat(I_A times.circle I_B, 0; 0, A times.circle B) = "ctrl"_1(A times.circle I_B) "ctrl"_1(I_A times.circle B)
 // $
 Observe that
 $
-D_n = "diag"(1, omega^(n/2)) times.o "diag"(1, omega, omega^2, ..., omega^(n/2-1)) = "diag"(1, omega^(n/2)) times.o "diag"(1, omega^(n/4)) times.o dots times.o "diag"(1, omega)$. We have
+D_n = "diag"(1, omega^(n/2)) times.circle "diag"(1, omega, omega^2, ..., omega^(n/2-1)) = "diag"(1, omega^(n/2)) times.circle "diag"(1, omega^(n/4)) times.circle dots times.circle "diag"(1, omega)$. We have
 $
   mat(I_(n/2), 0; 0, D_(n/2)) = "ctrl"_0("diag"(1, omega^(n/4))_1) "ctrl"_0("diag"(1, omega^(n/8))_2) ... "ctrl"_0 ("diag"(1, omega)_(log_2 n)),
 $
@@ -247,89 +247,98 @@ The circuit structure for $n = 4$ qubits per dimension is shown below. Each row 
 
 #figure(canvas({
   import draw: *
-  let n = 8
-  // x_n block (row qubits x_0, x_1, x_2, x_3 from top to bottom)
-  ngate((-3, 0), 4, "x_n", text:[$bold(x)$], gap-y: 0.8, width: 0.7)
+  let n = 4
+  let dy = 0.8
+  let ysep = (n + 0.5) * dy
+  // Single combined input tensor
+  let ytop = dy / 2
+  let ybot = -ysep - (n - 1) * dy - dy / 2
+  let xc = -3
+  let hw = 0.35
+  rect((xc - hw, ybot), (xc + hw, ytop), fill: white, name: "img")
+  content("img", [$bold(x)$])
+  // Dashed separator inside the input block
+  line((xc - hw, -(n - 0.25) * dy), (xc + hw, -(n - 0.25) * dy), stroke: (dash: "dashed", paint: gray))
 
-  // x_0 qubit line (topmost, y=1.2)
-  ngate((7.0, 1.2), 1, "Hx0", text:[$H$], gap-y: 0.8, width: 0.5)
-  line("x_n.o0", "Hx0.i0")
-  line("Hx0.o0", (9.4, 1.2))
-  cphase(6.2, 1.2, 0.4, 1, name: "Mx01")
-  cphase(5.4, 1.2, -0.4, 2, name: "Mx02")
-  cphase(4.6, 1.2, -1.2, 3, name: "Mx03")
+  // Row qubit x_0 (topmost, y=0)
+  ngate((7.0, 0), 1, "Hx0", text:[$H$], gap-y: dy, width: 0.5)
+  line((xc + hw, 0), "Hx0.i0")
+  line("Hx0.o0", (9.4, 0))
+  cphase(6.2, 0, -dy, 1, name: "Mx01")
+  cphase(5.4, 0, -2 * dy, 2, name: "Mx02")
+  cphase(4.6, 0, -3 * dy, 3, name: "Mx03")
 
-  // x_1 qubit line (y=0.4)
-  ngate((3.2, 0.4), 1, "Hx1", text:[$H$], gap-y: 0.8, width: 0.5)
+  // Row qubit x_1 (y=-dy)
+  ngate((3.2, -dy), 1, "Hx1", text:[$H$], gap-y: dy, width: 0.5)
   line("Hx1.o0", "Mx01ctrl2")
-  line("Mx01ctrl2", (9.4, 0.4))
-  line("x_n.o1", "Hx1.i0")
-  cphase(2.4, 0.4, -0.4, 1, name: "Mx11")
-  cphase(1.6, 0.4, -1.2, 2, name: "Mx12")
+  line("Mx01ctrl2", (9.4, -dy))
+  line((xc + hw, -dy), "Hx1.i0")
+  cphase(2.4, -dy, -2 * dy, 1, name: "Mx11")
+  cphase(1.6, -dy, -3 * dy, 2, name: "Mx12")
 
-  // x_2 qubit line (y=-0.4)
-  ngate((0.2, -0.4), 1, "Hx2", text:[$H$], gap-y: 0.8, width: 0.5)
+  // Row qubit x_2 (y=-2dy)
+  ngate((0.2, -2 * dy), 1, "Hx2", text:[$H$], gap-y: dy, width: 0.5)
   line("Hx2.o0", "Mx11ctrl2")
   line("Mx11ctrl2", "Mx02ctrl2")
-  line("Mx02ctrl2", (9.4, -0.4))
-  line("x_n.o2", "Hx2.i0")
-  cphase(-0.6, -0.4, -1.2, 1, name: "Mx21")
+  line("Mx02ctrl2", (9.4, -2 * dy))
+  line((xc + hw, -2 * dy), "Hx2.i0")
+  cphase(-0.6, -2 * dy, -3 * dy, 1, name: "Mx21")
 
-  // x_3 qubit line (bottommost row qubit, y=-1.2)
-  ngate((-2.0, -1.2), 1, "Hx3", text:[$H$], gap-y: 0.8, width: 0.5)
+  // Row qubit x_3 (bottommost row qubit, y=-3dy)
+  ngate((-2.0, -3 * dy), 1, "Hx3", text:[$H$], gap-y: dy, width: 0.5)
   line("Hx3.o0", "Mx21ctrl2")
   line("Mx21ctrl2", "Mx12ctrl2")
   line("Mx12ctrl2", "Mx03ctrl2")
-  line("Mx03ctrl2", (9.4, -1.2))
-  line("x_n.o3", "Hx3.i0")
+  line("Mx03ctrl2", (9.4, -3 * dy))
+  line((xc + hw, -3 * dy), "Hx3.i0")
 
-  // y_n block (column qubits y_0, y_1, y_2, y_3 from top to bottom)
-  ngate((-3, -3.2), 4, "y_n", text:[$bold(y)$], gap-y: 0.8, width: 0.7)
+  // Column qubit y_0 (y=-ysep)
+  ngate((7.0, -ysep), 1, "Hy0", text:[$H$], gap-y: dy, width: 0.5)
+  line((xc + hw, -ysep), "Hy0.i0")
+  line("Hy0.o0", (9.4, -ysep))
+  cphase(6.2, -ysep, -ysep - dy, 1, name: "My01")
+  cphase(5.4, -ysep, -ysep - 2 * dy, 2, name: "My02")
+  cphase(4.6, -ysep, -ysep - 3 * dy, 3, name: "My03")
 
-  // y_0 qubit line (topmost column qubit, y=-2.0)
-  ngate((7.0, -2.0), 1, "Hy0", text:[$H$], gap-y: 0.8, width: 0.5)
-  line("y_n.o0", "Hy0.i0")
-  line("Hy0.o0", (9.4, -2.0))
-  cphase(6.2, -2.0, -2.8, 1, name: "My01")
-  cphase(5.4, -2.0, -3.6, 2, name: "My02")
-  cphase(4.6, -2.0, -4.4, 3, name: "My03")
-
-  // y_1 qubit line (y=-2.8)
-  ngate((3.2, -2.8), 1, "Hy1", text:[$H$], gap-y: 0.8, width: 0.5)
+  // Column qubit y_1 (y=-ysep-dy)
+  ngate((3.2, -ysep - dy), 1, "Hy1", text:[$H$], gap-y: dy, width: 0.5)
   line("Hy1.o0", "My01ctrl2")
-  line("My01ctrl2", (9.4, -2.8))
-  line("y_n.o1", "Hy1.i0")
-  cphase(2.4, -2.8, -3.6, 1, name: "My11")
-  cphase(1.6, -2.8, -4.4, 2, name: "My12")
+  line("My01ctrl2", (9.4, -ysep - dy))
+  line((xc + hw, -ysep - dy), "Hy1.i0")
+  cphase(2.4, -ysep - dy, -ysep - 2 * dy, 1, name: "My11")
+  cphase(1.6, -ysep - dy, -ysep - 3 * dy, 2, name: "My12")
 
-  // y_2 qubit line (y=-3.6)
-  ngate((0.2, -3.6), 1, "Hy2", text:[$H$], gap-y: 0.8, width: 0.5)
+  // Column qubit y_2 (y=-ysep-2dy)
+  ngate((0.2, -ysep - 2 * dy), 1, "Hy2", text:[$H$], gap-y: dy, width: 0.5)
   line("Hy2.o0", "My11ctrl2")
   line("My11ctrl2", "My02ctrl2")
-  line("My02ctrl2", (9.4, -3.6))
-  line("y_n.o2", "Hy2.i0")
-  cphase(-0.6, -3.6, -4.4, 1, name: "My21")
+  line("My02ctrl2", (9.4, -ysep - 2 * dy))
+  line((xc + hw, -ysep - 2 * dy), "Hy2.i0")
+  cphase(-0.6, -ysep - 2 * dy, -ysep - 3 * dy, 1, name: "My21")
 
-  // y_3 qubit line (bottommost column qubit, y=-4.4)
-  ngate((-2.0, -4.4), 1, "Hy3", text:[$H$], gap-y: 0.8, width: 0.5)
+  // Column qubit y_3 (y=-ysep-3dy)
+  ngate((-2.0, -ysep - 3 * dy), 1, "Hy3", text:[$H$], gap-y: dy, width: 0.5)
   line("Hy3.o0", "My21ctrl2")
   line("My21ctrl2", "My12ctrl2")
   line("My12ctrl2", "My03ctrl2")
-  line("My03ctrl2", (9.4, -4.4))
-  line("y_n.o3", "Hy3.i0")
+  line("My03ctrl2", (9.4, -ysep - 3 * dy))
+  line((xc + hw, -ysep - 3 * dy), "Hy3.i0")
+
+  // Qubit labels
+  for i in range(n) {
+    content((-3.8, -i * dy), [$x_#i$])
+    content((9.8, -i * dy), [$x'_#i$])
+    content((-3.8, -ysep - i * dy), [$y_#i$])
+    content((9.8, -ysep - i * dy), [$y'_#i$])
+  }
+  // Dashed separator on the circuit
+  line((-4.0, -(n - 0.25) * dy), (9.4, -(n - 0.25) * dy), stroke: (dash: "dashed", paint: gray))
 
   // Entanglement gates E_k connecting x_{n-k} with y_{n-k}
-  // E_4: connects x_3 (y=-1.2) with y_3 (y=-4.4) - after H on x_3, y_3
-  egate(-1.4, -1.2, -4.4, 4, name: "E4")
-
-  // E_3: connects x_2 (y=-0.4) with y_2 (y=-3.6) - after H on x_2, y_2
-  egate(0.8, -0.4, -3.6, 3, name: "E3")
-
-  // E_2: connects x_1 (y=0.4) with y_1 (y=-2.8) - after H on x_1, y_1
-  egate(3.8, 0.4, -2.8, 2, name: "E2")
-
-  // E_1: connects x_0 (y=1.2) with y_0 (y=-2.0) - after H on x_0, y_0
-  egate(8.2, 1.2, -2.0, 1, name: "E1")
+  egate(-1.4, -3 * dy, -ysep - 3 * dy, 4, name: "E4")
+  egate(0.8, -2 * dy, -ysep - 2 * dy, 3, name: "E3")
+  egate(3.8, -dy, -ysep - dy, 2, name: "E2")
+  egate(8.2, 0, -ysep, 1, name: "E1")
 }))
 
 Summarizing the gate applications for each qubit:
@@ -340,7 +349,7 @@ For a square $2^n times 2^n$ image encoded with $n$ row qubits and $n$ column qu
 
 The total transformation becomes:
 $
-  cal(T)_"entangled" = U_"entangle" dot (F_n times.o F_n)
+  cal(T)_"entangled" = U_"entangle" dot (F_n times.circle F_n)
 $
 where $U_"entangle" = product_(k=1)^n E_k$ is the product of all entanglement gates acting on qubit pairs $(x_(n-k), y_(n-k))$, and $F_n$ is the $n$-qubit QFT applied along each spatial dimension.
 
@@ -367,19 +376,26 @@ Time Evolving Block Decimation (TEBD) is a tensor network ansatz originally deve
   let dy = 0.8
   let n = 4
   let ysep = (n + 0.5) * dy
-  // Input tensors
-  ngate((-2.5, -(n - 1) * dy / 2), n, "x_n", text:[$bold(x)$], gap-y: dy, width: 0.7)
-  ngate((-2.5, -ysep - (n - 1) * dy / 2), n, "y_n", text:[$bold(y)$], gap-y: dy, width: 0.7)
+  // Single combined input tensor for all qubits
+  // Use a manually drawn rect to span all qubit lines with a gap
+  let ytop = dy / 2
+  let ybot = -ysep - (n - 1) * dy - dy / 2
+  let xc = -2.5
+  let hw = 0.35
+  rect((xc - hw, ybot), (xc + hw, ytop), fill: white, name: "img")
+  content("img", [$bold(x)$])
+  // Dashed separator inside the input block between row and column qubits
+  line((xc - hw, -(n - 0.25) * dy), (xc + hw, -(n - 0.25) * dy), stroke: (dash: "dashed", paint: gray))
   // Draw qubit lines and labels
   for i in range(n) {
-    line("x_n.o" + str(i), (9.5, -i * dy), stroke: gray)
+    line((xc + hw, -i * dy), (9.5, -i * dy), stroke: gray)
     content((-3.3, -i * dy), [$|x_#(i + 1) angle.r$])
     content((9.9, -i * dy), [$x'_#(i + 1)$])
-    line("y_n.o" + str(i), (9.5, -ysep - i * dy), stroke: gray)
+    line((xc + hw, -ysep - i * dy), (9.5, -ysep - i * dy), stroke: gray)
     content((-3.3, -ysep - i * dy), [$|y_#(i + 1) angle.r$])
     content((9.9, -ysep - i * dy), [$y'_#(i + 1)$])
   }
-  // Dashed separator between row and column qubits
+  // Dashed separator between row and column qubits on the circuit
   line((-3.5, -(n - 0.25) * dy), (9.5, -(n - 0.25) * dy), stroke: (dash: "dashed", paint: gray))
   // Hadamard gates for all qubits
   for i in range(n) {
@@ -400,124 +416,152 @@ Time Evolving Block Decimation (TEBD) is a tensor network ansatz originally deve
   tebdgate(5.5, -ysep, -ysep - 3 * dy, [$T_(y 4)$], name: "Ty4")
 }), caption: [TEBD circuit for $n = 4$ row and column qubits with ring topology. Hadamard gates $H$ are applied to all qubits, followed by nearest-neighbor controlled-phase gates $T_(x k)$ (row ring) and $T_(y k)$ (column ring). Wrap-around gates $T_(x 4)$ and $T_(y 4)$ close each ring.])
 
-Each two-qubit gate in the TEBD circuit is a parameterized controlled-phase gate acting on two adjacent qubits. In our implementation, we use $T_k = "diag"(1, 1, 1, e^(i phi_k))$ with a single learnable phase $phi_k$ per gate. More generally, common parameterization choices include:
-
-+ *Full $U(4)$ unitary*: The most general form with 16 complex parameters constrained by unitarity ($U U^dagger = I$). This lies on the unitary manifold $U(4)$.
-
-+ *Hardware-efficient ansatz*: Decompose each two-qubit gate as single-qubit rotations followed by an entangling gate:
-  $
-    U_k = (R_z (phi_1) R_y (theta_1) times.o R_z (phi_2) R_y (theta_2)) dot "CZ" dot (R_z (phi_3) R_y (theta_3) times.o R_z (phi_4) R_y (theta_4))
-  $
-  where $R_y (theta) = exp(-i theta Y / 2)$, $R_z (phi) = exp(-i phi Z / 2)$, and CZ is the controlled-Z gate. This uses 8 real parameters per gate.
-
-+ *XX+YY+ZZ interaction*: Inspired by Hamiltonian simulation:
-  $
-    U_k = exp(i(alpha_k X times.o X + beta_k Y times.o Y + gamma_k Z times.o Z))
-  $
-  with only 3 real parameters $(alpha_k, beta_k, gamma_k)$ controlling the entanglement strength.
-
-Direct evaluation of this tensor network takes $O(n L dot 4^2) = O(n L)$ operations for $L$ layers. The parameter space consists of $floor(L\/2) floor(n\/2) + ceil(L\/2) floor((n-1)\/2)$ two-qubit gates (approximately $(n\/2) dot L$ gates for large $n$). The total parameter manifold is:
+Each two-qubit gate in the TEBD circuit is a controlled-phase gate:
 $
-  cal(M)_"TEBD" = product_(k=1)^(|"gates"|) U(4)
+  T_k = "diag"(1, 1, 1, e^(i phi_k))
+$
+with a single learnable phase $phi_k$ per gate. This gate multiplies a phase factor $e^(i phi_k)$ when both qubits are in state $|1 angle.r$, identical in form to the $M_k$ gates in the QFT circuit but with learnable phases instead of fixed ones.
+
+For $n$ row qubits and $n$ column qubits with ring topology, we have $n$ row ring gates and $n$ column ring gates, giving $2n$ total learnable phases. The parameter manifold is:
+$
+  cal(M)_"TEBD" = product_(k=1)^(2n) U(1)^4
 $
 
-For Riemannian optimization, we optimize on this product of unitary manifolds using the same gradient descent approach as the QFT basis.
+For Riemannian optimization, we optimize on this product of phase manifolds using the same gradient descent approach as the QFT basis. Direct evaluation of the tensor network takes $O(n)$ operations (one $2 times 2$ gate application per controlled-phase gate).
 
-== Alternative Basis: Multi-scale Entanglement Renormalization Ansatz (MERA)
-The Multi-scale Entanglement Renormalization Ansatz (MERA) is a hierarchical tensor network that naturally captures _multi-scale correlations_. It consists of alternating layers of _disentanglers_ (two-qubit unitaries) and _isometries_ (coarse-graining maps), forming a tree-like structure. For $n = 2^k$ qubits, MERA has $k$ layers, with each layer reducing the number of effective qubits by half.
+== Alternative Basis: MERA-inspired Hierarchical Circuit
+The Multi-scale Entanglement Renormalization Ansatz (MERA) is a hierarchical tensor network inspired by the renormalization group. The original MERA for quantum many-body systems uses _disentanglers_ (full $U(4)$ unitaries) and _isometries_ (coarse-graining maps on the Stiefel manifold $"St"(2,4)$). However, our application requires a _unitary_ transform $cal(T): CC^(2^n) -> CC^(2^n)$ for image compression --- true coarse-graining would reduce the output dimension, making the transform non-invertible. Instead, we borrow MERA's _hierarchical connectivity pattern_ while parameterizing all gates as controlled-phase gates, consistent with the QFT and TEBD bases. We call the resulting circuit a _MERA-inspired_ basis.
 
-#let isogate(pos, n, name, text_content: none, gap-y: 1, width: 0.9, padding-y: 0.25) = {
+For $n = 2^k$ qubits, the MERA-inspired circuit has $k = log_2 n$ layers. Each layer $l$ has stride $s = 2^(l-1)$ and $n \/ (2s)$ pairs of gates. Within each pair, we apply a _disentangler_ gate followed by an _isometry_ gate, both parameterized as controlled-phase gates $"diag"(1, 1, 1, e^(i phi))$ acting on qubit pairs determined by the MERA connectivity:
+
+- *Disentangler* at pair $p$, layer $l$: acts on qubits $(2 p s + 2,  (2 p s + s + 2) mod n)$
+- *Isometry* at pair $p$, layer $l$: acts on qubits $(2 p s + 1,  2 p s + s + 1)$
+
+#let meragate(x, i, j, label, name: "M", gwidth: 0.6) = {
   import draw: *
-  // Horizontal isometry: 2 inputs on left, 1 output on right
-  // Shape: trapezoid wider on left, narrower on right
-  let height-in = gap-y * (n - 1) + 2 * padding-y
-  let height-out = padding-y * 2
-  
-  group(name: name, {
-    // Trapezoid: left side tall (2 inputs), right side short (1 output)
-    line(
-      (rel: (-width/2, -height-in/2), to: pos),
-      (rel: (width/2, -height-out/2), to: pos),
-      (rel: (width/2, height-out/2), to: pos),
-      (rel: (-width/2, height-in/2), to: pos),
-      close: true, fill: white, stroke: black
-    )
-    if text_content != none {
-      content(pos, text_content)
-    }
-    // Input anchors on left (2 inputs)
-    for i in range(n) {
-      let y = height-in/2 - padding-y - i * gap-y
-      anchor("i" + str(i), (rel: (-width/2, y), to: pos))
-    }
-    // Output anchor on right (1 output, centered)
-    anchor("o0", (rel: (width/2, 0), to: pos))
-  })
+  circle((x, i), radius: 0.05, fill: black, stroke: none, name: name + "c1")
+  circle((x, j), radius: 0.05, fill: black, stroke: none, name: name + "c2")
+  ngate((x, (i + j) / 2), 1, name, text: text(8pt)[#label], gap-y: 0.8, width: gwidth)
+  line(name + "c1", name + ".t")
+  line(name + "c2", name + ".b")
 }
 
 #figure(canvas({
   import draw: *
-  let n = 4
-  let dy = 0.8
-  // Input tensor
-  ngate((-2.0, -(n - 1) * dy / 2), n, "x_n", text:[$bold(x)$], gap-y: dy, width: 0.7)
-  // Qubit labels on left
-  for i in range(n){
-    content((-2.8, -i * dy), [$q_#i$])
+  let n = 8
+  let dy = 0.6
+  let ysep = (n + 0.5) * dy
+  let xend = 12.5
+  let gw = 0.6  // gate width (same for D and W)
+  // Single combined input tensor
+  let ytop = dy / 2
+  let ybot = -ysep - (n - 1) * dy - dy / 2
+  let xc = -2.5
+  let hw = 0.35
+  rect((xc - hw, ybot), (xc + hw, ytop), fill: white, name: "img")
+  content("img", [$bold(x)$])
+  line((xc - hw, -(n - 0.25) * dy), (xc + hw, -(n - 0.25) * dy), stroke: (dash: "dashed", paint: gray))
+  // Draw qubit lines and labels
+  for i in range(n) {
+    line((xc + hw, -i * dy), (xend, -i * dy), stroke: gray)
+    content((-3.3, -i * dy), [$x_#(i + 1)$])
+    content((xend + 0.5, -i * dy), [$x'_#(i + 1)$])
+    line((xc + hw, -ysep - i * dy), (xend, -ysep - i * dy), stroke: gray)
+    content((-3.3, -ysep - i * dy), [$y_#(i + 1)$])
+    content((xend + 0.5, -ysep - i * dy), [$y'_#(i + 1)$])
   }
-  // Layer 1: Disentanglers on pairs (q0-q1, q2-q3)
-  ngate((0.0, -0.5 * dy), 2, "D1", text:[$D_1$], gap-y: dy, width: 0.7)
-  ngate((0.0, -2.5 * dy), 2, "D2", text:[$D_2$], gap-y: dy, width: 0.7)
-  // Horizontal lines: input to D1, D2
-  line("x_n.o0", "D1.i0", stroke: gray)
-  line("x_n.o1", "D1.i1", stroke: gray)
-  line("x_n.o2", "D2.i0", stroke: gray)
-  line("x_n.o3", "D2.i1", stroke: gray)
-  // Layer 1: Isometries (2->1 coarse-graining)
-  isogate((2.0, -0.5 * dy), 2, "W1", text_content: [$W_1$], gap-y: dy, width: 0.9)
-  isogate((2.0, -2.5 * dy), 2, "W2", text_content: [$W_2$], gap-y: dy, width: 0.9)
-  // Lines: D1, D2 to isometries (horizontal)
-  line("D1.o0", "W1.i0", stroke: gray)
-  line("D1.o1", "W1.i1", stroke: gray)
-  line("D2.o0", "W2.i0", stroke: gray)
-  line("D2.o1", "W2.i1", stroke: gray)
-  // Layer 2: Disentangler on coarse-grained qubits
-  ngate((4.2, -1.5 * dy), 2, "D3", text:[$D_3$], gap-y: 2 * dy, width: 0.7)
-  // Lines from isometries to D3 (merge towards center)
-  line("W1.o0", "D3.i0", stroke: gray)
-  line("W2.o0", "D3.i1", stroke: gray)
-  // Layer 2: Final isometry
-  isogate((6.0, -1.5 * dy), 2, "W3", text_content: [$W_3$], gap-y: 2 * dy, width: 0.9)
-  // Lines: D3 to final isometry
-  line("D3.o0", "W3.i0", stroke: gray)
-  line("D3.o1", "W3.i1", stroke: gray)
-  // Output line
-  line("W3.o0", (8.0, -1.5 * dy), stroke: gray)
-  content((8.4, -1.5 * dy), [$tilde(q)$])
+  // Dashed separator on the circuit
+  line((-3.5, -(n - 0.25) * dy), (xend, -(n - 0.25) * dy), stroke: (dash: "dashed", paint: gray))
+  // Hadamard gates for all qubits
+  for i in range(n) {
+    ngate((-1.2, -i * dy), 1, "Hx" + str(i), text:[$H$], gap-y: dy, width: 0.45)
+    ngate((-1.2, -ysep - i * dy), 1, "Hy" + str(i), text:[$H$], gap-y: dy, width: 0.45)
+  }
+  // === Row MERA (8 qubits, 3 layers) ===
+  // Layer 1 (s=1, 4 pairs)
+  //   Disentanglers: (2,3), (4,5), (6,7) at x1d; wrap-around (8,1) at x1d2
+  let x1d = 1.0
+  meragate(x1d, -1 * dy, -2 * dy, [$D$], name: "xD1", gwidth: gw)
+  meragate(x1d, -3 * dy, -4 * dy, [$D$], name: "xD2", gwidth: gw)
+  meragate(x1d, -5 * dy, -6 * dy, [$D$], name: "xD3", gwidth: gw)
+  // Wrap-around D gate (8,1) — placed at its own x to avoid overlap
+  let x1d2 = 2.2
+  meragate(x1d2, -7 * dy, 0, [$D$], name: "xD4", gwidth: gw)
+  //   Isometries: (1,2), (3,4), (5,6), (7,8)
+  let x1w = 3.4
+  meragate(x1w, 0, -1 * dy, [$W$], name: "xW1", gwidth: gw)
+  meragate(x1w, -2 * dy, -3 * dy, [$W$], name: "xW2", gwidth: gw)
+  meragate(x1w, -4 * dy, -5 * dy, [$W$], name: "xW3", gwidth: gw)
+  meragate(x1w, -6 * dy, -7 * dy, [$W$], name: "xW4", gwidth: gw)
+  // Layer 2 (s=2, 2 pairs)
+  //   Disentanglers: (2,4), (6,8)
+  let x2d = 5.5
+  meragate(x2d, -1 * dy, -3 * dy, [$D$], name: "xD5", gwidth: gw)
+  meragate(x2d, -5 * dy, -7 * dy, [$D$], name: "xD6", gwidth: gw)
+  //   Isometries: (1,3), (5,7)
+  let x2w = 7.2
+  meragate(x2w, 0, -2 * dy, [$W$], name: "xW5", gwidth: gw)
+  meragate(x2w, -4 * dy, -6 * dy, [$W$], name: "xW6", gwidth: gw)
+  // Layer 3 (s=4, 1 pair) — compressed
+  //   Disentangler: (2,6)
+  let x3d = 9.0
+  meragate(x3d, -1 * dy, -5 * dy, [$D$], name: "xD7", gwidth: gw)
+  //   Isometry: (1,5)
+  let x3w = 10.5
+  meragate(x3w, 0, -4 * dy, [$W$], name: "xW7", gwidth: gw)
+  // === Column MERA (8 qubits, 3 layers) ===
+  // Layer 1
+  meragate(x1d, -ysep - 1 * dy, -ysep - 2 * dy, [$D$], name: "yD1", gwidth: gw)
+  meragate(x1d, -ysep - 3 * dy, -ysep - 4 * dy, [$D$], name: "yD2", gwidth: gw)
+  meragate(x1d, -ysep - 5 * dy, -ysep - 6 * dy, [$D$], name: "yD3", gwidth: gw)
+  meragate(x1d2, -ysep - 7 * dy, -ysep, [$D$], name: "yD4", gwidth: gw)
+  meragate(x1w, -ysep, -ysep - 1 * dy, [$W$], name: "yW1", gwidth: gw)
+  meragate(x1w, -ysep - 2 * dy, -ysep - 3 * dy, [$W$], name: "yW2", gwidth: gw)
+  meragate(x1w, -ysep - 4 * dy, -ysep - 5 * dy, [$W$], name: "yW3", gwidth: gw)
+  meragate(x1w, -ysep - 6 * dy, -ysep - 7 * dy, [$W$], name: "yW4", gwidth: gw)
+  // Layer 2
+  meragate(x2d, -ysep - 1 * dy, -ysep - 3 * dy, [$D$], name: "yD5", gwidth: gw)
+  meragate(x2d, -ysep - 5 * dy, -ysep - 7 * dy, [$D$], name: "yD6", gwidth: gw)
+  meragate(x2w, -ysep, -ysep - 2 * dy, [$W$], name: "yW5", gwidth: gw)
+  meragate(x2w, -ysep - 4 * dy, -ysep - 6 * dy, [$W$], name: "yW6", gwidth: gw)
+  // Layer 3
+  meragate(x3d, -ysep - 1 * dy, -ysep - 5 * dy, [$D$], name: "yD7", gwidth: gw)
+  meragate(x3w, -ysep, -ysep - 4 * dy, [$W$], name: "yW7", gwidth: gw)
   // Layer labels
-  content((0.0, 1.0), text(9pt)[Disentangle])
-  content((2.0, 1.0), text(9pt)[Coarse-grain])
-  content((5.1, 1.0), text(9pt)[Layer 2])
-}), caption: [MERA circuit for $n=4$ qubits: disentanglers $D_k$ (rectangles) remove short-range entanglement, isometries $W_k$ (trapezoids) perform 2-to-1 coarse-graining. Each layer halves the number of effective qubits.])
+  content((2.2, 1.2), text(8pt)[Layer 1])
+  content((6.3, 1.2), text(8pt)[Layer 2])
+  content((9.7, 1.2), text(8pt)[Layer 3])
+  line((0.2, 0.9), (4.2, 0.9), stroke: gray)
+  line((4.8, 0.9), (7.8, 0.9), stroke: gray)
+  line((8.3, 0.9), (11.2, 0.9), stroke: gray)
+}), caption: [MERA-inspired circuit for $n=8$ row and column qubits (16 qubits total). All gates are controlled-phase gates with learnable phases. Disentanglers $D$ and isometries $W$ follow the hierarchical MERA-inspired connectivity: layer 1 (stride 1) connects nearest neighbors, layer 2 (stride 2) connects qubits at distance 2, layer 3 (stride 4) connects distant qubits. Row and column qubits are processed independently.])
 
-In this diagram, there are two types of parameterized gates:
-
-+ *Disentanglers* $D_k in U(4)$: Parameterized $4 times 4$ unitary matrices acting on two adjacent qubits before coarse-graining. Same parameterization options as TEBD gates (full $U(4)$, hardware-efficient, or XX+YY+ZZ).
-
-+ *Isometries* $W_k: bb(C)^4 -> bb(C)^2$: Parameterized $2 times 4$ matrices that map two qubits to one qubit (coarse-graining). They satisfy the isometry constraint $W W^dagger = I_2$, lying on the Stiefel manifold $"St"(2, 4)$. Parameterization options include:
-  - *Full Stiefel*: Any $2 times 4$ matrix with orthonormal rows, 8 real parameters
-  - *Structured*: $W = mat(cos theta, sin theta e^(i phi_1), 0, 0; 0, 0, cos psi, sin psi e^(i phi_2))$ with 4 real parameters (block-diagonal structure)
-
-Direct evaluation of this tensor network takes $O(n)$ operations total, since each layer processes $O(2^(k-l))$ qubits at level $l$ and there are $k = log_2 n$ layers. For $n = 2^k$ input qubits, the parameter count is:
-- Layer $l$: $2^(k-l-1)$ disentanglers + $2^(k-l-1)$ isometries
-- Total: $sum_(l=0)^(k-1) 2^(k-l-1) = n - 1$ disentanglers and $n - 1$ isometries
-
-The total parameter manifold is:
+Both disentanglers and isometries use identical controlled-phase gate parameterization:
 $
-  cal(M)_"MERA" = (product_(k=1)^(n-1) U(4)) times (product_(k=1)^(n-1) "St"(2, 4))
+  D_k = W_k = "diag"(1, 1, 1, e^(i phi_k))
+$
+with one learnable phase $phi_k$ per gate. The distinction between "disentangler" and "isometry" is purely in their _connectivity_ (which qubit pairs they act on), not their functional form.
+
+*Why controlled-phase gates instead of full unitaries?*
+
++ *Unitarity requirement*: Image compression requires an invertible transform $cal(T)$ with $cal(T)^(-1)$. True MERA isometries ($2 times 4$ matrices on $"St"(2,4)$) reduce dimensions and cannot be inverted. We need all gates to be unitary ($2 times 2$) to preserve the output dimension.
+
++ *Consistency*: All basis types (QFT, Entangled QFT, TEBD) use controlled-phase gates. Using the same parameterization for the MERA-inspired basis ensures a uniform optimization framework, shared manifold operations, and fair comparison between basis types.
+
++ *Parsimony*: A full $U(4)$ gate has 16 real parameters. For small circuits (e.g., $n = 4$ qubits with 6 gates), this would give 96 parameters --- prone to overfitting when training on small image datasets. A single phase per gate keeps the model lean ($2(n-1)$ real parameters per dimension).
+
++ *Efficient evaluation*: Controlled-phase gates are diagonal in the computational basis, making them compatible with the einsum tensor contraction framework used for all basis types.
+
+For $n = 2^k$ qubits in one dimension, the parameter count is:
+- Layer $l$: $n \/ (2 dot 2^(l-1))$ disentanglers + $n \/ (2 dot 2^(l-1))$ isometries
+- Total: $sum_(l=1)^k 2 dot n \/ 2^l = 2(n - 1)$ gates per dimension
+
+For 2D images with $m$ row qubits and $n$ column qubits, the row and column circuits run independently, giving $2(m-1) + 2(n-1)$ total learnable phases. The parameter manifold is:
+$
+  cal(M)_"MERA" = product_(k=1)^(2(m-1)+2(n-1)) U(1)^4
 $
 
-For Riemannian optimization, we optimize on this product of unitary and Stiefel manifolds. The hierarchical structure naturally captures multi-scale features (edges → textures → objects), with only $O(log n)$ depth for $n$ qubits.
+The hierarchical connectivity captures multi-scale features: layer 1 gates act on nearest-neighbor qubits (fine-scale correlations), while deeper layers connect qubits at increasing stride (coarse-scale correlations). This gives $O(log n)$ circuit depth for $n$ qubits, compared to TEBD's $O(n)$ ring depth.
 
 == Learning a better Fourier basis
 Observing that in this representation, tensor parameters can be tuned without affecting the computational complexity, e.g. the parameters in $M_k$ and $H$. Can we find a transformation better than the Fourier basis? Or is Fourier basis already optimal for image processing?
