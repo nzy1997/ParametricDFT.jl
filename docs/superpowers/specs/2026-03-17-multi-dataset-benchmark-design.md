@@ -100,6 +100,8 @@ Three loader functions, all returning the same interface:
 
 All images normalized to [0, 1] Float64 grayscale.
 
+All data directories are relative to `@__DIR__` (i.e., `examples/benchmark/data/`).
+
 - **`load_quickdraw_dataset(; n_train, n_test, img_size=32, seed=42)`**
   - Downloads .npy files from Google storage if not present in `data/quickdraw/`
   - Categories: cat, dog, airplane, apple, bicycle
@@ -124,7 +126,7 @@ Core evaluation functions:
 - **`compute_metrics(original, recovered)`** — returns `(mse, psnr, ssim)` for a single image pair
 - **`evaluate_basis(basis, test_images, keep_ratios)`** — evaluates one basis at all ratios, returns `Dict(ratio => (mean_mse, std_mse, mean_psnr, std_psnr, mean_ssim, std_ssim))`
 - **`evaluate_fft_baseline_timed(test_images, keep_ratios)`** — same as above but for classical FFT, also returns elapsed time
-- **`train_and_time(BasisType, dataset, dataset_config, preset)`** — wraps `train_basis()` with `@elapsed`, returns `(trained_basis, history, elapsed_seconds)`. Sets `Random.seed!(42)` before training for reproducibility. Passes `device=:gpu`.
+- **`train_and_time(BasisType, dataset, dataset_config, preset)`** — wraps `train_basis()` with `@elapsed`, returns `(trained_basis, history, elapsed_seconds)`. Sets `Random.seed!(42)` before training for reproducibility. Passes `device=:gpu`. Computes loss truncation as `k = round(Int, 0.10 * dataset_config.img_size^2)`.
 - **`save_benchmark_results(path, results_dict)`** — serialize metrics + timing to JSON
 - **`load_benchmark_results(path)`** — deserialize
 - **`print_dataset_summary(results, keep_ratios)`** — formatted console table
