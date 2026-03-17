@@ -4,6 +4,8 @@
 
 Produce publication-quality benchmark results comparing all 4 basis types (QFT, EntangledQFT, TEBD, MERA) plus a classical FFT baseline across 3 diverse image datasets. The benchmark measures compression quality (PSNR, SSIM, MSE), training convergence, and timing.
 
+**All training runs use GPU** (via `device=:gpu`). CPU-only benchmarking is already covered by `examples/optimizer_benchmark.jl`.
+
 ## Datasets
 
 | Dataset | Source | Native Size | Target Size | Qubits (m=n) | Color Handling |
@@ -44,13 +46,15 @@ Early stopping is already implemented in the training pipeline (`early_stopping_
 
 Plan: run moderate first, then heavy.
 
+All training uses `device=:gpu`. Set `Random.seed!(42)` before each `train_basis()` call for reproducibility.
+
 ## File Structure
 
 ```
 examples/benchmark/
-├── Project.toml              # Dependencies (ParametricDFT, MLDatasets, Images,
-│                             #   ImageQualityIndexes, CairoMakie, NPZ, FFTW,
-│                             #   JSON3, Random, Statistics, Printf)
+├── Project.toml              # Dependencies; uses path = "../.." for ParametricDFT
+│                             #   Also: CUDA, Images, ImageQualityIndexes, CairoMakie,
+│                             #   NPZ, FFTW, JSON3, FileIO, Downloads
 ├── config.jl                 # Training presets, dataset configs, shared constants
 ├── data_loading.jl           # load_quickdraw_dataset(), load_div2k_dataset(), load_atd12k_dataset()
 ├── evaluation.jl             # compute_metrics(), evaluate_basis(), evaluate_fft_baseline_timed(),
@@ -70,9 +74,9 @@ Shared constants and configuration:
 ```julia
 const TRAINING_PRESETS = Dict(
     :moderate => (epochs=10, steps_per_image=100, n_train=50, n_test=10,
-                  patience=3, optimizer=:adam, validation_split=0.2),
+                  patience=3, optimizer=:adam, validation_split=0.2, device=:gpu),
     :heavy    => (epochs=50, steps_per_image=200, n_train=100, n_test=20,
-                  patience=5, optimizer=:adam, validation_split=0.2),
+                  patience=5, optimizer=:adam, validation_split=0.2, device=:gpu),
 )
 
 const DATASET_CONFIGS = Dict(
@@ -120,7 +124,7 @@ Core evaluation functions:
 - **`compute_metrics(original, recovered)`** — returns `(mse, psnr, ssim)` for a single image pair
 - **`evaluate_basis(basis, test_images, keep_ratios)`** — evaluates one basis at all ratios, returns `Dict(ratio => (mean_mse, std_mse, mean_psnr, std_psnr, mean_ssim, std_ssim))`
 - **`evaluate_fft_baseline_timed(test_images, keep_ratios)`** — same as above but for classical FFT, also returns elapsed time
-- **`train_and_time(BasisType, dataset, dataset_config, preset)`** — wraps `train_basis()` with `@elapsed`, returns `(trained_basis, history, elapsed_seconds)`
+- **`train_and_time(BasisType, dataset, dataset_config, preset)`** — wraps `train_basis()` with `@elapsed`, returns `(trained_basis, history, elapsed_seconds)`. Sets `Random.seed!(42)` before training for reproducibility. Passes `device=:gpu`.
 - **`save_benchmark_results(path, results_dict)`** — serialize metrics + timing to JSON
 - **`load_benchmark_results(path)`** — deserialize
 - **`print_dataset_summary(results, keep_ratios)`** — formatted console table
@@ -143,9 +147,9 @@ Key behaviors:
 
 Usage:
 ```bash
-julia --project=examples examples/benchmark/run_quickdraw.jl moderate
-julia --project=examples examples/benchmark/run_div2k.jl moderate
-julia --project=examples examples/benchmark/run_atd12k.jl moderate
+julia --project=examples/benchmark examples/benchmark/run_quickdraw.jl moderate
+julia --project=examples/benchmark examples/benchmark/run_div2k.jl moderate
+julia --project=examples/benchmark examples/benchmark/run_atd12k.jl moderate
 ```
 
 ### generate_report.jl
@@ -177,7 +181,7 @@ All plots use CairoMakie.
 
 Usage:
 ```bash
-julia --project=examples examples/benchmark/generate_report.jl
+julia --project=examples/benchmark examples/benchmark/generate_report.jl
 ```
 
 ## Output Structure
@@ -211,21 +215,28 @@ examples/benchmark/results/
 
 ## Dependencies
 
-The benchmark scripts need these packages (in `examples/benchmark/Project.toml`):
+The benchmark scripts need these packages (in `examples/benchmark/Project.toml` with `path = "../.."`):
 
 - ParametricDFT (path dependency to parent project)
-- MLDatasets (for potential future dataset loaders)
+- CUDA (GPU support)
 - Images, ImageQualityIndexes (PSNR, SSIM)
 - CairoMakie (plotting)
 - NPZ (Quick Draw .npy files)
 - FFTW (classical FFT baseline)
 - JSON3 (result serialization)
-- Random, Statistics, Printf (stdlib)
 - FileIO (image loading for DIV2K/ATD-12K)
+- Downloads (auto-download Quick Draw data)
+- Random, Statistics, Printf (stdlib)
 
-## Notes
+## Implementation Notes
 
-- Quick Draw uses 5 qubits (32x32), DIV2K uses 10 qubits (1024x1024), ATD-12K uses 9 qubits (512x512). Parameter counts differ across datasets due to different qubit counts — this is expected and should be documented in results.
-- The loss function is `MSELoss(k)` where `k` is set to 10% of total coefficients (matching existing examples).
-- All images are grayscale. Color handling is out of scope.
-- The benchmark uses the existing `train_basis()` API with early stopping. No modifications to core library code are needed.
+- **GPU required**: All training uses `device=:gpu`. CUDA.jl must be available.
+- **Qubit scaling**: Quick Draw uses 5 qubits (32x32), DIV2K uses 10 qubits (1024x1024), ATD-12K uses 9 qubits (512x512). Parameter counts differ across datasets — document in results.
+- **Loss function**: `MSELoss(k)` where `k` is 10% of total coefficients (matching existing examples). Training always truncates at 10% regardless of evaluation ratios. This is a deliberate choice: training at 10% provides a good trade-off for evaluating across the 5-20% range.
+- **Compression ratio semantics**: The `compress()` function's `ratio` parameter is the fraction *discarded*. To keep 5% of coefficients, pass `ratio=0.95`. The `evaluate_basis()` function accepts `keep_ratios` and handles this conversion internally.
+- **All images are grayscale**. Color handling is out of scope.
+- **No core library changes needed**. The benchmark uses the existing `train_basis()` API with early stopping.
+- **MERA first use**: This benchmark is the first full training/evaluation pipeline for MERABasis. The implementation exists and is tested in `test/mera_tests.jl`, but edge cases may surface at larger qubit counts.
+- **Reproducibility**: Set `Random.seed!(42)` before each `train_basis()` call and before data loading.
+- **Data download**: Quick Draw .npy files are auto-downloaded via `Downloads.download()` if not present (~100MB per category). DIV2K and ATD-12K require manual download; loaders should print clear error messages with download instructions if data is missing.
+- **Project.toml**: The benchmark uses its own `examples/benchmark/Project.toml` with `path = "../.."` for the ParametricDFT dependency. Run with `--project=examples/benchmark`.
