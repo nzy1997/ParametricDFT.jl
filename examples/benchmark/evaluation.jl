@@ -161,6 +161,70 @@ function train_and_time(
 end
 
 # ============================================================================
+# Run All Bases
+# ============================================================================
+
+"""
+    run_all_bases(train_images, test_images, dataset_config, preset, output_dir)
+
+Train and evaluate all basis types + FFT baseline. Skips bases that are
+incompatible with the dataset config (e.g., MERA requires power-of-2 qubits).
+Returns a `Dict{String,Dict{Symbol,Any}}` of results.
+"""
+function run_all_bases(
+    train_images::Vector{<:AbstractMatrix},
+    test_images::Vector{<:AbstractMatrix},
+    dataset_config::NamedTuple,
+    preset::NamedTuple,
+    output_dir::String,
+)
+    loss_dir = joinpath(output_dir, "loss_history")
+    mkpath(loss_dir)
+
+    results = Dict{String,Dict{Symbol,Any}}()
+
+    for BasisType in BASIS_TYPES
+        basis_name = BASIS_NAMES[BasisType]
+        basis_path = joinpath(output_dir, "trained_$(basis_name).json")
+
+        # Resume: skip if already trained
+        if isfile(basis_path)
+            @info "Skipping $basis_name — already trained at $basis_path"
+            loaded_basis = load_basis(basis_path)
+            metrics = evaluate_basis(loaded_basis, test_images, KEEP_RATIOS)
+            results[basis_name] = Dict(:metrics => metrics, :time => 0.0)
+            continue
+        end
+
+        println("\n--- Training $(BasisType) ---")
+        loss_path = joinpath(loss_dir, "$(basis_name)_loss.json")
+
+        try
+            basis, history, elapsed = train_and_time(
+                BasisType, train_images, dataset_config, preset;
+                save_loss_path = loss_path,
+            )
+
+            mkpath(output_dir)
+            save_basis(basis_path, basis)
+            @info "Saved trained $basis_name" path=basis_path time=round(elapsed; digits=1)
+
+            metrics = evaluate_basis(basis, test_images, KEEP_RATIOS)
+            results[basis_name] = Dict(:metrics => metrics, :time => elapsed, :history => history)
+        catch e
+            @warn "Skipping $basis_name — incompatible with dataset config" exception=(e, catch_backtrace())
+        end
+    end
+
+    # FFT Baseline
+    println("\n--- FFT Baseline ---")
+    fft_metrics, fft_time = evaluate_fft_baseline_timed(test_images, KEEP_RATIOS)
+    results["fft"] = Dict(:metrics => fft_metrics, :time => fft_time)
+
+    return results
+end
+
+# ============================================================================
 # Result I/O
 # ============================================================================
 

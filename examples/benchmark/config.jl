@@ -6,6 +6,7 @@
 # ============================================================================
 
 using ParametricDFT
+using CUDA
 using Random
 
 # ============================================================================
@@ -13,21 +14,31 @@ using Random
 # ============================================================================
 
 const TRAINING_PRESETS = Dict(
+    :smoke => (
+        epochs = 2,
+        steps_per_image = 10,
+        n_train = 5,
+        n_test = 2,
+        patience = 2,
+        optimizer = :adam,
+        validation_split = 0.2,
+        device = :gpu,
+    ),
     :moderate => (
-        epochs = 10,
-        steps_per_image = 100,
-        n_train = 50,
-        n_test = 10,
+        epochs = 5,
+        steps_per_image = 20,
+        n_train = 10,
+        n_test = 5,
         patience = 3,
         optimizer = :adam,
         validation_split = 0.2,
         device = :gpu,
     ),
     :heavy => (
-        epochs = 50,
-        steps_per_image = 200,
-        n_train = 100,
-        n_test = 20,
+        epochs = 10,
+        steps_per_image = 50,
+        n_train = 20,
+        n_test = 10,
         patience = 5,
         optimizer = :adam,
         validation_split = 0.2,
