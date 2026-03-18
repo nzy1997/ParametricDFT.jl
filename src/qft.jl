@@ -30,7 +30,7 @@ function qft_code(m::Int, n::Int; inverse=false)
     else
         code_reorder = DynamicEinCode([ixs..., tn.code.iy[1:m+n]], tn.code.iy[m+n+1:end])
     end
-    optcode = optimize_code(code_reorder, uniformsize(tn.code, 2), TreeSA())
+    optcode = optimize_code_cached(code_reorder, uniformsize(tn.code, 2), TreeSA())
     return optcode, tensors
 end
 

@@ -64,6 +64,8 @@ export recover, save_compressed, load_compressed, compression_stats
 export plot_circuit
 
 # Include files in dependency order:
+# 0. Einsum code cache (used by circuit code generators)
+include("einsum_cache.jl")
 # 1. Loss functions (no internal dependencies)
 include("loss.jl")
 # 2. QFT circuit
