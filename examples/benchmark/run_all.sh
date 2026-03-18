@@ -4,6 +4,10 @@
 # ============================================================================
 # Usage:
 #   CUDA_VISIBLE_DEVICES=0 nohup bash examples/benchmark/run_all.sh > benchmark_run.log 2>&1 &
+#   CUDA_VISIBLE_DEVICES=0 nohup bash examples/benchmark/run_all.sh moderate > benchmark_run.log 2>&1 &
+#
+# Optional argument: starting preset (default: smoke). Runs from that preset onward.
+#   e.g., "moderate" runs moderate → heavy, skipping smoke.
 #
 # Results are preserved under examples/benchmark/results/<preset>/<dataset>/
 # after each dataset completes.
@@ -11,7 +15,7 @@
 # Datasets:
 #   - quickdraw: auto-downloaded on first run
 #   - div2k: requires manual download to examples/benchmark/data/DIV2K_train_HR/
-#   - atd12k: requires manual download to examples/benchmark/data/ATD-12K/
+#   - clic: requires manual download to examples/benchmark/data/professional_train_2020/ etc.
 #
 # Missing datasets are skipped with a warning.
 # ============================================================================
@@ -30,18 +34,32 @@ mkdir -p "$RESULTS_BASE"
 declare -A DATASETS
 DATASETS[quickdraw]="run_quickdraw.jl"
 DATASETS[div2k]="run_div2k.jl"
-DATASETS[atd12k]="run_atd12k.jl"
+DATASETS[clic]="run_clic.jl"
 
-# Order matters — quickdraw first (auto-downloads), then manual datasets
-DATASET_ORDER=(quickdraw div2k atd12k)
+# Order: quickdraw first (auto-downloads), then CLIC (faster), then DIV2K (slowest)
+DATASET_ORDER=(quickdraw clic div2k)
+
+ALL_PRESETS=(smoke moderate heavy)
+START_PRESET="${1:-smoke}"
+
+# Find starting index
+START_IDX=0
+for i in "${!ALL_PRESETS[@]}"; do
+    if [[ "${ALL_PRESETS[$i]}" == "$START_PRESET" ]]; then
+        START_IDX=$i
+        break
+    fi
+done
+PRESETS=("${ALL_PRESETS[@]:$START_IDX}")
 
 echo "============================================================"
 echo "Benchmark Suite — started at $(date)"
 echo "GPU: CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-all}"
+echo "Presets: ${PRESETS[*]}"
 echo "Datasets: ${DATASET_ORDER[*]}"
 echo "============================================================"
 
-for PRESET in smoke moderate heavy; do
+for PRESET in "${PRESETS[@]}"; do
     echo ""
     echo "============================================================"
     echo "PRESET: $PRESET — started at $(date)"
@@ -53,7 +71,8 @@ for PRESET in smoke moderate heavy; do
         echo ""
         echo "--- $PRESET / $DATASET — started at $(date) ---"
 
-        # Clean results dir so each preset starts fresh
+        # Clean working results dir so each preset trains fresh
+        # (preserved copies live in results/<preset>/<dataset>/, not here)
         rm -rf "$SCRIPT_DIR/results/$DATASET"
 
         # Run benchmark — if it fails (e.g., missing data), warn and continue
@@ -78,5 +97,5 @@ done
 echo ""
 echo "============================================================"
 echo "All benchmarks complete — finished at $(date)"
-echo "Results in: $RESULTS_BASE/{smoke,moderate,heavy}/{quickdraw,div2k,atd12k}/"
+echo "Results in: $RESULTS_BASE/{smoke,moderate,heavy}/{quickdraw,div2k,clic}/"
 echo "============================================================"

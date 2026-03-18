@@ -17,13 +17,14 @@ include("data_loading.jl")
 include("evaluation.jl")
 
 using CairoMakie
+using CairoMakie: Axis
 using ParametricDFT
 
-const DATASET_NAMES = [:quickdraw, :div2k, :atd12k]
+const DATASET_NAMES = [:quickdraw, :div2k, :clic]
 const DISPLAY_NAMES = Dict(
     :quickdraw => "Quick Draw",
     :div2k => "DIV2K",
-    :atd12k => "ATD-12K",
+    :clic => "CLIC",
 )
 const BASIS_DISPLAY_NAMES = Dict(
     "qft" => "QFT",
@@ -134,6 +135,65 @@ function generate_training_curves(all_results)
         axislegend(ax; position = :rt)
         save(joinpath(plots_dir, "training_curves.png"), fig; px_per_unit = 2)
         @info "Saved training curves for $(DISPLAY_NAMES[dataset_name])"
+
+        # Step-level loss curves (raw)
+        fig_steps = Figure(size = (1000, 500))
+        ax_steps = Axis(fig_steps[1, 1];
+            xlabel = "Optimization Step",
+            ylabel = "Training Loss",
+            title = "Per-Step Training Loss — $(DISPLAY_NAMES[dataset_name])",
+        )
+
+        for basis_name in ["qft", "entangled_qft", "tebd", "mera"]
+            if haskey(results, basis_name) && haskey(results[basis_name], "history")
+                history = results[basis_name]["history"]
+                step_losses = Float64.(history["step_train_losses"])
+                if !isempty(step_losses)
+                    valid = step_losses .> 0
+                    if any(valid)
+                        lines!(ax_steps, (1:length(step_losses))[valid], step_losses[valid];
+                            label = BASIS_DISPLAY_NAMES[basis_name],
+                            color = BASIS_COLORS[basis_name],
+                        )
+                    end
+                end
+            end
+        end
+
+        axislegend(ax_steps; position = :rt)
+        save(joinpath(plots_dir, "step_training_losses.png"), fig_steps; px_per_unit = 2)
+        @info "Saved step-level training curves for $(DISPLAY_NAMES[dataset_name])"
+
+        # Step-level loss curves (normalized by k = 0.10 * img_size^2)
+        img_size = DATASET_CONFIGS[dataset_name].img_size
+        k = round(Int, 0.10 * img_size^2)
+
+        fig_norm = Figure(size = (1000, 500))
+        ax_norm = Axis(fig_norm[1, 1];
+            xlabel = "Optimization Step",
+            ylabel = "Training Loss / k",
+            title = "Normalized Per-Step Loss — $(DISPLAY_NAMES[dataset_name]) (k=$k)",
+        )
+
+        for basis_name in ["qft", "entangled_qft", "tebd", "mera"]
+            if haskey(results, basis_name) && haskey(results[basis_name], "history")
+                history = results[basis_name]["history"]
+                step_losses = Float64.(history["step_train_losses"]) ./ k
+                if !isempty(step_losses)
+                    valid = step_losses .> 0
+                    if any(valid)
+                        lines!(ax_norm, (1:length(step_losses))[valid], step_losses[valid];
+                            label = BASIS_DISPLAY_NAMES[basis_name],
+                            color = BASIS_COLORS[basis_name],
+                        )
+                    end
+                end
+            end
+        end
+
+        axislegend(ax_norm; position = :rt)
+        save(joinpath(plots_dir, "step_training_losses_normalized.png"), fig_norm; px_per_unit = 2)
+        @info "Saved normalized step-level training curves for $(DISPLAY_NAMES[dataset_name])"
     end
 end
 
@@ -158,7 +218,7 @@ function generate_reconstruction_grids(all_results)
                 _, test, _ = load_div2k_dataset(; n_train = 1, n_test = 1)
                 test
             else
-                _, test, _ = load_atd12k_dataset(; n_train = 1, n_test = 1)
+                _, test, _ = load_clic_dataset(; n_train = 1, n_test = 1)
                 test
             end
         catch e

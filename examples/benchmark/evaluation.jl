@@ -153,6 +153,7 @@ function train_and_time(
             early_stopping_patience = preset.patience,
             optimizer = preset.optimizer,
             device = preset.device,
+            batch_size = get(preset, :batch_size, 1),
             save_loss_path = save_loss_path,
         )
     end

@@ -23,26 +23,29 @@ const TRAINING_PRESETS = Dict(
         optimizer = :adam,
         validation_split = 0.2,
         device = :gpu,
+        batch_size = 16,
     ),
     :moderate => (
-        epochs = 5,
-        steps_per_image = 20,
-        n_train = 10,
-        n_test = 5,
-        patience = 3,
-        optimizer = :adam,
-        validation_split = 0.2,
-        device = :gpu,
-    ),
-    :heavy => (
-        epochs = 10,
+        epochs = 20,
         steps_per_image = 50,
         n_train = 20,
-        n_test = 10,
-        patience = 5,
+        n_test = 50,
+        patience = 10,
         optimizer = :adam,
         validation_split = 0.2,
         device = :gpu,
+        batch_size = 16,
+    ),
+    :heavy => (
+        epochs = 20,
+        steps_per_image = 100,
+        n_train = 50,
+        n_test = 100,
+        patience = 10,
+        optimizer = :adam,
+        validation_split = 0.2,
+        device = :gpu,
+        batch_size = 16,
     ),
 )
 
@@ -53,7 +56,7 @@ const TRAINING_PRESETS = Dict(
 const DATASET_CONFIGS = Dict(
     :quickdraw => (m = 5, n = 5, img_size = 32),
     :div2k     => (m = 10, n = 10, img_size = 1024),
-    :atd12k    => (m = 9, n = 9, img_size = 512),
+    :clic      => (m = 9, n = 9, img_size = 512),
 )
 
 # ============================================================================

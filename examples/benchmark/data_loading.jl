@@ -184,58 +184,51 @@ function load_div2k_dataset(; n_train::Int, n_test::Int, img_size::Int = 1024, s
 end
 
 # ============================================================================
-# ATD-12K Loader
+# CLIC Loader
 # ============================================================================
 
 """
-    load_atd12k_dataset(; n_train, n_test, img_size=512, seed=42)
+    load_clic_dataset(; n_train, n_test, img_size=512, seed=42)
 
-Load ATD-12K animation frames. Expects data in `data/ATD-12K/`.
-Takes the middle frame from each triplet directory.
+Load CLIC (Challenge on Learned Image Compression) images.
+Expects data in `data/professional_train_2020/`, `data/professional_valid_2020/`,
+and/or `data/mobile_train_2020/`.
 
 Returns `(train_images, test_images, test_labels)`.
 """
-function load_atd12k_dataset(; n_train::Int, n_test::Int, img_size::Int = 512, seed::Int = 42)
-    atd_dir = joinpath(DATA_DIR, "ATD-12K")
+function load_clic_dataset(; n_train::Int, n_test::Int, img_size::Int = 512, seed::Int = 42)
+    clic_dirs = [
+        joinpath(DATA_DIR, "professional_train_2020"),
+        joinpath(DATA_DIR, "professional_valid_2020"),
+        joinpath(DATA_DIR, "mobile_train_2020"),
+    ]
 
-    if !isdir(atd_dir)
+    all_files = String[]
+    for dir in clic_dirs
+        if isdir(dir)
+            append!(all_files, sort(filter(
+                f -> endswith(lowercase(f), ".png") || endswith(lowercase(f), ".jpg"),
+                readdir(dir; join = true)
+            )))
+        end
+    end
+
+    if isempty(all_files)
         error("""
-        ATD-12K dataset not found. Please download from:
-          https://github.com/lisiyao21/AnimeInterp
-        Extract to: $(atd_dir)
-        Expected structure: $(atd_dir)/test_2k_540p/<triplet_dir>/{frame1,frame2,frame3}.png
+        CLIC dataset not found. Please download:
+          mkdir -p $(DATA_DIR)
+          cd $(DATA_DIR)
+          curl -LO https://data.vision.ee.ethz.ch/cvl/clic/professional_train_2020.zip
+          curl -LO https://data.vision.ee.ethz.ch/cvl/clic/professional_valid_2020.zip
+          curl -LO https://data.vision.ee.ethz.ch/cvl/clic/mobile_train_2020.zip
+          # Extract all zips
         """)
     end
 
-    # Find triplet directories and select the middle frame from each.
-    # Each triplet directory contains 3 frames sorted alphabetically;
-    # the middle one (index 2) is the target interpolation frame.
-    all_image_files = String[]
-    for (root, dirs, files) in walkdir(atd_dir)
-        image_files = sort(filter(
-            f -> endswith(lowercase(f), ".png") || endswith(lowercase(f), ".jpg"),
-            files,
-        ))
-        if length(image_files) == 3
-            # Triplet directory — take middle frame
-            push!(all_image_files, joinpath(root, image_files[2]))
-        elseif length(image_files) >= 1 && isempty(dirs)
-            # Leaf directory with images but not a triplet — take all
-            for f in image_files
-                push!(all_image_files, joinpath(root, f))
-            end
-        end
-    end
-    sort!(all_image_files)
-
-    if isempty(all_image_files)
-        error("No image files found in $(atd_dir). Check dataset structure.")
-    end
-
-    @assert length(all_image_files) >= n_train + n_test "Need $(n_train + n_test) ATD-12K images, found $(length(all_image_files))"
+    @assert length(all_files) >= n_train + n_test "Need $(n_train + n_test) CLIC images, found $(length(all_files))"
 
     Random.seed!(seed)
-    selected = all_image_files[randperm(length(all_image_files))[1:(n_train + n_test)]]
+    selected = all_files[randperm(length(all_files))[1:(n_train + n_test)]]
 
     images = Matrix{Float64}[]
     labels = String[]
@@ -248,6 +241,6 @@ function load_atd12k_dataset(; n_train::Int, n_test::Int, img_size::Int = 512, s
     test_images = images[n_train+1:end]
     test_labels = labels[n_train+1:end]
 
-    @info "ATD-12K dataset ready" n_train=length(train_images) n_test=length(test_images) img_size
+    @info "CLIC dataset ready" n_train=length(train_images) n_test=length(test_images) img_size
     return train_images, test_images, test_labels
 end
