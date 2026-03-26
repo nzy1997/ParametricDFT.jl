@@ -238,10 +238,17 @@ function generate_reconstruction_grids(all_results)
             end
         end
 
-        n_rows = 1 + length(basis_order)  # original + each basis
-        n_cols = length(KEEP_RATIOS)
+        # Filter to only bases that have trained models (+ fft)
+        available_bases = [b for b in ["qft", "entangled_qft", "tebd", "mera"]
+                           if haskey(trained_bases, b)]
+        push!(available_bases, "fft")
 
-        fig = Figure(size = (250 * n_cols, 200 * n_rows))
+        n_rows = 1 + length(available_bases)  # original + each available basis
+        n_cols = length(KEEP_RATIOS)
+        cell_size = 180
+
+        fig = Figure(size = (cell_size * n_cols + 80, cell_size * n_rows + 40);
+            figure_padding = 10)
 
         # Column headers
         for (j, ratio) in enumerate(KEEP_RATIOS)
@@ -251,19 +258,19 @@ function generate_reconstruction_grids(all_results)
         # Original row
         Label(fig[1, 0], "Original"; fontsize = 12, rotation = pi / 2)
         for j in 1:n_cols
-            ax = Axis(fig[1, j]; aspect = DataAspect())
+            ax = Axis(fig[1, j]; aspect = 1)
             hidedecorations!(ax)
-            heatmap!(ax, rotr90(sample_img); colormap = :grays)
+            heatmap!(ax, rotr90(sample_img); colormap = :grays, colorrange = (0.0, 1.0))
         end
 
         # Basis rows
-        for (i, basis_name) in enumerate(basis_order)
+        for (i, basis_name) in enumerate(available_bases)
             row = i + 1
             Label(fig[row, 0], get(BASIS_DISPLAY_NAMES, basis_name, basis_name);
                 fontsize = 12, rotation = pi / 2)
 
             for (j, keep_ratio) in enumerate(KEEP_RATIOS)
-                ax = Axis(fig[row, j]; aspect = DataAspect())
+                ax = Axis(fig[row, j]; aspect = 1)
                 hidedecorations!(ax)
 
                 recovered = if basis_name == "fft"
@@ -276,9 +283,20 @@ function generate_reconstruction_grids(all_results)
                     zeros(size(sample_img))
                 end
 
-                heatmap!(ax, rotr90(clamp.(recovered, 0.0, 1.0)); colormap = :grays)
+                heatmap!(ax, rotr90(clamp.(recovered, 0.0, 1.0)); colormap = :grays,
+                    colorrange = (0.0, 1.0))
             end
         end
+
+        # Force uniform cell sizes
+        for row in 1:n_rows
+            rowsize!(fig.layout, row, CairoMakie.Fixed(cell_size))
+        end
+        for col in 1:n_cols
+            colsize!(fig.layout, col, CairoMakie.Fixed(cell_size))
+        end
+        colgap!(fig.layout, 5)
+        rowgap!(fig.layout, 5)
 
         save(joinpath(plots_dir, "reconstruction_grid.png"), fig; px_per_unit = 2)
         @info "Saved reconstruction grid for $(DISPLAY_NAMES[dataset_name])"
