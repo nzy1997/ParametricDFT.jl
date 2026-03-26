@@ -65,7 +65,7 @@ This removes `results/` from the ignore list (so results are tracked) and adds `
 
 ### Manifest.toml
 
-If `Manifest.toml` was carried over by `filter-repo` (it was tracked in the original repo), run `git rm Manifest.toml` to remove it from tracking. It will then be covered by the updated `.gitignore`.
+`Manifest.toml` is not tracked in the original repo, so `filter-repo` will not carry it over. Verify it is absent after extraction. The updated `.gitignore` will prevent it from being tracked in the future.
 
 ### README.md
 
