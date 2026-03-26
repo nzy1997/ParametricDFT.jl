@@ -249,7 +249,7 @@ function entangled_qft_code(m::Int, n::Int; entangle_phases::Union{Nothing, Vect
     else
         code_reorder = DynamicEinCode([ixs..., tn.code.iy[1:total]], tn.code.iy[total+1:end])
     end
-    optcode = optimize_code(code_reorder, uniformsize(tn.code, 2), TreeSA())
+    optcode = optimize_code_cached(code_reorder, uniformsize(tn.code, 2), TreeSA())
 
     return optcode, tensors, n_entangle
 end

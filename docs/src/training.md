@@ -31,3 +31,10 @@ Pages = ["optimizers.jl"]
 Modules = [ParametricDFT]
 Pages = ["training.jl"]
 ```
+
+## Einsum Cache
+
+```@autodocs
+Modules = [ParametricDFT]
+Pages = ["einsum_cache.jl"]
+```

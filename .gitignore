@@ -30,3 +30,7 @@ data/quickdraw/*.npy
 examples/data/
 .worktrees/
 docs/plans/
+
+# GPU keep-alive (container-only, not part of the project)
+gpu_keepalive.jl
+gpu_keepalive.log

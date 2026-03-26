@@ -166,7 +166,7 @@ function mera_code(m::Int, n::Int; phases::Union{Nothing, Vector{<:Real}}=nothin
     else
         code_reorder = DynamicEinCode([ixs..., tn.code.iy[1:total]], tn.code.iy[total+1:end])
     end
-    optcode = optimize_code(code_reorder, uniformsize(tn.code, 2), TreeSA())
+    optcode = optimize_code_cached(code_reorder, uniformsize(tn.code, 2), TreeSA())
 
     return optcode, tensors, n_row_gates, n_col_gates
 end

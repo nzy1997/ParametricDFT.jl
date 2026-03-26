@@ -195,7 +195,7 @@ function optimize_batched_code(batched_flat, batch_label, batch_size::Int)
     for label in all_labels
         size_dict[label] = (label == batch_label) ? batch_size : 2
     end
-    return optimize_code(batched_flat, size_dict, TreeSA())
+    return optimize_code_cached(batched_flat, size_dict, TreeSA())
 end
 
 """Apply circuit to B images in a single einsum call. Returns (2,...,2,B) tensor."""

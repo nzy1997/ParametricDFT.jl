@@ -13,6 +13,11 @@ julia --project=. -e 'using Pkg; Pkg.test()'   # Run all tests
 julia --project=. -e 'using Pkg; Pkg.status()'  # Check dependencies
 ```
 
+## Benchmark Safety
+- **NEVER delete benchmark results** (`examples/benchmark/results/`, `smoke_*.log`, `benchmark_run.log`) without explicit user permission. Previous run results are expensive to reproduce and may take hours or days to regenerate.
+- **NEVER clean up benchmark data directories** (`examples/benchmark/data/`) — datasets are large downloads that take significant time to re-acquire.
+- When re-running benchmarks, save to a new directory or rename old results rather than overwriting.
+
 ## Git Safety
 - **NEVER force push** (`git push --force`, `git push -f`, `git push --force-with-lease`). This is an absolute rule with no exceptions. Force push can silently destroy other people's work and stashed changes.
 - **NEVER use `GIT_OBJECT_DIRECTORY` env var** to work around commit failures. If `git add` or `git commit` fails with "insufficient permission for adding an object to repository database", fix the root cause by running `git repack -a -d` to consolidate objects into an owned pack file.
