@@ -140,9 +140,12 @@ function _train_basis_core(
             end
 
             # Run optimizer with per-iteration loss tracing
+            # Scale max_iter by batch size so steps_per_image is honored per image,
+            # not per batch. Without this, batch_size=16 would do 16x fewer total steps.
             batch_loss_trace = Float64[]
+            batch_max_iter = steps_per_image * length(batch)
             current_tensors = optimize!(opt, current_tensors, batch_loss_fn, batch_grad_fn;
-                                         max_iter=steps_per_image, tol=1e-8,
+                                         max_iter=batch_max_iter, tol=1e-8,
                                          loss_trace=batch_loss_trace)
 
             # Collect per-iteration losses into step_train_losses
