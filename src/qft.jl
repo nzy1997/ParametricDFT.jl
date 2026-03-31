@@ -25,10 +25,14 @@ function qft_code(m::Int, n::Int; inverse=false)
     perm_vec = sortperm(tn.tensors, by= x-> !(x ≈ mat(H)))
     ixs = tn.code.ixs[perm_vec]
     tensors = tn.tensors[perm_vec]
+    # yao2einsum returns iy = [output_legs..., input_legs...]
+    # Forward transform: feed image into input legs (iy[total+1:end]), read from output legs (iy[1:total])
+    # Inverse transform: feed into output legs (iy[1:total]), read from input legs (iy[total+1:end])
+    #   (combined with conj.(tensors) at call site, this gives U†)
     if inverse
-        code_reorder = DynamicEinCode([ixs..., tn.code.iy[m+n+1:end]], tn.code.iy[1:m+n])
-    else
         code_reorder = DynamicEinCode([ixs..., tn.code.iy[1:m+n]], tn.code.iy[m+n+1:end])
+    else
+        code_reorder = DynamicEinCode([ixs..., tn.code.iy[m+n+1:end]], tn.code.iy[1:m+n])
     end
     optcode = optimize_code_cached(code_reorder, uniformsize(tn.code, 2), TreeSA())
     return optcode, tensors

@@ -161,10 +161,14 @@ function mera_code(m::Int, n::Int; phases::Union{Nothing, Vector{<:Real}}=nothin
     ixs = tn.code.ixs[perm_vec]
     tensors = tn.tensors[perm_vec]
 
+    # yao2einsum returns iy = [output_legs..., input_legs...]
+    # Forward transform: feed image into input legs (iy[total+1:end]), read from output legs (iy[1:total])
+    # Inverse transform: feed into output legs (iy[1:total]), read from input legs (iy[total+1:end])
+    #   (combined with conj.(tensors) at call site, this gives U†)
     if inverse
-        code_reorder = DynamicEinCode([ixs..., tn.code.iy[total+1:end]], tn.code.iy[1:total])
-    else
         code_reorder = DynamicEinCode([ixs..., tn.code.iy[1:total]], tn.code.iy[total+1:end])
+    else
+        code_reorder = DynamicEinCode([ixs..., tn.code.iy[total+1:end]], tn.code.iy[1:total])
     end
     optcode = optimize_code_cached(code_reorder, uniformsize(tn.code, 2), TreeSA())
 

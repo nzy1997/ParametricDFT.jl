@@ -21,14 +21,23 @@
         @test y ≈ x
     end
 
-    @testset "frequency weighting favors low frequencies" begin
+    @testset "selects by magnitude only" begin
+        # With uniform magnitudes, any k positions are valid (no center bias)
         x = ones(ComplexF64, 8, 8)
         y = ParametricDFT.topk_truncate(x, 4)
+        @test count(!iszero, y) == 4
 
-        center_i, center_j = 4, 4
-        kept_positions = [(i, j) for i in 1:8, j in 1:8 if !iszero(y[i, j])]
-        avg_dist = mean([sqrt((i - center_i)^2 + (j - center_j)^2) for (i, j) in kept_positions])
-        @test avg_dist < 3.0
+        # With varying magnitudes, highest-magnitude entries are selected
+        x2 = zeros(ComplexF64, 4, 4)
+        x2[1, 1] = 10.0
+        x2[2, 3] = 8.0
+        x2[4, 4] = 6.0
+        x2[3, 1] = 1.0
+        y2 = ParametricDFT.topk_truncate(x2, 3)
+        @test y2[1, 1] == x2[1, 1]
+        @test y2[2, 3] == x2[2, 3]
+        @test y2[4, 4] == x2[4, 4]
+        @test iszero(y2[3, 1])
     end
 
     @testset "gradient passes through selected indices" begin
