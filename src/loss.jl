@@ -39,43 +39,55 @@ Magnitude-based top-k truncation: keeps the `k` coefficients with largest absolu
 zeroing the rest. This is basis-agnostic — it does not assume any particular frequency layout.
 """
 function topk_truncate(x::AbstractMatrix{T}, k::Integer) where {T}
-    m, n = size(x)
     k2 = min(Int(k), length(x))
+    k2 == length(x) && return copy(x)
+    return x .* _topk_mask(x, k2)
+end
 
-    scores_flat = vec(abs.(x))
-    idx = partialsortperm(scores_flat, 1:k2, rev=true)
+"""
+    _topk_mask(x::AbstractMatrix, k::Int) -> BitMatrix
 
-    y = zeros(T, m, n)
-    @inbounds for flat_idx in idx
-        i = ((flat_idx - 1) % m) + 1
-        j = ((flat_idx - 1) ÷ m) + 1
-        y[i, j] = x[i, j]
+Compute a boolean mask selecting the `k` elements of `x` with largest absolute value.
+Uses quickselect (O(n) average) to find the threshold, then a broadcast comparison.
+"""
+function _topk_mask(x::AbstractMatrix, k::Int)
+    magnitudes = abs.(x)
+    # Quickselect to find the k-th largest magnitude — O(n) average, no perm allocation
+    threshold = partialsort!(vec(copy(magnitudes)), k, rev=true)
+
+    # Elements strictly above threshold are definitely kept
+    mask = magnitudes .> threshold
+    n_kept = count(mask)
+    n_ties_needed = k - n_kept
+
+    # Fill in ties at the threshold boundary until exactly k are selected
+    if n_ties_needed > 0
+        added = 0
+        @inbounds for j in 1:size(x, 2), i in 1:size(x, 1)
+            if !mask[i, j] && magnitudes[i, j] == threshold
+                mask[i, j] = true
+                added += 1
+                added >= n_ties_needed && @goto done
+            end
+        end
+        @label done
     end
-    return y
+    return mask
 end
 
 function ChainRulesCore.rrule(::typeof(topk_truncate), x::AbstractMatrix{T}, k::Integer) where {T}
-    m, n = size(x)
     k2 = min(Int(k), length(x))
-
-    scores_flat = vec(abs.(x))
-    idx = partialsortperm(scores_flat, 1:k2, rev=true)
-
-    y = zeros(T, m, n)
-    @inbounds for flat_idx in idx
-        i = ((flat_idx - 1) % m) + 1
-        j = ((flat_idx - 1) ÷ m) + 1
-        y[i, j] = x[i, j]
+    if k2 == length(x)
+        pullback_all(ȳ) = (ChainRulesCore.NoTangent(), ȳ, ChainRulesCore.NoTangent())
+        return copy(x), pullback_all
     end
 
+    # Compute mask once, reuse in both forward and pullback
+    mask = _topk_mask(x, k2)
+    y = x .* mask
+
     function pullback(ȳ)
-        x̄ = zeros(T, m, n)
-        @inbounds for flat_idx in idx
-            i = ((flat_idx - 1) % m) + 1
-            j = ((flat_idx - 1) ÷ m) + 1
-            x̄[i, j] = ȳ[i, j]
-        end
-        return (ChainRulesCore.NoTangent(), x̄, ChainRulesCore.NoTangent())
+        return (ChainRulesCore.NoTangent(), ȳ .* mask, ChainRulesCore.NoTangent())
     end
     return y, pullback
 end

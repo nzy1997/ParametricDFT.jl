@@ -75,10 +75,16 @@ function _train_basis_core(
     # Pre-compute batched einsum codes for batch_size > 1
     # This is done once and reused for all epochs/batches (TreeSA optimization is expensive)
     batched_optcode = nothing
+    batched_inverse_code = nothing
     if batch_size > 1
         n_gates = length(initial_tensors)
         flat_batched, blabel = make_batched_code(optcode, n_gates)
         batched_optcode = optimize_batched_code(flat_batched, blabel, batch_size)
+        # Batch the inverse code too (used by MSELoss)
+        if inverse_code !== nothing && loss isa MSELoss
+            flat_batched_inv, blabel_inv = make_batched_code(inverse_code, n_gates)
+            batched_inverse_code = optimize_batched_code(flat_batched_inv, blabel_inv, batch_size)
+        end
     end
 
     # Single code path: work directly with tensor list
@@ -121,7 +127,8 @@ function _train_basis_core(
             # Construct loss function for this batch
             batch_loss_fn = if batched_optcode !== nothing
                 ts -> loss_function(ts, m, n, optcode, batch, loss;
-                                    inverse_code=inverse_code, batched_optcode=batched_optcode)
+                                    inverse_code=inverse_code, batched_optcode=batched_optcode,
+                                    batched_inverse_code=batched_inverse_code)
             else
                 ts -> begin
                     total = zero(real(eltype(ts[1])))
