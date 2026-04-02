@@ -77,7 +77,7 @@ function compress(
     total_coeffs = length(freq_domain)
     keep_count = max(1, round(Int, total_coeffs * (1.0 - ratio)))
     
-    # Find top-k coefficients by magnitude with frequency weighting
+    # Find top-k coefficients by magnitude
     indices, values = _select_top_coefficients(freq_domain, keep_count)
     
     return CompressedImage(
@@ -132,37 +132,18 @@ end
 """
     _select_top_coefficients(freq_domain::AbstractMatrix, k::Int)
 
-Select top k coefficients using frequency-weighted magnitude scoring.
-
-Low-frequency components (near center) are prioritized as they typically
-contain more important structural information.
+Select top k coefficients by magnitude. Matches the magnitude-only
+`topk_truncate` used during training — no frequency weighting.
 """
 function _select_top_coefficients(freq_domain::AbstractMatrix, k::Int)
-    m, n = size(freq_domain)
     k = min(k, length(freq_domain))
-    
-    # Calculate frequency distances from center (DC component)
-    center_i, center_j = (m + 1) ÷ 2, (n + 1) ÷ 2
-    max_dist = sqrt((m/2)^2 + (n/2)^2)
-    
-    # Create frequency-weighted scores
-    scores = zeros(Float64, m, n)
-    mags = abs.(freq_domain)
-    
-    @inbounds for j in 1:n, i in 1:m
-        freq_dist = sqrt((i - center_i)^2 + (j - center_j)^2)
-        freq_weight = 1.0 - (freq_dist / max_dist) * 0.5
-        scores[i, j] = mags[i, j] * (1.0 + freq_weight)
-    end
-    
-    # Select top k indices
-    scores_flat = vec(scores)
+
+    scores_flat = vec(abs.(freq_domain))
     top_indices = partialsortperm(scores_flat, 1:k, rev=true)
-    
-    # Extract values at those indices
+
     freq_flat = vec(freq_domain)
     values = freq_flat[top_indices]
-    
+
     return top_indices, values
 end
 
