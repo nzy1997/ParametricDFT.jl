@@ -340,6 +340,37 @@ end
         @test final_loss < initial_loss
     end
 
+    @testset "post-training roundtrip (unitarity preserved)" begin
+        Random.seed!(42)
+        m, n = 2, 2
+        dataset = [rand(Float64, 4, 4) for _ in 1:6]
+
+        for (BasisType, loss) in [
+            (EntangledQFTBasis, ParametricDFT.L1Norm()),
+            (TEBDBasis, ParametricDFT.L1Norm()),
+            (MERABasis, ParametricDFT.L1Norm()),
+        ]
+            basis, _ = train_basis(
+                BasisType, dataset;
+                m=m, n=n,
+                loss=loss,
+                epochs=3,
+                steps_per_image=3,
+                batch_size=2,
+                optimizer=:adam,
+            )
+
+            # Circuit must remain unitary after training
+            x = randn(ComplexF64, 2^m, 2^n)
+            fwd = forward_transform(basis, x)
+            @test norm(fwd) ≈ norm(x) rtol=1e-8
+
+            # Roundtrip must recover original input
+            roundtrip = inverse_transform(basis, fwd)
+            @test roundtrip ≈ x rtol=1e-8
+        end
+    end
+
     @testset "batch_size=1 fallback still works" begin
         Random.seed!(42)
         m, n = 2, 2
