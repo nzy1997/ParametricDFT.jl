@@ -16,7 +16,7 @@ using Yao: mat, H
         @test n_col == n  # 3 col ring gates
         n_gates = n_row + n_col
         @test n_gates == 6  # Total 6 phase gates
-        @test length(tensors) == total + n_gates  # 6 Hadamards + 6 phase gates
+        @test length(tensors) == 2 * total + n_gates  # 6 Hadamards + 6 phase gates
         @test length(tensors) > 0
         
         # Test that the circuit can be applied
@@ -33,7 +33,7 @@ using Yao: mat, H
         
         optcode, tensors, n_row, n_col = ParametricDFT.tebd_code(m, n; phases=phases)
         @test n_row + n_col == n_gates
-        @test length(tensors) == total + n_gates
+        @test length(tensors) == 2 * total + n_gates
         
         state = rand(ComplexF64, fill(2, total)...)
         result = optcode(tensors..., state)
@@ -53,7 +53,7 @@ using Yao: mat, H
             @test n_col == n
             n_gates = n_row + n_col
             @test n_gates == m + n
-            @test length(tensors) == total + n_gates  # Hadamards + phase gates
+            @test length(tensors) == 2 * total + n_gates  # Hadamards + phase gates
         end
     end
     
@@ -139,7 +139,7 @@ end
             total = m + n
             n_gates = m + n
             _, tensors, n_row, n_col = ParametricDFT.tebd_code(m, n)
-            @test length(tensors) == total + n_gates
+            @test length(tensors) == 2 * total + n_gates
             @test n_row + n_col == n_gates
         end
     end
@@ -149,7 +149,7 @@ end
             total = m + n
             _, tensors, _, _ = ParametricDFT.tebd_code(m, n)
             n_hadamards = count(t -> t ≈ mat(H), tensors)
-            @test n_hadamards == total  # One Hadamard per qubit
+            @test n_hadamards == 2 * total  # Two Hadamard layers (sandwich)
         end
     end
     
@@ -174,7 +174,7 @@ end
             n_gates = m + n
             _, tensors, _, _ = ParametricDFT.tebd_code(m, n)
             total_params = sum(prod(size(t)) for t in tensors)
-            @test total_params == (total + n_gates) * 4
+            @test total_params == (2 * total + n_gates) * 4
         end
     end
     
@@ -260,7 +260,7 @@ end
         optcode, tensors, n_row, n_col = ParametricDFT.tebd_code(m, n; phases=phases)
         @test n_row == 2
         @test n_col == 2
-        @test length(tensors) == total + n_gates  # 4 Hadamards + 4 phase gates
+        @test length(tensors) == 2 * total + n_gates  # 4 Hadamards + 4 phase gates
         
         state = rand(ComplexF64, fill(2, total)...)
         result = optcode(tensors..., state)
@@ -277,7 +277,7 @@ end
         optcode, tensors, n_row, n_col = ParametricDFT.tebd_code(m, n; phases=phases)
         @test n_row == 5
         @test n_col == 3
-        @test length(tensors) == total + n_gates  # 8 Hadamards + 8 phase gates
+        @test length(tensors) == 2 * total + n_gates  # 8 Hadamards + 8 phase gates
         
         state = rand(ComplexF64, fill(2, total)...)
         result = optcode(tensors..., state)
@@ -294,7 +294,7 @@ end
         optcode, tensors, n_row, n_col = ParametricDFT.tebd_code(m, n; phases=phases)
         @test n_row == 6
         @test n_col == 6
-        @test length(tensors) == total + n_gates  # 12 Hadamards + 12 phase gates
+        @test length(tensors) == 2 * total + n_gates  # 12 Hadamards + 12 phase gates
         
         state = rand(ComplexF64, fill(2, total)...)
         result = optcode(tensors..., state)

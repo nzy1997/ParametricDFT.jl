@@ -583,163 +583,45 @@ function TEBDBasis(m::Int, n::Int, tensors::Vector, n_row_gates::Int, n_col_gate
     return TEBDBasis(m, n, tensors, optcode, inverse_code, n_row_gates, n_col_gates, phases)
 end
 
+
 # ============================================================================
 # Interface Implementation for TEBDBasis
 # ============================================================================
 
-"""
-    forward_transform(basis::TEBDBasis, data::AbstractVector)
-
-Apply forward TEBD transform to a vector.
-
-# Arguments
-- `basis::TEBDBasis`: The basis to use for transformation
-- `data::AbstractVector`: Input vector (must have length 2^(m+n))
-
-# Returns
-- Transformed representation (Complex vector of same length)
-"""
 function forward_transform(basis::TEBDBasis, data::AbstractVector)
     total = basis.m + basis.n
-    expected_size = 2^total
-    @assert length(data) == expected_size "Data length must be 2^(m+n) = $(expected_size), got $(length(data))"
-    
-    data_complex = Complex{Float64}.(data)
-    
-    return vec(basis.optcode(basis.tensors..., reshape(data_complex, fill(2, total)...)))
+    @assert length(data) == 2^total "Data length must be 2^(m+n) = $(2^total), got $(length(data))"
+    return vec(basis.optcode(basis.tensors..., reshape(Complex{Float64}.(data), fill(2, total)...)))
 end
 
-"""
-    forward_transform(basis::TEBDBasis, image::AbstractMatrix)
-
-Apply forward TEBD transform to an image.
-
-# Arguments
-- `basis::TEBDBasis`: The basis to use for transformation
-- `image::AbstractMatrix`: Input image (must be 2^m × 2^n)
-
-# Returns
-- Transformed representation as matrix (same shape as input)
-"""
 function forward_transform(basis::TEBDBasis, image::AbstractMatrix)
     m, n = basis.m, basis.n
-    expected_size = (2^m, 2^n)
-    @assert size(image) == expected_size "Image must be $(expected_size), got $(size(image))"
-    
+    @assert size(image) == (2^m, 2^n) "Image must be $(2^m)×$(2^n), got $(size(image))"
     total = m + n
     img_complex = Complex{Float64}.(vec(image))
-    result = vec(basis.optcode(basis.tensors..., reshape(img_complex, fill(2, total)...)))
-    
-    return reshape(result, size(image))
+    return reshape(vec(basis.optcode(basis.tensors..., reshape(img_complex, fill(2, total)...))), size(image))
 end
 
-"""
-    inverse_transform(basis::TEBDBasis, freq_domain::AbstractVector)
-
-Apply inverse TEBD transform to convert back to original domain.
-
-# Arguments
-- `basis::TEBDBasis`: The basis to use for transformation
-- `freq_domain::AbstractVector`: Frequency domain data (length 2^(m+n))
-
-# Returns
-- Reconstructed data (Complex vector of same length)
-"""
 function inverse_transform(basis::TEBDBasis, freq_domain::AbstractVector)
     total = basis.m + basis.n
-    expected_size = 2^total
-    @assert length(freq_domain) == expected_size "Frequency domain length must be 2^(m+n) = $(expected_size), got $(length(freq_domain))"
-    
+    @assert length(freq_domain) == 2^total "Frequency domain length must be 2^(m+n) = $(2^total), got $(length(freq_domain))"
     return vec(basis.inverse_code(conj.(basis.tensors)..., reshape(freq_domain, fill(2, total)...)))
 end
 
-"""
-    inverse_transform(basis::TEBDBasis, freq_domain::AbstractMatrix)
-
-Apply inverse TEBD transform to a matrix.
-
-# Arguments
-- `basis::TEBDBasis`: The basis to use for transformation
-- `freq_domain::AbstractMatrix`: Frequency domain data (must be 2^m × 2^n)
-
-# Returns
-- Reconstructed data as matrix (same shape as input)
-"""
 function inverse_transform(basis::TEBDBasis, freq_domain::AbstractMatrix)
     m, n = basis.m, basis.n
-    expected_size = (2^m, 2^n)
-    @assert size(freq_domain) == expected_size "Frequency domain must be $(expected_size), got $(size(freq_domain))"
-    
+    @assert size(freq_domain) == (2^m, 2^n) "Frequency domain must be $(2^m)×$(2^n), got $(size(freq_domain))"
     total = m + n
-    freq_vec = Complex{Float64}.(vec(freq_domain))
-    result = vec(basis.inverse_code(conj.(basis.tensors)..., reshape(freq_vec, fill(2, total)...)))
-    
-    return reshape(result, size(freq_domain))
+    return reshape(vec(basis.inverse_code(conj.(basis.tensors)..., reshape(Complex{Float64}.(vec(freq_domain)), fill(2, total)...))), size(freq_domain))
 end
 
-"""
-    image_size(basis::TEBDBasis)
+image_size(basis::TEBDBasis) = (2^basis.m, 2^basis.n)
+num_parameters(basis::TEBDBasis) = sum(length, basis.tensors)
+num_gates(basis::TEBDBasis) = basis.n_row_gates + basis.n_col_gates
+get_phases(basis::TEBDBasis) = copy(basis.phases)
 
-Return the supported image dimensions for this basis.
-
-# Returns
-- `Tuple{Int,Int}`: (height, width) = (2^m, 2^n)
-"""
-function image_size(basis::TEBDBasis)
-    return (2^basis.m, 2^basis.n)
-end
-
-"""
-    num_parameters(basis::TEBDBasis)
-
-Return the total number of learnable parameters in the basis.
-
-# Returns
-- `Int`: Total parameter count
-"""
-function num_parameters(basis::TEBDBasis)
-    total = 0
-    for tensor in basis.tensors
-        total += length(tensor)
-    end
-    return total
-end
-
-"""
-    num_gates(basis::TEBDBasis)
-
-Return the total number of TEBD gates.
-
-# Returns
-- `Int`: Number of gates (= m + n for ring topology)
-"""
-function num_gates(basis::TEBDBasis)
-    return basis.n_row_gates + basis.n_col_gates
-end
-
-"""
-    get_phases(basis::TEBDBasis)
-
-Get the current phase parameters.
-
-# Returns
-- `Vector{Float64}`: Phase parameters for each TEBD gate
-"""
-function get_phases(basis::TEBDBasis)
-    return copy(basis.phases)
-end
-
-"""
-    basis_hash(basis::TEBDBasis)
-
-Compute a unique hash identifying this basis configuration and parameters.
-
-# Returns
-- `String`: SHA-256 hash of the basis parameters
-"""
 function basis_hash(basis::TEBDBasis)
     data = IOBuffer()
-    n_gates = basis.n_row_gates + basis.n_col_gates
     write(data, "TEBDBasis:m=$(basis.m):n=$(basis.n):n_row=$(basis.n_row_gates):n_col=$(basis.n_col_gates):")
     for tensor in basis.tensors
         for val in tensor
@@ -749,28 +631,11 @@ function basis_hash(basis::TEBDBasis)
     return bytes2hex(sha256(take!(data)))
 end
 
-# ============================================================================
-# Utility Functions for TEBDBasis
-# ============================================================================
-
-"""
-    Base.show(io::IO, basis::TEBDBasis)
-
-Pretty print the TEBDBasis.
-"""
 function Base.show(io::IO, basis::TEBDBasis)
     h, w = image_size(basis)
-    params = num_parameters(basis)
-    n_g = num_gates(basis)
-    total_qubits = basis.m + basis.n
-    print(io, "TEBDBasis($(basis.m)×$(basis.n) qubits, $(h)×$(w) images, $params parameters, $n_g gates)")
+    print(io, "TEBDBasis($(basis.m)×$(basis.n) qubits, $(h)×$(w) images, $(num_parameters(basis)) parameters, $(num_gates(basis)) gates)")
 end
 
-"""
-    Base.:(==)(a::TEBDBasis, b::TEBDBasis)
-
-Check equality of two TEBDBasis objects.
-"""
 function Base.:(==)(a::TEBDBasis, b::TEBDBasis)
     return a.m == b.m && a.n == b.n &&
            a.n_row_gates == b.n_row_gates && a.n_col_gates == b.n_col_gates &&

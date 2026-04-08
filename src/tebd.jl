@@ -214,7 +214,7 @@ function multistride_tebd_code(m::Int, n::Int; phases::Union{Nothing, Vector{<:R
 
     qc = chain(total)
 
-    # Hadamard layer
+    # First H layer
     for i in 1:total
         push!(qc, put(total, i => H))
     end
@@ -224,8 +224,7 @@ function multistride_tebd_code(m::Int, n::Int; phases::Union{Nothing, Vector{<:R
     # Row: multi-stride rings on qubits 1:m
     for s in (2 .^ (0:_n_strides(m)-1))
         for i in 1:m
-            j = mod1(i + s, m)
-            push!(qc, control(total, i, j => shift(phases[gate_idx])))
+            push!(qc, control(total, i, mod1(i + s, m) => shift(phases[gate_idx])))
             gate_idx += 1
         end
     end
@@ -233,13 +232,17 @@ function multistride_tebd_code(m::Int, n::Int; phases::Union{Nothing, Vector{<:R
     # Column: multi-stride rings on qubits m+1:m+n
     for s in (2 .^ (0:_n_strides(n)-1))
         for i in 1:n
-            j = mod1(i + s, n)
             push!(qc, control(total, m + i, m + mod1(i + s, n) => shift(phases[gate_idx])))
             gate_idx += 1
         end
     end
 
-    # Convert to tensor network (same as tebd_code)
+    # Second H layer (activates all phase gates)
+    for i in 1:total
+        push!(qc, put(total, i => H))
+    end
+
+    # Convert to tensor network
     tn = yao2einsum(qc; optimizer=nothing)
     perm_vec = sortperm(tn.tensors, by=x -> !(x ≈ mat(H)))
     ixs = tn.code.ixs[perm_vec]
