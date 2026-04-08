@@ -28,6 +28,9 @@ struct MSELoss <: AbstractLoss
     MSELoss(k::Int) = k > 0 ? new(k) : error("k must be positive")
 end
 
+"""Shannon entropy of the energy distribution: `H(p) = -Σ pᵢ log(pᵢ)` where `pᵢ = |cᵢ|² / Σⱼ|cⱼ|²`. Minimizing encourages energy concentration in few coefficients."""
+struct EntropyLoss <: AbstractLoss end
+
 # ============================================================================
 # Truncation Functions
 # ============================================================================
@@ -123,6 +126,13 @@ function _loss_function(fft_res, pic, loss::L2Norm, tensors, m, n, inverse_code)
     return sum(abs2.(fft_res))
 end
 
+# Compute entropy of energy distribution: H(p) = -Σ pᵢ log(pᵢ)
+function _loss_function(fft_res, pic, loss::EntropyLoss, tensors, m, n, inverse_code)
+    energy = abs2.(fft_res)
+    p = energy ./ sum(energy)
+    return -sum(p .* log.(p .+ eps(real(eltype(fft_res)))))
+end
+
 # Compute MSE with truncation: ||x - T⁻¹(truncate(T(x), k))||²₂
 function _loss_function(fft_res, pic, loss::MSELoss, tensors, m, n, inverse_code)
     if inverse_code === nothing
@@ -205,6 +215,21 @@ function batched_loss_l2(optcode_batched, tensors::Tuple, batch::Vector{<:Abstra
     return sum(abs2.(result)) / length(batch)
 end
 
+"""Batched entropy loss: batched forward, per-image entropy, average."""
+function batched_loss_entropy(optcode_batched, tensors::Tuple, batch::Vector{<:AbstractMatrix}, m::Int, n::Int)
+    B = length(batch)
+    fft_batched = batched_forward(optcode_batched, tensors, batch, m, n)
+    T = real(eltype(fft_batched))
+    total_loss = zero(T)
+    for i in 1:B
+        fft_slice = reshape(selectdim(fft_batched, m + n + 1, i), 2^m, 2^n)
+        energy = abs2.(fft_slice)
+        p = energy ./ sum(energy)
+        total_loss += -sum(p .* log.(p .+ eps(T)))
+    end
+    return total_loss / B
+end
+
 """Batched MSE loss: batched forward, per-image topk_truncate, batched inverse."""
 function batched_loss_mse(optcode_batched, tensors::Tuple, batch::Vector{<:AbstractMatrix}, m::Int, n::Int, k::Int, inverse_code;
                           batched_inverse_code=nothing)
@@ -250,6 +275,7 @@ end
 # when splatting. Same pattern as loss_function.
 batched_loss_l1(oc, ts::AbstractVector, b, m, n) = batched_loss_l1(oc, Tuple(ts), b, m, n)
 batched_loss_l2(oc, ts::AbstractVector, b, m, n) = batched_loss_l2(oc, Tuple(ts), b, m, n)
+batched_loss_entropy(oc, ts::AbstractVector, b, m, n) = batched_loss_entropy(oc, Tuple(ts), b, m, n)
 batched_loss_mse(oc, ts::AbstractVector, b, m, n, k, ic; kw...) = batched_loss_mse(oc, Tuple(ts), b, m, n, k, ic; kw...)
 
 # ============================================================================
@@ -277,6 +303,8 @@ function loss_function(tensors::Tuple, m::Int, n::Int, optcode::OMEinsum.Abstrac
             return batched_loss_l1(batched_optcode, tensors, pics, m, n)
         elseif loss isa L2Norm
             return batched_loss_l2(batched_optcode, tensors, pics, m, n)
+        elseif loss isa EntropyLoss
+            return batched_loss_entropy(batched_optcode, tensors, pics, m, n)
         else  # MSELoss
             return batched_loss_mse(batched_optcode, tensors, pics, m, n, loss.k, inverse_code;
                                     batched_inverse_code=batched_inverse_code)

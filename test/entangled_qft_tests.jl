@@ -353,19 +353,19 @@ end
         @test_throws AssertionError ParametricDFT.entangled_qft_code(3, 3; entangle_position=:invalid)
     end
 
-    @testset "entangle_position :back matches default" begin
+    @testset "entangle_position :front matches default" begin
         Random.seed!(1234)
         m, n = 3, 3
         phases = [0.1, 0.2, 0.3]
 
         optcode_default, tensors_default, _ = ParametricDFT.entangled_qft_code(m, n; entangle_phases=phases)
-        optcode_back, tensors_back, _ = ParametricDFT.entangled_qft_code(m, n; entangle_phases=phases, entangle_position=:back)
+        optcode_front, tensors_front, _ = ParametricDFT.entangled_qft_code(m, n; entangle_phases=phases, entangle_position=:front)
 
         pic = rand(ComplexF64, 2^m, 2^n)
         result_default = reshape(optcode_default(tensors_default..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
-        result_back = reshape(optcode_back(tensors_back..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
+        result_front = reshape(optcode_front(tensors_front..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
 
-        @test isapprox(result_default, result_back, rtol=1e-10)
+        @test isapprox(result_default, result_front, rtol=1e-10)
     end
 
     @testset "all positions produce valid transforms" begin

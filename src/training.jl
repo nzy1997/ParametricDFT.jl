@@ -281,7 +281,7 @@ function train_basis(
     dataset::Vector{<:AbstractMatrix};
     m::Int, n::Int,
     entangle_phases::Union{Nothing, Vector{<:Real}} = nothing,
-    entangle_position::Symbol = :back,
+    entangle_position::Symbol = :front,
     loss::AbstractLoss = MSELoss(round(Int, 2^(m+n) * 0.1)),
     epochs::Int = 3,
     steps_per_image::Int = 200,
@@ -310,7 +310,7 @@ function train_basis(
 
     # Checkpoint callback: construct EntangledQFTBasis from tensors
     build_fn = tensors -> begin
-        eidx = get_entangle_tensor_indices(tensors, n_entangle)
+        eidx = get_entangle_tensor_indices(tensors, n_entangle; entangle_position=entangle_position)
         phases = !isempty(eidx) ? extract_entangle_phases(tensors, eidx) :
                  (entangle_phases === nothing ? zeros(n_entangle) : Float64.(entangle_phases))
         EntangledQFTBasis(m, n, tensors, optcode, inverse_code, n_entangle, phases, entangle_position)
@@ -327,7 +327,7 @@ function train_basis(
     )
 
     # Extract trained phases
-    entangle_indices = get_entangle_tensor_indices(final_tensors, n_entangle)
+    entangle_indices = get_entangle_tensor_indices(final_tensors, n_entangle; entangle_position=entangle_position)
     trained_phases = if !isempty(entangle_indices)
         extract_entangle_phases(final_tensors, entangle_indices)
     else
@@ -370,8 +370,8 @@ function train_basis(
         @assert size(img) == expected_size "Image $i has size $(size(img)), expected $expected_size"
     end
 
-    n_row_gates = m  # Row ring has m gates
-    n_col_gates = n  # Col ring has n gates
+    n_row_gates = m
+    n_col_gates = n
     n_gates = n_row_gates + n_col_gates
 
     # Initialize phases: use small random values if not provided

@@ -78,7 +78,7 @@ function _build_manual_qft(n_qubits::Int, qubit_offset::Int, total_qubits::Int)
 end
 
 """
-    entangled_qft_code(m::Int, n::Int; entangle_phases=nothing, inverse=false, entangle_position=:back)
+    entangled_qft_code(m::Int, n::Int; entangle_phases=nothing, inverse=false, entangle_position=:front)
 
 Generate an optimized tensor network representation of the entangled QFT circuit.
 
@@ -105,8 +105,8 @@ one for each pair of corresponding row/column qubits.
   If nothing, defaults to zeros (equivalent to standard QFT). Length must equal min(m, n).
 - `inverse::Bool`: If true, generate inverse transform code
 - `entangle_position::Symbol`: Where to place entanglement gates. One of:
-  - `:back` (default): QFT_row ⊗ QFT_col → Entangle
-  - `:front`: Entangle → QFT_row ⊗ QFT_col
+  - `:front` (default): Entangle → QFT_row ⊗ QFT_col
+  - `:back`: QFT_row ⊗ QFT_col → Entangle
   - `:middle`: Row and column QFT interleaved, with E_k placed after the row H(j)
     but BEFORE the column H(j). This produces a distinct result because E_k
     (a diagonal controlled-phase gate) does not commute with Hadamard gates.
@@ -132,7 +132,7 @@ optcode, tensors, n_entangle = entangled_qft_code(6, 6; entangle_position=:front
 optcode, tensors, n_entangle = entangled_qft_code(6, 6; entangle_position=:middle)
 ```
 """
-function entangled_qft_code(m::Int, n::Int; entangle_phases::Union{Nothing, Vector{<:Real}}=nothing, inverse=false, entangle_position::Symbol=:back)
+function entangled_qft_code(m::Int, n::Int; entangle_phases::Union{Nothing, Vector{<:Real}}=nothing, inverse=false, entangle_position::Symbol=:front)
     @assert entangle_position in (:front, :middle, :back) "entangle_position must be :front, :middle, or :back, got :$entangle_position"
 
     # Number of entanglement gates = min(m, n) for one-to-one coupling
@@ -259,14 +259,25 @@ function entangled_qft_code(m::Int, n::Int; entangle_phases::Union{Nothing, Vect
 end
 
 """
-    get_entangle_tensor_indices(tensors, n_entangle::Int)
+    _select_entangle_indices(ctrl_phase_indices, n_entangle, ::Val{position})
+
+Select which controlled-phase tensor indices are entanglement gates,
+dispatched on `entangle_position`. After stable sorting (Hadamards first),
+entanglement gates appear first (`:front`, `:middle`) or last (`:back`)
+among the controlled-phase tensors.
+"""
+_select_entangle_indices(indices, n, ::Val{:back}) = indices[end-n+1:end]
+_select_entangle_indices(indices, n, ::Val{:front}) = indices[1:n]
+
+"""
+    get_entangle_tensor_indices(tensors, n_entangle::Int; entangle_position::Symbol=:front)
 
 Identify which tensors in the circuit correspond to entanglement gates.
-Returns the indices of the entanglement gate tensors (the last n_entangle controlled-phase gates).
 
 In the tensor network representation from yao2einsum, controlled-phase gates
-have the form [1, 1; 1, e^(i*phi)] (not diagonal). The entanglement gates
-are the last n_entangle such tensors after sorting (Hadamards first, then phase gates).
+have the form [1, 1; 1, e^(i*phi)] (not diagonal). After stable sorting
+(Hadamards first), the entanglement gates appear first or last among the
+controlled-phase tensors, matching their circuit position.
 
 After training, tensors may drift slightly from the exact pattern, so we use
 tolerance-based magnitude checks.
@@ -274,11 +285,12 @@ tolerance-based magnitude checks.
 # Arguments
 - `tensors::Vector`: Circuit tensors
 - `n_entangle::Int`: Number of entanglement gates
+- `entangle_position::Symbol`: Where entanglement gates are placed in the circuit
 
 # Returns
 - `Vector{Int}`: Indices of entanglement gate tensors
 """
-function get_entangle_tensor_indices(tensors, n_entangle::Int)
+function get_entangle_tensor_indices(tensors, n_entangle::Int; entangle_position::Symbol=:front)
     # Controlled-phase gates in tensor network form have pattern [1, 1; 1, e^(i*phi)]
     # After training, complex values may drift slightly, so check magnitudes with tolerance.
     # We use a moderate tolerance (0.15) to account for optimization drift while still
@@ -293,9 +305,8 @@ function get_entangle_tensor_indices(tensors, n_entangle::Int)
     end
 
     ctrl_phase_indices = findall(is_ctrl_phase, tensors)
-    # The last n_entangle controlled-phase tensors are the entanglement gates
     if length(ctrl_phase_indices) >= n_entangle
-        return ctrl_phase_indices[end-n_entangle+1:end]
+        return _select_entangle_indices(ctrl_phase_indices, n_entangle, Val(entangle_position))
     else
         return Int[]
     end

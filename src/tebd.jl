@@ -47,65 +47,60 @@ optcode, tensors, n_row, n_col = tebd_code(3, 3; phases=phases)
 """
 function tebd_code(m::Int, n::Int; phases::Union{Nothing, Vector{<:Real}}=nothing, inverse=false)
     total = m + n
-    n_row_gates = m  # Row ring: (1,2), ..., (m-1,m), (m,1)
-    n_col_gates = n  # Col ring: (m+1,m+2), ..., (m+n-1,m+n), (m+n,m+1)
+    # Sandwich: H layer → phase gates (nearest-neighbor ring) → H layer.
+    # Second H layer activates all phase gates.
+    n_row_gates = m
+    n_col_gates = n
     n_gates = n_row_gates + n_col_gates
-    
-    # Default phases to zeros if not provided
+
     if phases === nothing
         phases = zeros(n_gates)
     end
-    @assert length(phases) == n_gates "phases must have length $(n_gates) for $(m)×$(n) ring topology ($(n_row_gates) row + $(n_col_gates) col gates)"
-    
-    # Build TEBD circuit: Hadamard layer + two rings of controlled-phase gates
+    @assert length(phases) == n_gates "phases must have length $n_gates, got $(length(phases))"
+
     qc = chain(total)
-    
-    # Layer 1: Hadamard gates on all qubits (creates frequency basis)
+
+    # First H layer
     for i in 1:total
         push!(qc, put(total, i => H))
     end
-    
+
     gate_idx = 1
-    
-    # Layer 2a: Row ring - controlled-phase gates on row qubits (x1 to xm)
-    # Gates: (1,2), (2,3), ..., (m-1,m)
+
+    # Row ring: nearest-neighbor on qubits 1:m
     for i in 1:(m-1)
-        push!(qc, control(total, i, i+1 => shift(phases[gate_idx])))
+        push!(qc, control(total, i, i + 1 => shift(phases[gate_idx])))
         gate_idx += 1
     end
-    # Wrap-around gate: (m,1) to close the row ring
     push!(qc, control(total, m, 1 => shift(phases[gate_idx])))
     gate_idx += 1
-    
-    # Layer 2b: Column ring - controlled-phase gates on column qubits (y1 to yn)
-    # Gates: (m+1,m+2), (m+2,m+3), ..., (m+n-1,m+n)
+
+    # Column ring: nearest-neighbor on qubits m+1:m+n
     for i in 1:(n-1)
-        push!(qc, control(total, m+i, m+i+1 => shift(phases[gate_idx])))
+        push!(qc, control(total, m + i, m + i + 1 => shift(phases[gate_idx])))
         gate_idx += 1
     end
-    # Wrap-around gate: (m+n,m+1) to close the column ring
-    push!(qc, control(total, m+n, m+1 => shift(phases[gate_idx])))
-    gate_idx += 1
-    
+    push!(qc, control(total, m + n, m + 1 => shift(phases[gate_idx])))
+
+    # Second H layer (activates all phase gates)
+    for i in 1:total
+        push!(qc, put(total, i => H))
+    end
+
     # Convert to tensor network
     tn = yao2einsum(qc; optimizer=nothing)
-    
-    # Reorder tensors: Hadamard gates first, then controlled-phase gates
+
     perm_vec = sortperm(tn.tensors, by=x -> !(x ≈ mat(H)))
     ixs = tn.code.ixs[perm_vec]
     tensors = tn.tensors[perm_vec]
-    
-    # yao2einsum returns iy = [output_legs..., input_legs...]
-    # Forward transform: feed image into input legs (iy[total+1:end]), read from output legs (iy[1:total])
-    # Inverse transform: feed into output legs (iy[1:total]), read from input legs (iy[total+1:end])
-    #   (combined with conj.(tensors) at call site, this gives U†)
+
     if inverse
         code_reorder = DynamicEinCode([ixs..., tn.code.iy[1:total]], tn.code.iy[total+1:end])
     else
         code_reorder = DynamicEinCode([ixs..., tn.code.iy[total+1:end]], tn.code.iy[1:total])
     end
     optcode = optimize_code_cached(code_reorder, uniformsize(tn.code, 2), TreeSA())
-    
+
     return optcode, tensors, n_row_gates, n_col_gates
 end
 
@@ -179,3 +174,83 @@ n_col_gates(n::Int) = n
 Calculate total number of phase gates for m×n TEBD circuit.
 """
 n_total_gates(m::Int, n::Int) = n_row_gates(m) + n_col_gates(n)
+
+# ============================================================================
+# Multi-Stride TEBD Circuit
+# ============================================================================
+
+"""Number of strides for m qubits: ⌊log₂(m)⌋, capped so max stride < m."""
+_n_strides(m::Int) = m <= 1 ? 0 : floor(Int, log2(m))
+
+"""Number of phase gates for one dimension with multi-stride rings."""
+_n_multistride_gates(m::Int) = m * _n_strides(m)
+
+"""
+    multistride_tebd_code(m::Int, n::Int; phases=nothing, inverse=false)
+
+TEBD circuit with multi-stride ring connectivity. Each dimension has
+⌊log₂(m)⌋ rings at strides 1, 2, 4, ..., giving O(m log m) phase gates
+with both local and long-range interactions.
+
+# Arguments
+- `m::Int`: Number of row qubits
+- `n::Int`: Number of column qubits
+- `phases`: Initial phases. Length must equal `_n_multistride_gates(m) + _n_multistride_gates(n)`.
+- `inverse::Bool`: If true, generate inverse transform code
+
+# Returns
+- `optcode`, `tensors`, `n_row_gates`, `n_col_gates`
+"""
+function multistride_tebd_code(m::Int, n::Int; phases::Union{Nothing, Vector{<:Real}}=nothing, inverse=false)
+    total = m + n
+    n_row = _n_multistride_gates(m)
+    n_col = _n_multistride_gates(n)
+    n_gates = n_row + n_col
+
+    if phases === nothing
+        phases = zeros(n_gates)
+    end
+    @assert length(phases) == n_gates "phases must have length $n_gates, got $(length(phases))"
+
+    qc = chain(total)
+
+    # Hadamard layer
+    for i in 1:total
+        push!(qc, put(total, i => H))
+    end
+
+    gate_idx = 1
+
+    # Row: multi-stride rings on qubits 1:m
+    for s in (2 .^ (0:_n_strides(m)-1))
+        for i in 1:m
+            j = mod1(i + s, m)
+            push!(qc, control(total, i, j => shift(phases[gate_idx])))
+            gate_idx += 1
+        end
+    end
+
+    # Column: multi-stride rings on qubits m+1:m+n
+    for s in (2 .^ (0:_n_strides(n)-1))
+        for i in 1:n
+            j = mod1(i + s, n)
+            push!(qc, control(total, m + i, m + mod1(i + s, n) => shift(phases[gate_idx])))
+            gate_idx += 1
+        end
+    end
+
+    # Convert to tensor network (same as tebd_code)
+    tn = yao2einsum(qc; optimizer=nothing)
+    perm_vec = sortperm(tn.tensors, by=x -> !(x ≈ mat(H)))
+    ixs = tn.code.ixs[perm_vec]
+    tensors = tn.tensors[perm_vec]
+
+    if inverse
+        code_reorder = DynamicEinCode([ixs..., tn.code.iy[1:total]], tn.code.iy[total+1:end])
+    else
+        code_reorder = DynamicEinCode([ixs..., tn.code.iy[total+1:end]], tn.code.iy[1:total])
+    end
+    optcode = optimize_code_cached(code_reorder, uniformsize(tn.code, 2), TreeSA())
+
+    return optcode, tensors, n_row, n_col
+end

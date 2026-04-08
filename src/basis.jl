@@ -275,7 +275,7 @@ struct EntangledQFTBasis <: AbstractSparseBasis
 end
 
 """
-    EntangledQFTBasis(m::Int, n::Int; entangle_phases=nothing, entangle_position=:back)
+    EntangledQFTBasis(m::Int, n::Int; entangle_phases=nothing, entangle_position=:front)
 
 Construct an EntangledQFTBasis with default or custom entanglement phases.
 
@@ -289,7 +289,7 @@ Construct an EntangledQFTBasis with default or custom entanglement phases.
 # Returns
 - `EntangledQFTBasis`: Basis with entangled QFT circuit parameters
 """
-function EntangledQFTBasis(m::Int, n::Int; entangle_phases::Union{Nothing, Vector{<:Real}}=nothing, entangle_position::Symbol=:back)
+function EntangledQFTBasis(m::Int, n::Int; entangle_phases::Union{Nothing, Vector{<:Real}}=nothing, entangle_position::Symbol=:front)
     n_entangle = min(m, n)
     if entangle_phases === nothing
         entangle_phases = zeros(n_entangle)
@@ -302,7 +302,7 @@ function EntangledQFTBasis(m::Int, n::Int; entangle_phases::Union{Nothing, Vecto
 end
 
 """
-    EntangledQFTBasis(m::Int, n::Int, tensors::Vector, n_entangle::Int; entangle_position=:back)
+    EntangledQFTBasis(m::Int, n::Int, tensors::Vector, n_entangle::Int; entangle_position=:front)
 
 Construct an EntangledQFTBasis with custom trained tensors.
 
@@ -316,12 +316,12 @@ Construct an EntangledQFTBasis with custom trained tensors.
 # Returns
 - `EntangledQFTBasis`: Basis with custom parameters
 """
-function EntangledQFTBasis(m::Int, n::Int, tensors::Vector, n_entangle::Int; entangle_position::Symbol=:back)
+function EntangledQFTBasis(m::Int, n::Int, tensors::Vector, n_entangle::Int; entangle_position::Symbol=:front)
     optcode, _, _ = entangled_qft_code(m, n; entangle_position=entangle_position)
     inverse_code, _, _ = entangled_qft_code(m, n; inverse=true, entangle_position=entangle_position)
 
     # Extract entanglement phases from tensors
-    entangle_indices = get_entangle_tensor_indices(tensors, n_entangle)
+    entangle_indices = get_entangle_tensor_indices(tensors, n_entangle; entangle_position=entangle_position)
     entangle_phases = extract_entangle_phases(tensors, entangle_indices)
 
     return EntangledQFTBasis(m, n, tensors, optcode, inverse_code, n_entangle, entangle_phases, entangle_position)
@@ -543,8 +543,8 @@ Construct a TEBDBasis with default or custom phases.
 - `TEBDBasis`: Basis with TEBD circuit parameters
 """
 function TEBDBasis(m::Int, n::Int; phases::Union{Nothing, Vector{<:Real}}=nothing)
-    n_row = m  # Row ring has m gates
-    n_col = n  # Col ring has n gates
+    n_row = m
+    n_col = n
     n_gates = n_row + n_col
     if phases === nothing
         phases = zeros(n_gates)

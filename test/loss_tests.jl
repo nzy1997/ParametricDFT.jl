@@ -99,6 +99,15 @@ end
         @test mse_value isa Float64
         @test mse_value >= 0.0
     end
+
+    # Test EntropyLoss
+    loss_ent = ParametricDFT.EntropyLoss()
+    ent_value = ParametricDFT.loss_function(tensors, m, n, optcode, pic, loss_ent)
+    @test ent_value isa Float64
+    @test ent_value > 0.0
+    # Entropy is bounded: 0 ≤ H ≤ log(N) where N = number of coefficients
+    N = 2^(m+n)
+    @test ent_value ≤ log(N) + 1e-10
 end
 
 @testset "Batched Einsum" begin
@@ -156,6 +165,22 @@ end
         @test isapprox(ParametricDFT.batched_loss_l2(batched_opt, tensors, batch, m, n), per_image, rtol=1e-10)
     end
 
+    @testset "batched entropy loss matches per-image entropy" begin
+        Random.seed!(42)
+        m, n = 2, 2
+        optcode, tensors_raw = ParametricDFT.qft_code(m, n)
+        tensors = [ComplexF64.(t) for t in tensors_raw]
+        n_gates = length(tensors)
+        B = 4
+        batch = [rand(ComplexF64, 2^m, 2^n) for _ in 1:B]
+
+        per_image = sum(ParametricDFT.loss_function(tensors, m, n, optcode, img, ParametricDFT.EntropyLoss()) for img in batch) / B
+        batched_flat, blabel = ParametricDFT.make_batched_code(optcode, n_gates)
+        batched_opt = ParametricDFT.optimize_batched_code(batched_flat, blabel, B)
+
+        @test isapprox(ParametricDFT.batched_loss_entropy(batched_opt, tensors, batch, m, n), per_image, rtol=1e-10)
+    end
+
     @testset "batched MSE loss matches per-image MSE" begin
         Random.seed!(42)
         m, n = 2, 2
@@ -188,6 +213,7 @@ end
         for (loss_type, batched_fn) in [
             (ParametricDFT.L1Norm(), (opt, ts, b, m, n) -> ParametricDFT.batched_loss_l1(opt, ts, b, m, n)),
             (ParametricDFT.L2Norm(), (opt, ts, b, m, n) -> ParametricDFT.batched_loss_l2(opt, ts, b, m, n)),
+            (ParametricDFT.EntropyLoss(), (opt, ts, b, m, n) -> ParametricDFT.batched_loss_entropy(opt, ts, b, m, n)),
         ]
             batched_grad = Zygote.gradient(ts -> batched_fn(batched_opt, ts, batch, m, n), tensors)[1]
             per_image_grad = Zygote.gradient(tensors) do ts

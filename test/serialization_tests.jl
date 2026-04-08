@@ -35,12 +35,12 @@
             check_dict = (d, basis) -> begin
                 @test d["n_entangle"] == basis.n_entangle
                 @test d["entangle_phases"] ≈ basis.entangle_phases
-                @test d["entangle_position"] == "back"
+                @test d["entangle_position"] == "front"
             end,
             check_json = (json_data) -> begin
                 @test json_data.n_entangle == 2
                 @test collect(json_data.entangle_phases) ≈ [0.5, 1.0]
-                @test json_data.entangle_position == "back"
+                @test json_data.entangle_position == "front"
             end,
             sizes = [(2, 2), (3, 4), (4, 3)],
             check_size_fields = (loaded, m, n) -> begin
