@@ -244,12 +244,7 @@ function batched_loss_mse(optcode_batched, tensors::Tuple, batch_data, m::Int, n
         # Single einsum call for all B inverse transforms
         stacked_trunc = cat(truncated_slices...; dims=m + n + 1)
         inv_batched = batched_inverse_code(conj_tensors..., stacked_trunc)
-        total_loss = zero(real(eltype(fft_batched)))
-        for i in 1:B
-            reconstructed = reshape(selectdim(inv_batched, m + n + 1, i), 2^m, 2^n)
-            pic = reshape(selectdim(stacked_batch, m + n + 1, i), 2^m, 2^n)
-            total_loss += sum(abs2.(pic .- reconstructed))
-        end
+        total_loss = sum(abs2.(stacked_batch .- inv_batched))
     else
         # Fallback: per-image inverse
         total_loss = zero(real(eltype(fft_batched)))
