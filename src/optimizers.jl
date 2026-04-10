@@ -106,6 +106,7 @@ function optimize!(
     # Pre-loop: build persistent batched state + pre-allocate reusable buffers
     point_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
     grad_buf_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
+    ibatch_cache = Dict{AbstractRiemannianManifold, AbstractArray}()
 
     for (manifold, indices) in manifold_groups
         n_m = length(indices)
@@ -113,6 +114,17 @@ function optimize!(
             pb = stack_tensors(current_tensors, indices)
             point_batches[manifold] = pb
             grad_buf_batches[manifold] = similar(pb)
+            # Pre-allocate identity batch for UnitaryManifold Cayley retraction
+            if manifold isa UnitaryManifold
+                d = size(pb, 1)
+                I_b = zeros(ET, d, d, n_m)
+                for k in 1:n_m
+                    for i in 1:d
+                        I_b[i, i, k] = one(ET)
+                    end
+                end
+                ibatch_cache[manifold] = convert(typeof(pb), I_b)
+            end
         end
     end
 
@@ -154,7 +166,8 @@ function optimize!(
             for (manifold, indices) in manifold_groups
                 pb = point_batches[manifold]
                 rg = rg_batches[manifold]
-                cand = retract(manifold, pb, .-rg, alpha)
+                ib = get(ibatch_cache, manifold, nothing)
+                cand = retract(manifold, pb, .-rg, alpha; I_batch=ib)
                 last_cand_batches[manifold] = cand
                 unstack_tensors!(current_tensors, cand, indices)
             end
@@ -247,6 +260,7 @@ function optimize!(
     point_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
     grad_buf_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
     dir_buf_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
+    ibatch_cache = Dict{AbstractRiemannianManifold, AbstractArray}()
 
     # Adam state: first moment (complex) and second moment (real) per manifold
     m_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
@@ -264,6 +278,18 @@ function optimize!(
             proto = tensors[indices[1]]
             m_batches[manifold] = similar(proto, ET, size(pb)...) .* false  # zeros on same device
             v_batches[manifold] = similar(proto, RT, size(pb)...) .* false
+
+            # Pre-allocate identity batch for UnitaryManifold Cayley retraction
+            if manifold isa UnitaryManifold
+                d = size(pb, 1)
+                I_b = zeros(ET, d, d, n_m)
+                for k in 1:n_m
+                    for i in 1:d
+                        I_b[i, i, k] = one(ET)
+                    end
+                end
+                ibatch_cache[manifold] = convert(typeof(pb), I_b)
+            end
         end
     end
 
@@ -306,7 +332,8 @@ function optimize!(
 
             # Retract (use persistent point_batch directly)
             old_batch = point_batches[manifold]
-            new_batch = retract(manifold, old_batch, .-dir_buf, opt.lr)
+            ib = get(ibatch_cache, manifold, nothing)
+            new_batch = retract(manifold, old_batch, .-dir_buf, opt.lr; I_batch=ib)
 
             # Transport momentum (re-project onto new tangent space)
             m_batches[manifold] = transport(manifold, old_batch, new_batch, m_state)
