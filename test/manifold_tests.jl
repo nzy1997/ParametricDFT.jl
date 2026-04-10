@@ -167,6 +167,32 @@
         end
     end
 
+    @testset "UnitaryManifold retract with pre-allocated I_batch" begin
+        Random.seed!(61)
+        um = ParametricDFT.UnitaryManifold()
+        d, n = 4, 5
+        U = Array{ComplexF64}(undef, d, d, n)
+        for k in 1:n
+            Q, _ = qr(randn(ComplexF64, d, d))
+            U[:, :, k] = Matrix{ComplexF64}(Q)
+        end
+        G = randn(ComplexF64, d, d, n)
+        Xi = ParametricDFT.project(um, U, G)
+
+        I_b = zeros(ComplexF64, d, d, n)
+        for k in 1:n, i in 1:d
+            I_b[i, i, k] = one(ComplexF64)
+        end
+
+        result_with    = ParametricDFT.retract(um, U, Xi, 0.1; I_batch=I_b)
+        result_without = ParametricDFT.retract(um, U, Xi, 0.1)
+
+        @test result_with ≈ result_without atol=1e-14
+        for k in 1:n
+            @test result_with[:, :, k]' * result_with[:, :, k] ≈ Matrix{ComplexF64}(I, d, d) atol=1e-10
+        end
+    end
+
     @testset "PhaseManifold project" begin
         Random.seed!(48)
         pm = ParametricDFT.PhaseManifold()

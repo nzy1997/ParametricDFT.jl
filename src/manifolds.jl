@@ -162,9 +162,13 @@ function retract(::UnitaryManifold, U::AbstractArray{T,3}, Xi::AbstractArray{T,3
     d = size(U, 1)
     n = size(U, 3)
 
+    # W = Xi * U' projected to skew-Hermitian (Lie algebra).
+    # The projection ensures correctness even when Xi is not exactly tangent
+    # (e.g. Adam's element-wise scaled direction).
     W_raw = batched_matmul(Xi, batched_adjoint(U))
     W = (W_raw .- batched_adjoint(W_raw)) ./ 2
 
+    # Build or reuse batched identity
     if I_batch === nothing
         I_b = zeros(T, d, d, n)
         for k in 1:n
@@ -180,6 +184,7 @@ function retract(::UnitaryManifold, U::AbstractArray{T,3}, Xi::AbstractArray{T,3
     lhs = I_b .- α_half .* W
     rhs = I_b .+ α_half .* W
 
+    # (I - α/2·W)⁻¹ (I + α/2·W) U
     return batched_matmul(batched_matmul(batched_inv(lhs), rhs), U)
 end
 
