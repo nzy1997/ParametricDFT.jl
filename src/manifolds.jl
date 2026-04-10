@@ -154,32 +154,32 @@ function project(::UnitaryManifold, U::AbstractArray{T,3}, G::AbstractArray{T,3}
     return batched_matmul(U, S)
 end
 
-"""Batched Cayley retraction on U(n): `(I - α/2·W)⁻¹(I + α/2·W)·U` where `W = Ξ·U'`."""
-function retract(::UnitaryManifold, U::AbstractArray{T,3}, Xi::AbstractArray{T,3}, α) where T
+"""Batched Cayley retraction on U(n): `(I - α/2·W)⁻¹(I + α/2·W)·U` where `W = Ξ·U'`.
+Pass `I_batch` to reuse a pre-allocated identity tensor and avoid repeated allocations."""
+function retract(::UnitaryManifold, U::AbstractArray{T,3}, Xi::AbstractArray{T,3}, α; I_batch=nothing) where T
     RT = real(T)
     α_half = convert(RT, α) / 2
     d = size(U, 1)
     n = size(U, 3)
 
-    # W = Xi * U' projected to skew-Hermitian (Lie algebra).
-    # The projection ensures correctness even when Xi is not exactly tangent
-    # (e.g. Adam's element-wise scaled direction).
     W_raw = batched_matmul(Xi, batched_adjoint(U))
     W = (W_raw .- batched_adjoint(W_raw)) ./ 2
 
-    # Build batched identity
-    I_batch = zeros(T, d, d, n)
-    for k in 1:n
-        for i in 1:d
-            I_batch[i, i, k] = one(T)
+    if I_batch === nothing
+        I_b = zeros(T, d, d, n)
+        for k in 1:n
+            for i in 1:d
+                I_b[i, i, k] = one(T)
+            end
         end
+        I_b = convert(typeof(U), I_b)
+    else
+        I_b = I_batch
     end
-    I_batch = convert(typeof(U), I_batch)
 
-    lhs = I_batch .- α_half .* W   # I - α/2·W
-    rhs = I_batch .+ α_half .* W   # I + α/2·W
+    lhs = I_b .- α_half .* W
+    rhs = I_b .+ α_half .* W
 
-    # (I - α/2·W)⁻¹ (I + α/2·W) U
     return batched_matmul(batched_matmul(batched_inv(lhs), rhs), U)
 end
 
@@ -199,7 +199,7 @@ function project(::PhaseManifold, Z::AbstractArray{T,3}, G::AbstractArray{T,3}) 
 end
 
 """Batched U(1)^d retraction: normalize `z + alpha*xi`."""
-function retract(::PhaseManifold, Z::AbstractArray{T,3}, Xi::AbstractArray{T,3}, α) where T
+function retract(::PhaseManifold, Z::AbstractArray{T,3}, Xi::AbstractArray{T,3}, α; I_batch=nothing) where T
     RT = real(T)
     α_typed = convert(RT, α)
     y = Z .+ α_typed .* Xi
