@@ -123,10 +123,11 @@ function _train_basis_core(
             start_idx = (batch_idx - 1) * batch_size + 1
             end_idx = min(batch_idx * batch_size, length(training_data))
             batch = training_data[start_idx:end_idx]
+            stacked_batch = batched_optcode === nothing ? nothing : stack_image_batch(batch, m, n)
 
             # Construct loss function for this batch
             batch_loss_fn = if batched_optcode !== nothing
-                ts -> loss_function(ts, m, n, optcode, batch, loss;
+                ts -> loss_function(ts, m, n, optcode, stacked_batch, loss;
                                     inverse_code=inverse_code, batched_optcode=batched_optcode,
                                     batched_inverse_code=batched_inverse_code)
             else

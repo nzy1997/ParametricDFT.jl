@@ -138,6 +138,8 @@ end
         batched_opt = ParametricDFT.optimize_batched_code(batched_flat, blabel, B)
 
         @test isapprox(ParametricDFT.batched_loss_l1(batched_opt, tensors, batch, m, n), per_image, rtol=1e-10)
+        stacked = ParametricDFT.stack_image_batch(batch, m, n)
+        @test isapprox(ParametricDFT.batched_loss_l1(batched_opt, tensors, stacked), per_image, rtol=1e-10)
     end
 
     @testset "batched L2 loss matches per-image L2" begin
@@ -154,6 +156,8 @@ end
         batched_opt = ParametricDFT.optimize_batched_code(batched_flat, blabel, B)
 
         @test isapprox(ParametricDFT.batched_loss_l2(batched_opt, tensors, batch, m, n), per_image, rtol=1e-10)
+        stacked = ParametricDFT.stack_image_batch(batch, m, n)
+        @test isapprox(ParametricDFT.batched_loss_l2(batched_opt, tensors, stacked), per_image, rtol=1e-10)
     end
 
     @testset "batched MSE loss matches per-image MSE" begin
@@ -171,6 +175,8 @@ end
         batched_opt = ParametricDFT.optimize_batched_code(batched_flat, blabel, B)
 
         @test isapprox(ParametricDFT.batched_loss_mse(batched_opt, tensors, batch, m, n, k, optcode_inv), per_image, rtol=1e-10)
+        stacked = ParametricDFT.stack_image_batch(batch, m, n)
+        @test isapprox(ParametricDFT.batched_loss_mse(batched_opt, tensors, stacked, m, n, k, optcode_inv), per_image, rtol=1e-10)
     end
 
     @testset "Zygote gradients through batched losses" begin

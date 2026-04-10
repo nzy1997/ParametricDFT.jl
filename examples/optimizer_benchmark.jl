@@ -1,11 +1,11 @@
 # ============================================================================
 # Optimizer Benchmark: PDFT vs Manopt.jl
 # ============================================================================
-# Validates ParametricDFT's Riemannian optimizers (GD, Adam) against
-# Manopt.jl's gradient_descent on real 512×512 images (DIV2K dataset).
+# Validates ParametricDFT's customized Riemannian GD optimizer against
+# Manopt.jl's gradient_descent on QuickDraw images.
 #
 # Run:
-#   CUDA_VISIBLE_DEVICES=1 julia --project=examples examples/optimizer_benchmark.jl
+#   julia --project=examples examples/optimizer_benchmark.jl
 # ============================================================================
 
 using ParametricDFT
@@ -16,8 +16,8 @@ using Printf
 using Random
 using Statistics
 using Dates
-using Images: load, Gray, channelview
-using FileIO
+using Downloads
+using NPZ
 using ImageQualityIndexes: assess_psnr, assess_ssim
 
 # Manopt stack
@@ -30,80 +30,91 @@ import Zygote
 # Configuration
 # ============================================================================
 
-const M_PARAM = 9
-const N_PARAM = 9
-const IMAGE_SIZE = 512
+const M_PARAM = 5
+const N_PARAM = 5
+const IMAGE_SIZE = 32
 
 const N_TRAIN = 20
 const N_TEST = 5
 const SEED = 42
+const GPU_DEVICE = 1
 
-const SMOKE_STEPS = 50
-const FULL_STEPS = 500
+const SMOKE_STEPS = 5
+const FULL_STEPS = 50
 
 const LOSS_K = round(Int, 2^(M_PARAM + N_PARAM) * 0.1)
 const COMPRESSION_RATIOS = [0.8, 0.9, 0.95]
 
-const DATA_DIR = joinpath(@__DIR__, "data", "DIV2K_valid_HR")
-const OUTPUT_DIR = joinpath(@__DIR__, "OptimizerBenchmark")
+const DATA_DIR = joinpath(@__DIR__, "benchmark", "data", "quickdraw")
+const OUTPUT_DIR = joinpath(@__DIR__, "OptimizerBenchmark", "quickdraw")
+const QUICKDRAW_CATEGORIES = ["cat", "dog", "airplane", "apple", "bicycle"]
+const QUICKDRAW_BASE_URL = "https://storage.googleapis.com/quickdraw_dataset/full/numpy_bitmap"
 
 const OPTIMIZER_CONFIGS = [
     ("Manopt-GD",      :manopt, :gradient_descent, :cpu),
     ("PDFT-GD (cpu)",  :pdft,   :gradient_descent, :cpu),
     ("PDFT-GD (gpu)",  :pdft,   :gradient_descent, :gpu),
-    ("PDFT-Adam (cpu)",:pdft,   :adam,              :cpu),
-    ("PDFT-Adam (gpu)",:pdft,   :adam,              :gpu),
 ]
 
 const PLOT_STYLES = Dict(
     "Manopt-GD"       => (color=:black,     linestyle=:solid),
     "PDFT-GD (cpu)"   => (color=:blue,      linestyle=:dash),
     "PDFT-GD (gpu)"   => (color=:blue,      linestyle=:solid),
-    "PDFT-Adam (cpu)" => (color=:red,       linestyle=:dash),
-    "PDFT-Adam (gpu)" => (color=:red,       linestyle=:solid),
 )
 
 # ============================================================================
 # Data Loading
 # ============================================================================
 
-"""Load DIV2K images, center-crop to 512×512 grayscale."""
-function load_div2k()
-    @assert isdir(DATA_DIR) """
-    DIV2K dataset not found at: $DATA_DIR
-    Download with:
-      cd examples/data
-      curl -LO https://data.vision.ee.ethz.ch/cvl/DIV2K/DIV2K_valid_HR.zip
-      python3 -c "import zipfile; zipfile.ZipFile('DIV2K_valid_HR.zip').extractall()"
-    """
+"""Center-pad a 28x28 QuickDraw image to the benchmark power-of-two size."""
+function pad_to_power_of_two(img::AbstractMatrix, target_size::Int)
+    h, w = size(img)
+    padded = zeros(Float64, target_size, target_size)
+    y_offset = (target_size - h) ÷ 2 + 1
+    x_offset = (target_size - w) ÷ 2 + 1
+    padded[y_offset:y_offset+h-1, x_offset:x_offset+w-1] = Float64.(img)
+    return padded
+end
 
-    all_files = sort(filter(f -> endswith(lowercase(f), ".png"), readdir(DATA_DIR; join=true)))
-    @assert length(all_files) >= N_TRAIN + N_TEST "Need $(N_TRAIN + N_TEST) images, found $(length(all_files))"
-
-    Random.seed!(SEED)
-    selected = all_files[randperm(length(all_files))[1:(N_TRAIN + N_TEST)]]
+"""Load QuickDraw bitmap images, auto-downloading missing category files."""
+function load_quickdraw()
+    mkpath(DATA_DIR)
+    for category in QUICKDRAW_CATEGORIES
+        filepath = joinpath(DATA_DIR, "$(category).npy")
+        if !isfile(filepath)
+            url = "$(QUICKDRAW_BASE_URL)/$(category).npy"
+            @info "Downloading QuickDraw category" category url
+            Downloads.download(url, filepath)
+        end
+    end
 
     images = Matrix{Float64}[]
-    filenames = String[]
+    labels = String[]
 
-    for path in selected
-        img = load(path)
-        gray = Gray.(img)
-        h, w = size(gray)
-        y0 = (h - IMAGE_SIZE) ÷ 2 + 1
-        x0 = (w - IMAGE_SIZE) ÷ 2 + 1
-        cropped = gray[y0:y0+IMAGE_SIZE-1, x0:x0+IMAGE_SIZE-1]
-        push!(images, Float64.(channelview(cropped)))
-        push!(filenames, basename(path))
+    per_category = ceil(Int, (N_TRAIN + N_TEST) / length(QUICKDRAW_CATEGORIES))
+    for category in QUICKDRAW_CATEGORIES
+        data = npzread(joinpath(DATA_DIR, "$(category).npy"))
+        n_to_load = min(size(data, 1), per_category)
+        for i in 1:n_to_load
+            img = reshape(Float64.(data[i, :]), 28, 28) ./ 255.0
+            push!(images, pad_to_power_of_two(img, IMAGE_SIZE))
+            push!(labels, category)
+        end
     end
+    @assert length(images) >= N_TRAIN + N_TEST "Need $(N_TRAIN + N_TEST) QuickDraw images, found $(length(images))"
+
+    Random.seed!(SEED)
+    selected = randperm(length(images))[1:(N_TRAIN + N_TEST)]
+    images = images[selected]
+    labels = labels[selected]
 
     train_images = images[1:N_TRAIN]
     test_images = images[N_TRAIN+1:end]
-    test_filenames = filenames[N_TRAIN+1:end]
+    test_labels = labels[N_TRAIN+1:end]
 
     println("  Train: $(length(train_images)) images ($(IMAGE_SIZE)×$(IMAGE_SIZE))")
     println("  Test:  $(length(test_images)) images")
-    return train_images, test_images, test_filenames
+    return train_images, test_images, test_labels
 end
 
 # ============================================================================
@@ -176,28 +187,54 @@ end
 # ============================================================================
 
 """
-Run ParametricDFT train_basis on QFT circuit.
-Returns (loss_trace, final_tensors, elapsed, history).
+Run ParametricDFT's customized Riemannian GD on the same full-batch QFT objective
+as Manopt. This avoids `train_basis` epoch/batch accounting so the requested
+`steps` means the same number of optimizer iterations for both frameworks.
+Returns (loss_trace, final_tensors, elapsed).
 """
-function run_pdft(train_images, steps, optimizer::Symbol, device::Symbol)
-    images = [Complex{Float64}.(img) for img in train_images]
+function run_pdft_gd(train_images, steps, device::Symbol)
+    basis = QFTBasis(M_PARAM, N_PARAM)
+    optcode = basis.optcode
+    inverse_code = basis.inverse_code
+    loss = ParametricDFT.MSELoss(LOSS_K)
 
-    elapsed = @elapsed begin
-        basis, history = train_basis(QFTBasis, images;
-            m=M_PARAM, n=N_PARAM,
-            loss=ParametricDFT.MSELoss(LOSS_K),
-            epochs=1,
-            steps_per_image=steps,
-            validation_split=0.0,
-            optimizer=optimizer,
-            device=device,
-        )
+    tensors = [ParametricDFT.to_device(Matrix{ComplexF64}(t), device) for t in basis.tensors]
+    images = [ParametricDFT.to_device(ComplexF64.(img), device) for img in train_images]
+
+    flat_batched, blabel = ParametricDFT.make_batched_code(optcode, length(tensors))
+    batched_optcode = ParametricDFT.optimize_batched_code(flat_batched, blabel, length(images))
+    flat_batched_inv, blabel_inv = ParametricDFT.make_batched_code(inverse_code, length(tensors))
+    batched_inverse_code = ParametricDFT.optimize_batched_code(flat_batched_inv, blabel_inv, length(images))
+    stacked_images = ParametricDFT.stack_image_batch(images, M_PARAM, N_PARAM)
+
+    loss_fn = ts -> ParametricDFT.loss_function(
+        ts, M_PARAM, N_PARAM, optcode, stacked_images, loss;
+        inverse_code=inverse_code,
+        batched_optcode=batched_optcode,
+        batched_inverse_code=batched_inverse_code,
+    )
+    grad_fn = ts -> begin
+        _, back = Zygote.pullback(loss_fn, ts)
+        return back(one(real(eltype(ts[1]))))[1]
     end
 
-    loss_trace = history.step_train_losses
-    final_tensors = basis.tensors
+    loss_trace = Float64[]
+    elapsed = @elapsed begin
+        tensors = ParametricDFT.optimize!(
+            ParametricDFT.RiemannianGD(lr=0.01),
+            tensors,
+            loss_fn,
+            grad_fn;
+            max_iter=steps,
+            tol=1e-8,
+            loss_trace=loss_trace,
+        )
+        device == :gpu && CUDA.synchronize()
+    end
 
-    return loss_trace, final_tensors, elapsed, history
+    final_tensors = [ComplexF64.(Array(t)) for t in tensors]
+
+    return loss_trace, final_tensors, elapsed
 end
 
 # ============================================================================
@@ -266,7 +303,8 @@ function run_config(label, framework, optimizer, device, train_images, steps)
         if framework == :manopt
             loss_trace, tensors, elapsed = run_manopt_gd(train_images, steps)
         else
-            loss_trace, tensors, elapsed, _ = run_pdft(train_images, steps, optimizer, device)
+            optimizer == :gradient_descent || error("optimizer_benchmark currently compares Riemannian GD only")
+            loss_trace, tensors, elapsed = run_pdft_gd(train_images, steps, device)
         end
 
         final_loss = isempty(loss_trace) ? NaN : last(loss_trace)
@@ -387,7 +425,7 @@ function plot_loss_curves(results)
 
     fig = Figure(size=(900, 600))
     ax = Axis(fig[1, 1];
-              title="Training Loss Convergence ($(IMAGE_SIZE)×$(IMAGE_SIZE), QFT)",
+              title="QuickDraw Training Loss Convergence ($(IMAGE_SIZE)x$(IMAGE_SIZE), QFT)",
               xlabel="Optimization Step",
               ylabel="MSE per pixel",
               yscale=log10)
@@ -416,7 +454,7 @@ function plot_timing(results)
 
     fig = Figure(size=(800, 500))
     ax = Axis(fig[1, 1];
-              title="Training Time ($(FULL_STEPS) steps, $(IMAGE_SIZE)×$(IMAGE_SIZE))",
+              title="QuickDraw Training Time ($(FULL_STEPS) full-batch GD steps)",
               ylabel="Time (seconds)",
               xticklabelrotation=π/6)
 
@@ -426,31 +464,30 @@ function plot_timing(results)
     return fig
 end
 
-"""Plot 3: GPU speedup (CPU time / GPU time) for GD and Adam."""
-function plot_gpu_speedup(results)
+"""Plot 3: Speedup against Manopt and CPU/GPU speedup for customized GD."""
+function plot_optimizer_speedup(results)
     successful = filter(r -> r.success, results)
 
     speedups = Tuple{String, Float64}[]
 
-    # GD speedup
+    manopt = findfirst(r -> r.label == "Manopt-GD", successful)
     gd_cpu = findfirst(r -> r.label == "PDFT-GD (cpu)", successful)
     gd_gpu = findfirst(r -> r.label == "PDFT-GD (gpu)", successful)
-    if gd_cpu !== nothing && gd_gpu !== nothing
-        push!(speedups, ("GD", successful[gd_cpu].elapsed / successful[gd_gpu].elapsed))
+    if manopt !== nothing && gd_cpu !== nothing
+        push!(speedups, ("PDFT CPU / Manopt", successful[manopt].elapsed / successful[gd_cpu].elapsed))
     end
-
-    # Adam speedup
-    adam_cpu = findfirst(r -> r.label == "PDFT-Adam (cpu)", successful)
-    adam_gpu = findfirst(r -> r.label == "PDFT-Adam (gpu)", successful)
-    if adam_cpu !== nothing && adam_gpu !== nothing
-        push!(speedups, ("Adam", successful[adam_cpu].elapsed / successful[adam_gpu].elapsed))
+    if manopt !== nothing && gd_gpu !== nothing
+        push!(speedups, ("PDFT GPU / Manopt", successful[manopt].elapsed / successful[gd_gpu].elapsed))
+    end
+    if gd_cpu !== nothing && gd_gpu !== nothing
+        push!(speedups, ("GPU / CPU", successful[gd_cpu].elapsed / successful[gd_gpu].elapsed))
     end
 
     isempty(speedups) && return nothing
 
-    fig = Figure(size=(500, 500))
+    fig = Figure(size=(800, 500))
     ax = Axis(fig[1, 1];
-              title="GPU Speedup (CPU time / GPU time)",
+              title="Customized GD Speedup",
               ylabel="Speedup factor")
 
     labels = [s[1] for s in speedups]
@@ -470,13 +507,13 @@ function plot_compression_quality(comp_results)
 
     fig_psnr = Figure(size=(800, 500))
     ax_psnr = Axis(fig_psnr[1, 1];
-                    title="Compression Quality — PSNR ($(IMAGE_SIZE)×$(IMAGE_SIZE), QFT)",
+                    title="QuickDraw Compression Quality — PSNR ($(IMAGE_SIZE)x$(IMAGE_SIZE), QFT)",
                     xlabel="Coefficients Kept (%)",
                     ylabel="PSNR (dB)")
 
     fig_ssim = Figure(size=(800, 500))
     ax_ssim = Axis(fig_ssim[1, 1];
-                    title="Compression Quality — SSIM ($(IMAGE_SIZE)×$(IMAGE_SIZE), QFT)",
+                    title="QuickDraw Compression Quality — SSIM ($(IMAGE_SIZE)x$(IMAGE_SIZE), QFT)",
                     xlabel="Coefficients Kept (%)",
                     ylabel="SSIM")
 
@@ -584,7 +621,7 @@ function generate_all_plots(results, comp_results, test_images, test_filenames)
     plots = [
         ("loss_curves.png",      plot_loss_curves(results)),
         ("timing.png",           plot_timing(results)),
-        ("gpu_speedup.png",      plot_gpu_speedup(results)),
+        ("optimizer_speedup.png", plot_optimizer_speedup(results)),
         ("final_loss.png",       plot_final_loss(results)),
         ("reconstruction.png",   plot_reconstruction_grid(results, test_images, test_filenames)),
     ]
@@ -611,32 +648,35 @@ function main()
     println("=" ^ 70)
     println("  Optimizer Benchmark: PDFT vs Manopt.jl")
     println("=" ^ 70)
-    println("  Image:    $(IMAGE_SIZE)×$(IMAGE_SIZE) (m=$(M_PARAM), n=$(N_PARAM))")
-    println("  Data:     DIV2K ($N_TRAIN train, $N_TEST test)")
+    println("  Image:    $(IMAGE_SIZE)x$(IMAGE_SIZE) (m=$(M_PARAM), n=$(N_PARAM))")
+    println("  Data:     QuickDraw ($N_TRAIN train, $N_TEST test)")
     println("  Loss:     MSELoss(k=$(LOSS_K))")
-    println("  Smoke:    $(SMOKE_STEPS) steps")
-    println("  Full:     $(FULL_STEPS) steps")
+    println("  Smoke:    $(SMOKE_STEPS) full-batch GD steps")
+    println("  Full:     $(FULL_STEPS) full-batch GD steps")
     println("  Configs:  $(length(OPTIMIZER_CONFIGS))")
-    println("  CUDA:     $(CUDA.functional() ? CUDA.name(CUDA.device()) : "NOT AVAILABLE")")
+    println("  GPU:      CUDA device $GPU_DEVICE")
     println("=" ^ 70)
 
-    @assert CUDA.functional() "GPU required"
-    CUDA.device!(0)
+    CUDA.device!(GPU_DEVICE)
+    @assert CUDA.functional() "GPU $GPU_DEVICE required"
+    println("  CUDA:     $(CUDA.name(CUDA.device()))")
 
     mkpath(OUTPUT_DIR)
 
     # Load data
-    println("\nLoading DIV2K images...")
-    train_images, test_images, test_filenames = load_div2k()
+    println("\nLoading QuickDraw images...")
+    train_images, test_images, test_filenames = load_quickdraw()
 
     metadata = Dict{String, Any}(
         "date"       => Dates.format(now(), "yyyy-mm-dd HH:MM"),
         "image_size" => "$(IMAGE_SIZE)x$(IMAGE_SIZE)",
+        "dataset" => "quickdraw",
         "m" => M_PARAM, "n" => N_PARAM,
         "n_train" => N_TRAIN, "n_test" => N_TEST,
         "basis_type" => "QFT",
         "seed" => SEED,
         "loss_k" => LOSS_K,
+        "step_semantics" => "full_batch_optimizer_iterations",
     )
 
     # Phase 1: Smoke test
@@ -692,6 +732,18 @@ function main()
 
     # Phase 4: Plots
     generate_all_plots(full_results, compression_results, test_images, test_filenames)
+
+    manopt = findfirst(r -> r.label == "Manopt-GD" && r.success, full_results)
+    pdft_cpu = findfirst(r -> r.label == "PDFT-GD (cpu)" && r.success, full_results)
+    pdft_gpu = findfirst(r -> r.label == "PDFT-GD (gpu)" && r.success, full_results)
+    if manopt !== nothing && pdft_cpu !== nothing
+        @printf("\nPDFT-GD CPU speedup over Manopt-GD: %.2fx\n",
+                full_results[manopt].elapsed / full_results[pdft_cpu].elapsed)
+    end
+    if manopt !== nothing && pdft_gpu !== nothing
+        @printf("PDFT-GD GPU speedup over Manopt-GD: %.2fx\n",
+                full_results[manopt].elapsed / full_results[pdft_gpu].elapsed)
+    end
 
     println("\n" * "=" ^ 70)
     println("  Benchmark complete! Results in: $OUTPUT_DIR")
