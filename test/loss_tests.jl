@@ -167,17 +167,16 @@ end
         batched_flat, blabel = ParametricDFT.make_batched_code(optcode, n_gates)
         batched_opt = ParametricDFT.optimize_batched_code(batched_flat, blabel, B)
 
-        for (loss_type, batched_fn) in [
-            (ParametricDFT.L1Norm(), (opt, ts, b, m, n) -> ParametricDFT.batched_loss_l1(opt, ts, b, m, n)),
-        ]
-            batched_grad = Zygote.gradient(ts -> batched_fn(batched_opt, ts, batch, m, n), tensors)[1]
-            per_image_grad = Zygote.gradient(tensors) do ts
-                sum(ParametricDFT.loss_function(ts, m, n, optcode, img, loss_type) for img in batch) / B
-            end[1]
+        loss_type = ParametricDFT.L1Norm()
+        batched_fn = (opt, ts, b, m, n) -> ParametricDFT.batched_loss_l1(opt, ts, b, m, n)
 
-            for i in 1:n_gates
-                @test isapprox(batched_grad[i], per_image_grad[i], rtol=1e-6)
-            end
+        batched_grad = Zygote.gradient(ts -> batched_fn(batched_opt, ts, batch, m, n), tensors)[1]
+        per_image_grad = Zygote.gradient(tensors) do ts
+            sum(ParametricDFT.loss_function(ts, m, n, optcode, img, loss_type) for img in batch) / B
+        end[1]
+
+        for i in 1:n_gates
+            @test isapprox(batched_grad[i], per_image_grad[i], rtol=1e-6)
         end
     end
 

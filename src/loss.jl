@@ -287,9 +287,11 @@ function loss_function(tensors::Tuple, m::Int, n::Int, optcode::OMEinsum.Abstrac
     if batched_optcode !== nothing
         if loss isa L1Norm
             return batched_loss_l1(batched_optcode, tensors, stacked_pics)
-        else  # MSELoss
+        elseif loss isa MSELoss
             return batched_loss_mse(batched_optcode, tensors, stacked_pics, m, n, loss.k, inverse_code;
                                     batched_inverse_code=batched_inverse_code)
+        else
+            error("unsupported loss type for batched dispatch: $(typeof(loss))")
         end
     else
         error("A pre-stacked batch requires batched_optcode")
