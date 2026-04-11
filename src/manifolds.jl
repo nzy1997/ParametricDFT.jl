@@ -77,6 +77,20 @@ function batched_inv(A::AbstractArray{T,3}) where T
     return C
 end
 
+"""
+    _make_identity_batch(::Type{T}, d::Int, n::Int) -> Array{T,3}
+
+Create a `(d, d, n)` array of identity matrices. Used by optimizers for
+Cayley retraction pre-allocation and as fallback in `retract(::UnitaryManifold, ...)`.
+"""
+function _make_identity_batch(::Type{T}, d::Int, n::Int) where T
+    I_b = zeros(T, d, d, n)
+    for k in 1:n, i in 1:d
+        I_b[i, i, k] = one(T)
+    end
+    return I_b
+end
+
 # ============================================================================
 # Manifold Classification Utilities
 # ============================================================================
@@ -169,17 +183,7 @@ function retract(::UnitaryManifold, U::AbstractArray{T,3}, Xi::AbstractArray{T,3
     W = (W_raw .- batched_adjoint(W_raw)) ./ 2
 
     # Build or reuse batched identity
-    if I_batch === nothing
-        I_b = zeros(T, d, d, n)
-        for k in 1:n
-            for i in 1:d
-                I_b[i, i, k] = one(T)
-            end
-        end
-        I_b = convert(typeof(U), I_b)
-    else
-        I_b = I_batch
-    end
+    I_b = I_batch === nothing ? convert(typeof(U), _make_identity_batch(T, d, n)) : I_batch
 
     lhs = I_b .- α_half .* W
     rhs = I_b .+ α_half .* W

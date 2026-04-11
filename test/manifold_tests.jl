@@ -274,6 +274,18 @@
         @test all_indices == collect(1:length(tensors))
     end
 
+    @testset "_make_identity_batch" begin
+        I_b = ParametricDFT._make_identity_batch(ComplexF64, 3, 4)
+        @test size(I_b) == (3, 3, 4)
+        for k in 1:4
+            @test I_b[:, :, k] ≈ Matrix{ComplexF64}(I, 3, 3)
+        end
+        # Real type
+        I_r = ParametricDFT._make_identity_batch(Float64, 2, 5)
+        @test eltype(I_r) == Float64
+        @test size(I_r) == (2, 2, 5)
+    end
+
     @testset "stack/unstack round-trip generalized" begin
         Random.seed!(52)
         for d in [2, 3, 4]
