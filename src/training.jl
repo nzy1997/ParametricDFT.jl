@@ -182,7 +182,9 @@ function _train_basis_core(
         end
 
         # Compute validation loss
-        val_loss = _compute_validation_loss(validation_data, current_tensors, optcode, inverse_code, m, n, loss)
+        val_loss = _compute_validation_loss(validation_data, current_tensors, optcode, inverse_code, m, n, loss;
+                                             batched_optcode=batched_optcode,
+                                             batched_inverse_code=batched_inverse_code)
         avg_train_loss = isempty(epoch_losses) ? Inf : sum(epoch_losses) / length(epoch_losses)
 
         # Store losses for visualization
@@ -436,19 +438,27 @@ function load_loss_history(path::String)
     return TrainingHistory(train_losses, val_losses, step_train_losses, basis_name)
 end
 
-"""Compute average loss over validation set."""
+"""Compute average loss over validation set. Uses batched path when available."""
 function _compute_validation_loss(
     validation_data::Vector{<:AbstractMatrix},
     tensors::Vector,
     optcode::OMEinsum.AbstractEinsum,
     inverse_code::OMEinsum.AbstractEinsum,
     m::Int, n::Int,
-    loss::AbstractLoss
+    loss::AbstractLoss;
+    batched_optcode=nothing,
+    batched_inverse_code=nothing
 )
     isempty(validation_data) && return Inf
-    total = sum(loss_function(tensors, m, n, optcode, img, loss; inverse_code=inverse_code) 
-                for img in validation_data)
-    return total / length(validation_data)
+    if batched_optcode !== nothing
+        return loss_function(tensors, m, n, optcode, validation_data, loss;
+                             inverse_code=inverse_code, batched_optcode=batched_optcode,
+                             batched_inverse_code=batched_inverse_code)
+    else
+        total = sum(loss_function(tensors, m, n, optcode, img, loss; inverse_code=inverse_code)
+                    for img in validation_data)
+        return total / length(validation_data)
+    end
 end
 
 
