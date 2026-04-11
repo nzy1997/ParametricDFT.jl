@@ -9,19 +9,6 @@ abstract type AbstractLoss end
 """L1 norm loss: minimizes `sum(|T(x)|)` to encourage sparsity."""
 struct L1Norm <: AbstractLoss end
 
-"""
-    L2Norm
-
-L2 norm loss: `sum(|T(x)|^2)`.
-
-!!! warning
-    Unitary transforms preserve the L2 norm (Parseval's theorem), so this loss
-    is constant with respect to the circuit parameters and its gradient is zero.
-    It should NOT be used as a training objective. Use `L1Norm` or `MSELoss` instead.
-    This type is retained for backward compatibility but may be removed in a future release.
-"""
-struct L2Norm <: AbstractLoss end
-
 """MSE loss with top-k truncation: `||x - T⁻¹(truncate(T(x), k))||²`. Field `k` is the number of kept coefficients."""
 struct MSELoss <: AbstractLoss
     k::Int
@@ -118,11 +105,6 @@ function _loss_function(fft_res, pic, loss::L1Norm, tensors, m, n, inverse_code)
     return sum(abs.(fft_res))
 end
 
-# Compute L2 norm: sum of squared magnitudes
-function _loss_function(fft_res, pic, loss::L2Norm, tensors, m, n, inverse_code)
-    return sum(abs2.(fft_res))
-end
-
 # Compute MSE with truncation: ||x - T⁻¹(truncate(T(x), k))||²₂
 function _loss_function(fft_res, pic, loss::MSELoss, tensors, m, n, inverse_code)
     if inverse_code === nothing
@@ -211,16 +193,6 @@ function batched_loss_l1(optcode_batched, tensors::Tuple, batch::Vector{<:Abstra
     return batched_loss_l1(optcode_batched, tensors, stack_image_batch(batch, m, n))
 end
 
-"""Batched L2 loss: (1/B) * sum(|forward(images)|^2)."""
-function batched_loss_l2(optcode_batched, tensors::Tuple, stacked_batch::AbstractArray)
-    result = batched_forward(optcode_batched, tensors, stacked_batch)
-    return sum(abs2.(result)) / size(stacked_batch, ndims(stacked_batch))
-end
-
-function batched_loss_l2(optcode_batched, tensors::Tuple, batch::Vector{<:AbstractMatrix}, m::Int, n::Int)
-    return batched_loss_l2(optcode_batched, tensors, stack_image_batch(batch, m, n))
-end
-
 """Batched MSE loss: batched forward, per-image topk_truncate, batched inverse."""
 function batched_loss_mse(optcode_batched, tensors::Tuple, batch_data, m::Int, n::Int, k::Int, inverse_code;
                           batched_inverse_code=nothing)
@@ -264,10 +236,8 @@ end
 # when splatting. Same pattern as loss_function.
 batched_forward(oc, ts::AbstractVector, b::AbstractArray) = batched_forward(oc, Tuple(ts), b)
 batched_loss_l1(oc, ts::AbstractVector, b, m, n) = batched_loss_l1(oc, Tuple(ts), b, m, n)
-batched_loss_l2(oc, ts::AbstractVector, b, m, n) = batched_loss_l2(oc, Tuple(ts), b, m, n)
 batched_loss_mse(oc, ts::AbstractVector, b, m, n, k, ic; kw...) = batched_loss_mse(oc, Tuple(ts), b, m, n, k, ic; kw...)
 batched_loss_l1(oc, ts::AbstractVector, b::AbstractArray) = batched_loss_l1(oc, Tuple(ts), b)
-batched_loss_l2(oc, ts::AbstractVector, b::AbstractArray) = batched_loss_l2(oc, Tuple(ts), b)
 
 # ============================================================================
 # Unified Batch Loss Interface
@@ -317,8 +287,6 @@ function loss_function(tensors::Tuple, m::Int, n::Int, optcode::OMEinsum.Abstrac
     if batched_optcode !== nothing
         if loss isa L1Norm
             return batched_loss_l1(batched_optcode, tensors, stacked_pics)
-        elseif loss isa L2Norm
-            return batched_loss_l2(batched_optcode, tensors, stacked_pics)
         else  # MSELoss
             return batched_loss_mse(batched_optcode, tensors, stacked_pics, m, n, loss.k, inverse_code;
                                     batched_inverse_code=batched_inverse_code)

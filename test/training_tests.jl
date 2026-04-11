@@ -89,26 +89,6 @@ end
         @test basis.n == n
     end
 
-    @testset "training with L2Norm" begin
-        Random.seed!(42)
-
-        m, n = 3, 3
-        dataset = [rand(Float64, 8, 8) for _ in 1:4]
-
-        basis, _ = train_basis(
-            QFTBasis, dataset;
-            m=m, n=n,
-            loss=ParametricDFT.L2Norm(),
-            epochs=1,
-            steps_per_image=3,
-            validation_split=0.25,
-        )
-
-        @test basis isa QFTBasis
-        @test basis.m == m
-        @test basis.n == n
-    end
-
     @testset "training without shuffle" begin
         Random.seed!(42)
 
@@ -319,7 +299,7 @@ end
         @test final_loss < initial_loss
     end
 
-    @testset "gradient_descent with batch_size > 1 and L2Norm" begin
+    @testset "gradient_descent with batch_size > 1" begin
         Random.seed!(42)
         m, n = 2, 2
         dataset = [rand(Float64, 4, 4) for _ in 1:6]
@@ -327,7 +307,7 @@ end
         basis, history = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
-            loss=ParametricDFT.L2Norm(),
+            loss=ParametricDFT.L1Norm(),
             epochs=3,
             steps_per_image=5,
             batch_size=3,
