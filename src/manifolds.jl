@@ -77,6 +77,20 @@ function batched_inv(A::AbstractArray{T,3}) where T
     return C
 end
 
+"""
+    _make_identity_batch(::Type{T}, d::Int, n::Int) -> Array{T,3}
+
+Create a `(d, d, n)` array of identity matrices. Used by optimizers for
+Cayley retraction pre-allocation and as fallback in `retract(::UnitaryManifold, ...)`.
+"""
+function _make_identity_batch(::Type{T}, d::Int, n::Int) where T
+    I_b = zeros(T, d, d, n)
+    for k in 1:n, i in 1:d
+        I_b[i, i, k] = one(T)
+    end
+    return I_b
+end
+
 # ============================================================================
 # Manifold Classification Utilities
 # ============================================================================
@@ -154,8 +168,9 @@ function project(::UnitaryManifold, U::AbstractArray{T,3}, G::AbstractArray{T,3}
     return batched_matmul(U, S)
 end
 
-"""Batched Cayley retraction on U(n): `(I - α/2·W)⁻¹(I + α/2·W)·U` where `W = Ξ·U'`."""
-function retract(::UnitaryManifold, U::AbstractArray{T,3}, Xi::AbstractArray{T,3}, α) where T
+"""Batched Cayley retraction on U(n): `(I - α/2·W)⁻¹(I + α/2·W)·U` where `W = Ξ·U'`.
+Pass `I_batch` to reuse a pre-allocated identity tensor and avoid repeated allocations."""
+function retract(::UnitaryManifold, U::AbstractArray{T,3}, Xi::AbstractArray{T,3}, α; I_batch=nothing) where T
     RT = real(T)
     α_half = convert(RT, α) / 2
     d = size(U, 1)
@@ -167,17 +182,11 @@ function retract(::UnitaryManifold, U::AbstractArray{T,3}, Xi::AbstractArray{T,3
     W_raw = batched_matmul(Xi, batched_adjoint(U))
     W = (W_raw .- batched_adjoint(W_raw)) ./ 2
 
-    # Build batched identity
-    I_batch = zeros(T, d, d, n)
-    for k in 1:n
-        for i in 1:d
-            I_batch[i, i, k] = one(T)
-        end
-    end
-    I_batch = convert(typeof(U), I_batch)
+    # Build or reuse batched identity
+    I_b = I_batch === nothing ? convert(typeof(U), _make_identity_batch(T, d, n)) : I_batch
 
-    lhs = I_batch .- α_half .* W   # I - α/2·W
-    rhs = I_batch .+ α_half .* W   # I + α/2·W
+    lhs = I_b .- α_half .* W
+    rhs = I_b .+ α_half .* W
 
     # (I - α/2·W)⁻¹ (I + α/2·W) U
     return batched_matmul(batched_matmul(batched_inv(lhs), rhs), U)
@@ -199,7 +208,7 @@ function project(::PhaseManifold, Z::AbstractArray{T,3}, G::AbstractArray{T,3}) 
 end
 
 """Batched U(1)^d retraction: normalize `z + alpha*xi`."""
-function retract(::PhaseManifold, Z::AbstractArray{T,3}, Xi::AbstractArray{T,3}, α) where T
+function retract(::PhaseManifold, Z::AbstractArray{T,3}, Xi::AbstractArray{T,3}, α; I_batch=nothing) where T
     RT = real(T)
     α_typed = convert(RT, α)
     y = Z .+ α_typed .* Xi

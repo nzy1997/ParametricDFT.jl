@@ -123,10 +123,11 @@ function _train_basis_core(
             start_idx = (batch_idx - 1) * batch_size + 1
             end_idx = min(batch_idx * batch_size, length(training_data))
             batch = training_data[start_idx:end_idx]
+            stacked_batch = batched_optcode === nothing ? nothing : stack_image_batch(batch, m, n)
 
             # Construct loss function for this batch
             batch_loss_fn = if batched_optcode !== nothing
-                ts -> loss_function(ts, m, n, optcode, batch, loss;
+                ts -> loss_function(ts, m, n, optcode, stacked_batch, loss;
                                     inverse_code=inverse_code, batched_optcode=batched_optcode,
                                     batched_inverse_code=batched_inverse_code)
             else
@@ -181,7 +182,9 @@ function _train_basis_core(
         end
 
         # Compute validation loss
-        val_loss = _compute_validation_loss(validation_data, current_tensors, optcode, inverse_code, m, n, loss)
+        val_loss = _compute_validation_loss(validation_data, current_tensors, optcode, inverse_code, m, n, loss;
+                                             batched_optcode=batched_optcode,
+                                             batched_inverse_code=batched_inverse_code)
         avg_train_loss = isempty(epoch_losses) ? Inf : sum(epoch_losses) / length(epoch_losses)
 
         # Store losses for visualization
@@ -216,276 +219,140 @@ function _train_basis_core(
 end
 
 
-"""
-    train_basis(::Type{QFTBasis}, dataset; m, n, loss, epochs, steps_per_image,
-                optimizer, batch_size, device, ...)
+# ============================================================================
+# Per-Basis-Type Dispatch Interface
+# ============================================================================
 
-Train a QFTBasis on images. Returns `(basis, history)`.
-Key kwargs: `optimizer` (`RiemannianGD()`/`RiemannianAdam()`/`:gradient_descent`/`:adam`),
-`batch_size`, `device` (`:cpu`/`:gpu`).
-"""
-function train_basis(
-    ::Type{QFTBasis},
-    dataset::Vector{<:AbstractMatrix};
-    m::Int, n::Int,
-    loss::AbstractLoss = MSELoss(round(Int, 2^(m+n) * 0.1)),
-    epochs::Int = 3,
-    steps_per_image::Int = 200,
-    validation_split::Float64 = 0.2,
-    shuffle::Bool = true,
-    early_stopping_patience::Int = 2,
-    save_loss_path::Union{Nothing, String} = nothing,
-    optimizer::Union{Symbol, AbstractRiemannianOptimizer} = :gradient_descent,
-    batch_size::Int = 1,
-    device::Symbol = :cpu,
-    checkpoint_interval::Int = 0,
-    checkpoint_dir::Union{Nothing, String} = nothing
-)
-    @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
-    @assert length(dataset) > 0 "Dataset must not be empty"
-    expected_size = (2^m, 2^n)
-    for (i, img) in enumerate(dataset)
-        @assert size(img) == expected_size "Image $i has size $(size(img)), expected $expected_size"
-    end
+_basis_name(::Type{QFTBasis}) = "QFT"
+_basis_name(::Type{EntangledQFTBasis}) = "Entangled QFT"
+_basis_name(::Type{TEBDBasis}) = "TEBD"
+_basis_name(::Type{MERABasis}) = "MERA"
 
-    # Initialize circuit
+function _init_circuit(::Type{QFTBasis}, m, n; kwargs...)
     optcode, initial_tensors = qft_code(m, n)
     inverse_code, _ = qft_code(m, n; inverse=true)
-
-    # Checkpoint callback: construct QFTBasis from tensors
-    build_fn = tensors -> QFTBasis(m, n, tensors, optcode, inverse_code)
-
-    final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
-        dataset, optcode, inverse_code, initial_tensors, m, n, loss,
-        epochs, steps_per_image, validation_split, shuffle,
-        early_stopping_patience, "QFTBasis";
-        save_loss_path=save_loss_path, optimizer=optimizer,
-        batch_size=batch_size, device=device,
-        checkpoint_interval=checkpoint_interval, checkpoint_dir=checkpoint_dir,
-        build_basis_fn=build_fn
-    )
-
-    trained_basis = QFTBasis(m, n, final_tensors, optcode, inverse_code)
-    history = (train_losses=train_losses, val_losses=val_losses, step_train_losses=step_train_losses, basis_name="QFT")
-
-    return trained_basis, history
+    return optcode, inverse_code, initial_tensors
 end
 
-"""
-    train_basis(::Type{EntangledQFTBasis}, dataset; m, n, entangle_phases, ...)
-
-Train an EntangledQFTBasis on images. Same kwargs as QFTBasis plus `entangle_phases`.
-"""
-function train_basis(
-    ::Type{EntangledQFTBasis},
-    dataset::Vector{<:AbstractMatrix};
-    m::Int, n::Int,
-    entangle_phases::Union{Nothing, Vector{<:Real}} = nothing,
-    entangle_position::Symbol = :back,
-    loss::AbstractLoss = MSELoss(round(Int, 2^(m+n) * 0.1)),
-    epochs::Int = 3,
-    steps_per_image::Int = 200,
-    validation_split::Float64 = 0.2,
-    shuffle::Bool = true,
-    early_stopping_patience::Int = 2,
-    save_loss_path::Union{Nothing, String} = nothing,
-    optimizer::Union{Symbol, AbstractRiemannianOptimizer} = :gradient_descent,
-    batch_size::Int = 1,
-    device::Symbol = :cpu,
-    checkpoint_interval::Int = 0,
-    checkpoint_dir::Union{Nothing, String} = nothing
-)
-    @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
-    @assert length(dataset) > 0 "Dataset must not be empty"
-    expected_size = (2^m, 2^n)
-    for (i, img) in enumerate(dataset)
-        @assert size(img) == expected_size "Image $i has size $(size(img)), expected $expected_size"
-    end
-
-    n_entangle = min(m, n)
-
-    # Initialize circuit
-    optcode, initial_tensors, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, entangle_position=entangle_position)
-    inverse_code, _, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases, inverse=true, entangle_position=entangle_position)
-
-    # Checkpoint callback: construct EntangledQFTBasis from tensors
-    build_fn = tensors -> begin
-        eidx = get_entangle_tensor_indices(tensors, n_entangle)
-        phases = !isempty(eidx) ? extract_entangle_phases(tensors, eidx) :
-                 (entangle_phases === nothing ? zeros(n_entangle) : Float64.(entangle_phases))
-        EntangledQFTBasis(m, n, tensors, optcode, inverse_code, n_entangle, phases, entangle_position)
-    end
-
-    final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
-        dataset, optcode, inverse_code, initial_tensors, m, n, loss,
-        epochs, steps_per_image, validation_split, shuffle,
-        early_stopping_patience, "EntangledQFTBasis";
-        save_loss_path=save_loss_path, optimizer=optimizer,
-        batch_size=batch_size, device=device,
-        checkpoint_interval=checkpoint_interval, checkpoint_dir=checkpoint_dir,
-        build_basis_fn=build_fn
-    )
-
-    # Extract trained phases
-    entangle_indices = get_entangle_tensor_indices(final_tensors, n_entangle)
-    trained_phases = if !isempty(entangle_indices)
-        extract_entangle_phases(final_tensors, entangle_indices)
-    else
-        entangle_phases === nothing ? zeros(n_entangle) : Float64.(entangle_phases)
-    end
-
-    trained_basis = EntangledQFTBasis(m, n, final_tensors, optcode, inverse_code, n_entangle, trained_phases, entangle_position)
-    history = (train_losses=train_losses, val_losses=val_losses, step_train_losses=step_train_losses, basis_name="Entangled QFT")
-
-    return trained_basis, history
+function _init_circuit(::Type{EntangledQFTBasis}, m, n;
+                       entangle_phases=nothing, entangle_position=:back, kwargs...)
+    optcode, initial_tensors, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases,
+                                                      entangle_position=entangle_position)
+    inverse_code, _, _ = entangled_qft_code(m, n; entangle_phases=entangle_phases,
+                                             inverse=true, entangle_position=entangle_position)
+    return optcode, inverse_code, initial_tensors
 end
 
-"""
-    train_basis(::Type{TEBDBasis}, dataset; m, n, phases, ...)
-
-Train a TEBDBasis on images. Same kwargs as QFTBasis plus `phases` (initial TEBD gate phases).
-"""
-function train_basis(
-    ::Type{TEBDBasis},
-    dataset::Vector{<:AbstractMatrix};
-    m::Int, n::Int,
-    phases::Union{Nothing, Vector{<:Real}} = nothing,
-    loss::AbstractLoss = MSELoss(round(Int, 2^(m+n) * 0.1)),
-    epochs::Int = 3,
-    steps_per_image::Int = 200,
-    validation_split::Float64 = 0.2,
-    shuffle::Bool = true,
-    early_stopping_patience::Int = 2,
-    save_loss_path::Union{Nothing, String} = nothing,
-    optimizer::Union{Symbol, AbstractRiemannianOptimizer} = :gradient_descent,
-    batch_size::Int = 1,
-    device::Symbol = :cpu,
-    checkpoint_interval::Int = 0,
-    checkpoint_dir::Union{Nothing, String} = nothing
-)
-    @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
-    @assert length(dataset) > 0 "Dataset must not be empty"
-    expected_size = (2^m, 2^n)
-    for (i, img) in enumerate(dataset)
-        @assert size(img) == expected_size "Image $i has size $(size(img)), expected $expected_size"
-    end
-
-    n_row_gates = m  # Row ring has m gates
-    n_col_gates = n  # Col ring has n gates
-    n_gates = n_row_gates + n_col_gates
-
-    # Initialize phases: use small random values if not provided
-    # Zero phases create a symmetric point where gradients are zero,
-    # preventing the optimizer from learning. Small random values break symmetry.
+function _init_circuit(::Type{TEBDBasis}, m, n; phases=nothing, kwargs...)
+    n_gates = m + n
     if phases === nothing
         phases = randn(n_gates) * 0.1
     end
-
-    # Initialize circuit
     optcode, initial_tensors, _, _ = tebd_code(m, n; phases=phases)
     inverse_code, _, _, _ = tebd_code(m, n; phases=phases, inverse=true)
-
-    # Checkpoint callback: construct TEBDBasis from tensors
-    build_fn = tensors -> begin
-        gidx = get_tebd_gate_indices(tensors, n_gates)
-        p = !isempty(gidx) ? extract_tebd_phases(tensors, gidx) :
-            (phases === nothing ? zeros(n_gates) : Float64.(phases))
-        TEBDBasis(m, n, tensors, optcode, inverse_code, n_row_gates, n_col_gates, p)
-    end
-
-    final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
-        dataset, optcode, inverse_code, initial_tensors, m, n, loss,
-        epochs, steps_per_image, validation_split, shuffle,
-        early_stopping_patience, "TEBDBasis";
-        save_loss_path=save_loss_path, optimizer=optimizer,
-        batch_size=batch_size, device=device,
-        checkpoint_interval=checkpoint_interval, checkpoint_dir=checkpoint_dir,
-        build_basis_fn=build_fn
-    )
-
-    # Extract trained phases
-    gate_indices = get_tebd_gate_indices(final_tensors, n_gates)
-    trained_phases = if !isempty(gate_indices)
-        extract_tebd_phases(final_tensors, gate_indices)
-    else
-        phases === nothing ? zeros(n_gates) : Float64.(phases)
-    end
-
-    trained_basis = TEBDBasis(m, n, final_tensors, optcode, inverse_code, n_row_gates, n_col_gates, trained_phases)
-    history = (train_losses=train_losses, val_losses=val_losses, step_train_losses=step_train_losses, basis_name="TEBD")
-
-    return trained_basis, history
+    return optcode, inverse_code, initial_tensors
 end
 
-"""Train a MERABasis on images. Same kwargs as TEBDBasis."""
-function train_basis(
-    ::Type{MERABasis},
-    dataset::Vector{<:AbstractMatrix};
-    m::Int, n::Int,
-    phases::Union{Nothing, Vector{<:Real}} = nothing,
-    loss::AbstractLoss = MSELoss(round(Int, 2^(m+n) * 0.1)),
-    epochs::Int = 3,
-    steps_per_image::Int = 200,
-    validation_split::Float64 = 0.2,
-    shuffle::Bool = true,
-    early_stopping_patience::Int = 2,
-    save_loss_path::Union{Nothing, String} = nothing,
-    optimizer::Union{Symbol, AbstractRiemannianOptimizer} = :gradient_descent,
-    batch_size::Int = 1,
-    device::Symbol = :cpu,
-    checkpoint_interval::Int = 0,
-    checkpoint_dir::Union{Nothing, String} = nothing
-)
-    @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
-    @assert length(dataset) > 0 "Dataset must not be empty"
-    expected_size = (2^m, 2^n)
-    for (i, img) in enumerate(dataset)
-        @assert size(img) == expected_size "Image $i has size $(size(img)), expected $expected_size"
-    end
-
+function _init_circuit(::Type{MERABasis}, m, n; phases=nothing, kwargs...)
     n_row_gates = m >= 2 ? 2 * (m - 1) : 0
     n_col_gates = n >= 2 ? 2 * (n - 1) : 0
     n_gates = n_row_gates + n_col_gates
-
-    # Initialize phases: use small random values if not provided
-    # Zero phases create a symmetric point where gradients are zero,
-    # preventing the optimizer from learning. Small random values break symmetry.
     if phases === nothing
         phases = randn(n_gates) * 0.1
     end
-
-    # Initialize circuit
     optcode, initial_tensors, _, _ = mera_code(m, n; phases=phases)
     inverse_code, _, _, _ = mera_code(m, n; phases=phases, inverse=true)
+    return optcode, inverse_code, initial_tensors
+end
 
-    # Checkpoint callback: construct MERABasis from tensors
-    build_fn = tensors -> begin
-        gidx = get_mera_gate_indices(tensors, n_gates)
-        p = !isempty(gidx) ? extract_mera_phases(tensors, gidx) :
-            (phases === nothing ? zeros(n_gates) : Float64.(phases))
-        MERABasis(m, n, tensors, optcode, inverse_code, n_row_gates, n_col_gates, p)
+function _build_basis(::Type{QFTBasis}, m, n, tensors, optcode, inverse_code; kwargs...)
+    return QFTBasis(m, n, tensors, optcode, inverse_code)
+end
+
+function _build_basis(::Type{EntangledQFTBasis}, m, n, tensors, optcode, inverse_code;
+                      entangle_phases=nothing, entangle_position=:back, kwargs...)
+    n_entangle = min(m, n)
+    eidx = get_entangle_tensor_indices(tensors, n_entangle)
+    phases = !isempty(eidx) ? extract_entangle_phases(tensors, eidx) :
+             (entangle_phases === nothing ? zeros(n_entangle) : Float64.(entangle_phases))
+    return EntangledQFTBasis(m, n, tensors, optcode, inverse_code, n_entangle, phases, entangle_position)
+end
+
+function _build_basis(::Type{TEBDBasis}, m, n, tensors, optcode, inverse_code;
+                      phases=nothing, kwargs...)
+    n_row_gates = m
+    n_col_gates = n
+    n_gates = n_row_gates + n_col_gates
+    gidx = get_tebd_gate_indices(tensors, n_gates)
+    trained_phases = !isempty(gidx) ? extract_tebd_phases(tensors, gidx) :
+                     (phases === nothing ? zeros(n_gates) : Float64.(phases))
+    return TEBDBasis(m, n, tensors, optcode, inverse_code, n_row_gates, n_col_gates, trained_phases)
+end
+
+function _build_basis(::Type{MERABasis}, m, n, tensors, optcode, inverse_code;
+                      phases=nothing, kwargs...)
+    n_row_gates = m >= 2 ? 2 * (m - 1) : 0
+    n_col_gates = n >= 2 ? 2 * (n - 1) : 0
+    n_gates = n_row_gates + n_col_gates
+    gidx = get_mera_gate_indices(tensors, n_gates)
+    trained_phases = !isempty(gidx) ? extract_mera_phases(tensors, gidx) :
+                     (phases === nothing ? zeros(n_gates) : Float64.(phases))
+    return MERABasis(m, n, tensors, optcode, inverse_code, n_row_gates, n_col_gates, trained_phases)
+end
+
+# ============================================================================
+# Generic train_basis
+# ============================================================================
+
+"""
+    train_basis(::Type{B}, dataset; m, n, loss, epochs, steps_per_image,
+                optimizer, batch_size, device, ...)
+
+Train any AbstractSparseBasis subtype on images. Returns `(basis, history)`.
+Basis-specific kwargs (e.g. `phases`, `entangle_phases`) are forwarded to
+`_init_circuit` and `_build_basis`.
+"""
+function train_basis(
+    ::Type{B},
+    dataset::Vector{<:AbstractMatrix};
+    m::Int, n::Int,
+    loss::AbstractLoss = MSELoss(round(Int, 2^(m+n) * 0.1)),
+    epochs::Int = 3,
+    steps_per_image::Int = 200,
+    validation_split::Float64 = 0.2,
+    shuffle::Bool = true,
+    early_stopping_patience::Int = 2,
+    save_loss_path::Union{Nothing, String} = nothing,
+    optimizer::Union{Symbol, AbstractRiemannianOptimizer} = :gradient_descent,
+    batch_size::Int = 1,
+    device::Symbol = :cpu,
+    checkpoint_interval::Int = 0,
+    checkpoint_dir::Union{Nothing, String} = nothing,
+    kwargs...
+) where B <: AbstractSparseBasis
+    @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
+    @assert length(dataset) > 0 "Dataset must not be empty"
+    expected_size = (2^m, 2^n)
+    for (i, img) in enumerate(dataset)
+        @assert size(img) == expected_size "Image $i has size $(size(img)), expected $expected_size"
     end
+
+    optcode, inverse_code, initial_tensors = _init_circuit(B, m, n; kwargs...)
+    build_fn = tensors -> _build_basis(B, m, n, tensors, optcode, inverse_code; kwargs...)
 
     final_tensors, _, train_losses, val_losses, step_train_losses = _train_basis_core(
         dataset, optcode, inverse_code, initial_tensors, m, n, loss,
         epochs, steps_per_image, validation_split, shuffle,
-        early_stopping_patience, "MERABasis";
+        early_stopping_patience, _basis_name(B);
         save_loss_path=save_loss_path, optimizer=optimizer,
         batch_size=batch_size, device=device,
         checkpoint_interval=checkpoint_interval, checkpoint_dir=checkpoint_dir,
         build_basis_fn=build_fn
     )
 
-    # Extract trained phases
-    gate_indices = get_mera_gate_indices(final_tensors, n_gates)
-    trained_phases = if !isempty(gate_indices)
-        extract_mera_phases(final_tensors, gate_indices)
-    else
-        phases === nothing ? zeros(n_gates) : Float64.(phases)
-    end
-
-    trained_basis = MERABasis(m, n, final_tensors, optcode, inverse_code, n_row_gates, n_col_gates, trained_phases)
-    history = (train_losses=train_losses, val_losses=val_losses, step_train_losses=step_train_losses, basis_name="MERA")
+    trained_basis = build_fn(final_tensors)
+    history = (train_losses=train_losses, val_losses=val_losses,
+               step_train_losses=step_train_losses, basis_name=_basis_name(B))
 
     return trained_basis, history
 end
@@ -571,19 +438,27 @@ function load_loss_history(path::String)
     return TrainingHistory(train_losses, val_losses, step_train_losses, basis_name)
 end
 
-"""Compute average loss over validation set."""
+"""Compute average loss over validation set. Uses batched path when available."""
 function _compute_validation_loss(
     validation_data::Vector{<:AbstractMatrix},
     tensors::Vector,
     optcode::OMEinsum.AbstractEinsum,
     inverse_code::OMEinsum.AbstractEinsum,
     m::Int, n::Int,
-    loss::AbstractLoss
+    loss::AbstractLoss;
+    batched_optcode=nothing,
+    batched_inverse_code=nothing
 )
     isempty(validation_data) && return Inf
-    total = sum(loss_function(tensors, m, n, optcode, img, loss; inverse_code=inverse_code) 
-                for img in validation_data)
-    return total / length(validation_data)
+    if batched_optcode !== nothing
+        return loss_function(tensors, m, n, optcode, validation_data, loss;
+                             inverse_code=inverse_code, batched_optcode=batched_optcode,
+                             batched_inverse_code=batched_inverse_code)
+    else
+        total = sum(loss_function(tensors, m, n, optcode, img, loss; inverse_code=inverse_code)
+                    for img in validation_data)
+        return total / length(validation_data)
+    end
 end
 
 

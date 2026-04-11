@@ -125,6 +125,39 @@ using RecursiveArrayTools
         end
     end
 
+    @testset "_common_setup builds OptimizationState" begin
+        Random.seed!(42)
+        m, n = 2, 2
+        _, tensors_raw = ParametricDFT.qft_code(m, n)
+        tensors = [Matrix{ComplexF64}(t) for t in tensors_raw]
+
+        state = ParametricDFT._common_setup(tensors)
+        @test state isa ParametricDFT.OptimizationState
+        @test !isempty(state.manifold_groups)
+        all_indices = vcat(values(state.manifold_groups)...)
+        @test sort(all_indices) == 1:length(tensors)
+        total_slices = sum(size(pb, 3) for pb in values(state.point_batches))
+        @test total_slices == length(tensors)
+    end
+
+    @testset "_init_optimizer_state dispatches correctly" begin
+        Random.seed!(42)
+        m, n = 2, 2
+        _, tensors_raw = ParametricDFT.qft_code(m, n)
+        tensors = [Matrix{ComplexF64}(t) for t in tensors_raw]
+
+        state = ParametricDFT._common_setup(tensors)
+
+        gd_state = ParametricDFT._init_optimizer_state(RiemannianGD(), state)
+        @test gd_state === nothing
+
+        adam_state = ParametricDFT._init_optimizer_state(RiemannianAdam(), state)
+        @test adam_state !== nothing
+        @test adam_state isa NamedTuple
+        @test haskey(adam_state, :m_batches)
+        @test haskey(adam_state, :v_batches)
+    end
+
     @testset "loss_trace records per-iteration losses" begin
         tensors, loss_fn, grad_fn = make_test_problem(seed=42)
 

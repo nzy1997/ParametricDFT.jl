@@ -86,12 +86,6 @@ end
     @test l1_value isa Float64
     @test l1_value > 0.0
 
-    # Test L2Norm
-    loss_l2 = ParametricDFT.L2Norm()
-    l2_value = ParametricDFT.loss_function(tensors, m, n, optcode, pic, loss_l2)
-    @test l2_value isa Float64
-    @test l2_value > 0.0
-
     # Test MSELoss
     for k in [1, 5, 20, 2^(m+n)]
         loss_mse = ParametricDFT.MSELoss(k)
@@ -138,22 +132,8 @@ end
         batched_opt = ParametricDFT.optimize_batched_code(batched_flat, blabel, B)
 
         @test isapprox(ParametricDFT.batched_loss_l1(batched_opt, tensors, batch, m, n), per_image, rtol=1e-10)
-    end
-
-    @testset "batched L2 loss matches per-image L2" begin
-        Random.seed!(42)
-        m, n = 2, 2
-        optcode, tensors_raw = ParametricDFT.qft_code(m, n)
-        tensors = [ComplexF64.(t) for t in tensors_raw]
-        n_gates = length(tensors)
-        B = 4
-        batch = [rand(ComplexF64, 2^m, 2^n) for _ in 1:B]
-
-        per_image = sum(ParametricDFT.loss_function(tensors, m, n, optcode, img, ParametricDFT.L2Norm()) for img in batch) / B
-        batched_flat, blabel = ParametricDFT.make_batched_code(optcode, n_gates)
-        batched_opt = ParametricDFT.optimize_batched_code(batched_flat, blabel, B)
-
-        @test isapprox(ParametricDFT.batched_loss_l2(batched_opt, tensors, batch, m, n), per_image, rtol=1e-10)
+        stacked = ParametricDFT.stack_image_batch(batch, m, n)
+        @test isapprox(ParametricDFT.batched_loss_l1(batched_opt, tensors, stacked), per_image, rtol=1e-10)
     end
 
     @testset "batched MSE loss matches per-image MSE" begin
@@ -171,6 +151,8 @@ end
         batched_opt = ParametricDFT.optimize_batched_code(batched_flat, blabel, B)
 
         @test isapprox(ParametricDFT.batched_loss_mse(batched_opt, tensors, batch, m, n, k, optcode_inv), per_image, rtol=1e-10)
+        stacked = ParametricDFT.stack_image_batch(batch, m, n)
+        @test isapprox(ParametricDFT.batched_loss_mse(batched_opt, tensors, stacked, m, n, k, optcode_inv), per_image, rtol=1e-10)
     end
 
     @testset "Zygote gradients through batched losses" begin
@@ -185,18 +167,16 @@ end
         batched_flat, blabel = ParametricDFT.make_batched_code(optcode, n_gates)
         batched_opt = ParametricDFT.optimize_batched_code(batched_flat, blabel, B)
 
-        for (loss_type, batched_fn) in [
-            (ParametricDFT.L1Norm(), (opt, ts, b, m, n) -> ParametricDFT.batched_loss_l1(opt, ts, b, m, n)),
-            (ParametricDFT.L2Norm(), (opt, ts, b, m, n) -> ParametricDFT.batched_loss_l2(opt, ts, b, m, n)),
-        ]
-            batched_grad = Zygote.gradient(ts -> batched_fn(batched_opt, ts, batch, m, n), tensors)[1]
-            per_image_grad = Zygote.gradient(tensors) do ts
-                sum(ParametricDFT.loss_function(ts, m, n, optcode, img, loss_type) for img in batch) / B
-            end[1]
+        loss_type = ParametricDFT.L1Norm()
+        batched_fn = (opt, ts, b, m, n) -> ParametricDFT.batched_loss_l1(opt, ts, b, m, n)
 
-            for i in 1:n_gates
-                @test isapprox(batched_grad[i], per_image_grad[i], rtol=1e-6)
-            end
+        batched_grad = Zygote.gradient(ts -> batched_fn(batched_opt, ts, batch, m, n), tensors)[1]
+        per_image_grad = Zygote.gradient(tensors) do ts
+            sum(ParametricDFT.loss_function(ts, m, n, optcode, img, loss_type) for img in batch) / B
+        end[1]
+
+        for i in 1:n_gates
+            @test isapprox(batched_grad[i], per_image_grad[i], rtol=1e-6)
         end
     end
 
@@ -232,8 +212,8 @@ end
         B = 3
         batch = [rand(ComplexF64, 2^m, 2^n) for _ in 1:B]
 
-        per_image = sum(ParametricDFT.loss_function(tensors, m, n, optcode, img, ParametricDFT.L2Norm()) for img in batch) / B
-        @test isapprox(ParametricDFT.batched_loss_l2(batched_opt, tensors, batch, m, n), per_image, rtol=1e-10)
+        per_image = sum(ParametricDFT.loss_function(tensors, m, n, optcode, img, ParametricDFT.L1Norm()) for img in batch) / B
+        @test isapprox(ParametricDFT.batched_loss_l1(batched_opt, tensors, batch, m, n), per_image, rtol=1e-10)
     end
 
     @testset "Zygote gradient through batched_loss_mse" begin

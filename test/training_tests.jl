@@ -3,6 +3,33 @@
 # ============================================================================
 
 # ============================================================================
+# Dispatch interface: _init_circuit, _build_basis, _basis_name
+# ============================================================================
+
+@testset "_init_circuit and _build_basis dispatch" begin
+    for (BasisType, m, n, kwargs) in [
+        (QFTBasis, 3, 3, NamedTuple()),
+        (EntangledQFTBasis, 3, 3, NamedTuple()),
+        (TEBDBasis, 2, 2, (phases=randn(4) * 0.1,)),
+        (MERABasis, 2, 2, (phases=randn(4) * 0.1,)),
+    ]
+        @testset "$BasisType" begin
+            optcode, inverse_code, tensors = ParametricDFT._init_circuit(BasisType, m, n; kwargs...)
+            @test optcode isa OMEinsum.AbstractEinsum
+            @test inverse_code isa OMEinsum.AbstractEinsum
+            @test !isempty(tensors)
+
+            basis = ParametricDFT._build_basis(BasisType, m, n, tensors, optcode, inverse_code; kwargs...)
+            @test basis isa BasisType
+            @test basis.m == m
+            @test basis.n == n
+
+            @test ParametricDFT._basis_name(BasisType) isa String
+        end
+    end
+end
+
+# ============================================================================
 # Common training: basic smoke test for all basis types
 # ============================================================================
 
@@ -79,26 +106,6 @@ end
             QFTBasis, dataset;
             m=m, n=n,
             loss=ParametricDFT.MSELoss(k),
-            epochs=1,
-            steps_per_image=3,
-            validation_split=0.25,
-        )
-
-        @test basis isa QFTBasis
-        @test basis.m == m
-        @test basis.n == n
-    end
-
-    @testset "training with L2Norm" begin
-        Random.seed!(42)
-
-        m, n = 3, 3
-        dataset = [rand(Float64, 8, 8) for _ in 1:4]
-
-        basis, _ = train_basis(
-            QFTBasis, dataset;
-            m=m, n=n,
-            loss=ParametricDFT.L2Norm(),
             epochs=1,
             steps_per_image=3,
             validation_split=0.25,
@@ -319,7 +326,7 @@ end
         @test final_loss < initial_loss
     end
 
-    @testset "gradient_descent with batch_size > 1 and L2Norm" begin
+    @testset "gradient_descent with batch_size > 1" begin
         Random.seed!(42)
         m, n = 2, 2
         dataset = [rand(Float64, 4, 4) for _ in 1:6]
@@ -327,7 +334,7 @@ end
         basis, history = train_basis(
             QFTBasis, dataset;
             m=m, n=n,
-            loss=ParametricDFT.L2Norm(),
+            loss=ParametricDFT.L1Norm(),
             epochs=3,
             steps_per_image=5,
             batch_size=3,

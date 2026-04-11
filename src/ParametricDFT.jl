@@ -12,7 +12,7 @@ using CairoMakie
 using LinearAlgebra
 
 # Loss function exports
-export AbstractLoss, L1Norm, L2Norm, MSELoss
+export AbstractLoss, L1Norm, MSELoss
 export topk_truncate, loss_function
 
 # QFT circuit exports

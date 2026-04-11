@@ -167,6 +167,32 @@
         end
     end
 
+    @testset "UnitaryManifold retract with pre-allocated I_batch" begin
+        Random.seed!(61)
+        um = ParametricDFT.UnitaryManifold()
+        d, n = 4, 5
+        U = Array{ComplexF64}(undef, d, d, n)
+        for k in 1:n
+            Q, _ = qr(randn(ComplexF64, d, d))
+            U[:, :, k] = Matrix{ComplexF64}(Q)
+        end
+        G = randn(ComplexF64, d, d, n)
+        Xi = ParametricDFT.project(um, U, G)
+
+        I_b = zeros(ComplexF64, d, d, n)
+        for k in 1:n, i in 1:d
+            I_b[i, i, k] = one(ComplexF64)
+        end
+
+        result_with    = ParametricDFT.retract(um, U, Xi, 0.1; I_batch=I_b)
+        result_without = ParametricDFT.retract(um, U, Xi, 0.1)
+
+        @test result_with ≈ result_without atol=1e-14
+        for k in 1:n
+            @test result_with[:, :, k]' * result_with[:, :, k] ≈ Matrix{ComplexF64}(I, d, d) atol=1e-10
+        end
+    end
+
     @testset "PhaseManifold project" begin
         Random.seed!(48)
         pm = ParametricDFT.PhaseManifold()
@@ -246,6 +272,18 @@
         end
         sort!(all_indices)
         @test all_indices == collect(1:length(tensors))
+    end
+
+    @testset "_make_identity_batch" begin
+        I_b = ParametricDFT._make_identity_batch(ComplexF64, 3, 4)
+        @test size(I_b) == (3, 3, 4)
+        for k in 1:4
+            @test I_b[:, :, k] ≈ Matrix{ComplexF64}(I, 3, 3)
+        end
+        # Real type
+        I_r = ParametricDFT._make_identity_batch(Float64, 2, 5)
+        @test eltype(I_r) == Float64
+        @test size(I_r) == (2, 2, 5)
     end
 
     @testset "stack/unstack round-trip generalized" begin
