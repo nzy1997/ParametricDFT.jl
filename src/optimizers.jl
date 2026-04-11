@@ -28,6 +28,9 @@ struct OptimizationState{ET, RT}
     current_tensors::Vector{<:AbstractMatrix}
 end
 
+_element_type(::OptimizationState{ET, RT}) where {ET, RT} = ET
+_real_type(::OptimizationState{ET, RT}) where {ET, RT} = RT
+
 """
     _common_setup(tensors)
 
@@ -186,10 +189,11 @@ end
 """
     _update_step!(opt, state, rg_batches, loss_fn, grad_norm_sq, opt_state, iter; cached_loss)
 
-Per-optimizer update dispatch. Returns `(accepted::Bool, cached_loss::RT)`.
+Per-optimizer update dispatch. Returns `cached_loss::RT` (NaN when not evaluated).
 
 - `RiemannianGD`: Armijo backtracking line search, evaluates loss multiple times.
-- `RiemannianAdam`: moment update + retract, does not evaluate loss.
+  Returns the accepted candidate loss, or `RT(NaN)` after exhausting line-search steps.
+- `RiemannianAdam`: moment update + retract, does not evaluate loss. Returns `RT(NaN)`.
 """
 function _update_step!(
     opt::RiemannianGD,
@@ -224,7 +228,7 @@ function _update_step!(
             for (manifold, _) in state.manifold_groups
                 state.point_batches[manifold] = last_cand_batches[manifold]
             end
-            return (true, candidate_loss)
+            return candidate_loss
         end
         alpha *= RT(opt.armijo_tau)
     end
@@ -233,7 +237,7 @@ function _update_step!(
     for (manifold, _) in state.manifold_groups
         state.point_batches[manifold] = last_cand_batches[manifold]
     end
-    return (false, RT(NaN))
+    return RT(NaN)
 end
 
 function _update_step!(
@@ -277,7 +281,7 @@ function _update_step!(
         state.point_batches[manifold] = new_batch
     end
 
-    return (true, RT(NaN))
+    return RT(NaN)
 end
 
 # ============================================================================
@@ -301,8 +305,8 @@ function _optimization_loop(
     loss_trace::Union{Nothing, Vector{Float64}} = nothing
 )
     state = _common_setup(tensors)
-    ET = typeof(state).parameters[1]
-    RT = typeof(state).parameters[2]
+    ET = _element_type(state)
+    RT = _real_type(state)
     opt_state = _init_optimizer_state(opt, state)
 
     cached_loss = RT(NaN)
@@ -330,7 +334,7 @@ function _optimization_loop(
         end
 
         # Per-optimizer update
-        accepted, cached_loss = _update_step!(
+        cached_loss = _update_step!(
             opt, state, rg_batches, loss_fn, grad_norm_sq, opt_state, iter;
             cached_loss=cached_loss
         )
