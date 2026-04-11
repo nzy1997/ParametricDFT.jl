@@ -80,6 +80,14 @@ function ChainRulesCore.rrule(::typeof(topk_truncate), x::AbstractMatrix{T}, k::
 end
 
 # ============================================================================
+# Tuple/Vector Normalization
+# ============================================================================
+
+"""Convert AbstractVector tensors to Tuple for stable Zygote AD tangent types."""
+_ensure_tuple(t::Tuple) = t
+_ensure_tuple(t::AbstractVector) = Tuple(t)
+
+# ============================================================================
 # Loss Function Computation
 # ============================================================================
 
@@ -88,16 +96,11 @@ end
 
 Compute loss for a single image `pic` (2^m x 2^n) under the given circuit parameters.
 """
-function loss_function(tensors::AbstractVector, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum, pic::AbstractMatrix, loss::AbstractLoss; inverse_code=nothing)
-    # Avoid splatting an AbstractVector during AD; Zygote may produce tuple tangents for varargs.
-    # We delegate to the Tuple method for a stable tangent type.
-    return loss_function(Tuple(tensors), m, n, optcode, pic, loss; inverse_code=inverse_code)
-end
-
-function loss_function(tensors::Tuple, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum, pic::AbstractMatrix, loss::AbstractLoss; inverse_code=nothing)
+function loss_function(tensors, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum, pic::AbstractMatrix, loss::AbstractLoss; inverse_code=nothing)
+    ts = _ensure_tuple(tensors)
     @assert (size(pic) == (2^m, 2^n)) "Input matrix size must be 2^m × 2^n"
-    fft_pic = reshape(optcode(tensors..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
-    return _loss_function(fft_pic, pic, loss, tensors, m, n, inverse_code)
+    fft_pic = reshape(optcode(ts..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
+    return _loss_function(fft_pic, pic, loss, ts, m, n, inverse_code)
 end
 
 # Compute L1 norm: sum of absolute values
@@ -174,34 +177,35 @@ function stack_image_batch(batch::Vector{<:AbstractMatrix}, m::Int, n::Int)
 end
 
 """Apply circuit to a pre-stacked image batch. Returns (2,...,2,B) tensor."""
-function batched_forward(optcode_batched, tensors::Tuple, stacked_batch::AbstractArray)
-    return optcode_batched(tensors..., stacked_batch)
+function batched_forward(optcode_batched, tensors, stacked_batch::AbstractArray)
+    return optcode_batched(_ensure_tuple(tensors)..., stacked_batch)
 end
 
 """Apply circuit to B images in a single einsum call. Returns (2,...,2,B) tensor."""
-function batched_forward(optcode_batched, tensors::Tuple, batch::Vector{<:AbstractMatrix}, m::Int, n::Int)
+function batched_forward(optcode_batched, tensors, batch::Vector{<:AbstractMatrix}, m::Int, n::Int)
     return batched_forward(optcode_batched, tensors, stack_image_batch(batch, m, n))
 end
 
 """Batched L1 loss: (1/B) * sum(|forward(images)|)."""
-function batched_loss_l1(optcode_batched, tensors::Tuple, stacked_batch::AbstractArray)
+function batched_loss_l1(optcode_batched, tensors, stacked_batch::AbstractArray)
     result = batched_forward(optcode_batched, tensors, stacked_batch)
     return sum(abs.(result)) / size(stacked_batch, ndims(stacked_batch))
 end
 
-function batched_loss_l1(optcode_batched, tensors::Tuple, batch::Vector{<:AbstractMatrix}, m::Int, n::Int)
+function batched_loss_l1(optcode_batched, tensors, batch::Vector{<:AbstractMatrix}, m::Int, n::Int)
     return batched_loss_l1(optcode_batched, tensors, stack_image_batch(batch, m, n))
 end
 
 """Batched MSE loss: batched forward, per-image topk_truncate, batched inverse."""
-function batched_loss_mse(optcode_batched, tensors::Tuple, batch_data, m::Int, n::Int, k::Int, inverse_code;
+function batched_loss_mse(optcode_batched, tensors, batch_data, m::Int, n::Int, k::Int, inverse_code;
                           batched_inverse_code=nothing)
+    ts = _ensure_tuple(tensors)
     stacked_batch = batch_data isa AbstractVector{<:AbstractMatrix} ? stack_image_batch(batch_data, m, n) : batch_data
     B = size(stacked_batch, ndims(stacked_batch))
     qubit_dims = fill(2, m + n)
 
     # Batched forward pass — single einsum call
-    fft_batched = batched_forward(optcode_batched, tensors, stacked_batch)
+    fft_batched = batched_forward(optcode_batched, ts, stacked_batch)
 
     # Per-image truncation (mask is content-dependent, cannot be batched)
     # Use map instead of mutation to keep Zygote happy
@@ -211,7 +215,7 @@ function batched_loss_mse(optcode_batched, tensors::Tuple, batch_data, m::Int, n
     end
 
     # Batched inverse pass
-    conj_tensors = conj.(tensors)
+    conj_tensors = conj.(ts)
     if batched_inverse_code !== nothing
         # Single einsum call for all B inverse transforms
         stacked_trunc = cat(truncated_slices...; dims=m + n + 1)
@@ -232,13 +236,6 @@ function batched_loss_mse(optcode_batched, tensors::Tuple, batch_data, m::Int, n
     return total_loss / B
 end
 
-# Vector→Tuple wrapper methods to avoid Zygote vector-vs-tuple tangent mismatch
-# when splatting. Same pattern as loss_function.
-batched_forward(oc, ts::AbstractVector, b::AbstractArray) = batched_forward(oc, Tuple(ts), b)
-batched_loss_l1(oc, ts::AbstractVector, b, m, n) = batched_loss_l1(oc, Tuple(ts), b, m, n)
-batched_loss_mse(oc, ts::AbstractVector, b, m, n, k, ic; kw...) = batched_loss_mse(oc, Tuple(ts), b, m, n, k, ic; kw...)
-batched_loss_l1(oc, ts::AbstractVector, b::AbstractArray) = batched_loss_l1(oc, Tuple(ts), b)
-
 # ============================================================================
 # Unified Batch Loss Interface
 # ============================================================================
@@ -248,52 +245,39 @@ batched_loss_l1(oc, ts::AbstractVector, b::AbstractArray) = batched_loss_l1(oc, 
 
 Average loss over a batch of images. Uses batched einsum if `batched_optcode` is provided.
 """
-function loss_function(tensors::AbstractVector, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum,
+function loss_function(tensors, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum,
                        pics::Vector{<:AbstractMatrix}, loss::AbstractLoss;
                        inverse_code=nothing, batched_optcode=nothing, batched_inverse_code=nothing)
-    return loss_function(Tuple(tensors), m, n, optcode, pics, loss;
-                         inverse_code=inverse_code, batched_optcode=batched_optcode,
-                         batched_inverse_code=batched_inverse_code)
-end
-
-function loss_function(tensors::Tuple, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum,
-                       pics::Vector{<:AbstractMatrix}, loss::AbstractLoss;
-                       inverse_code=nothing, batched_optcode=nothing, batched_inverse_code=nothing)
+    ts = _ensure_tuple(tensors)
     if batched_optcode !== nothing
-        return loss_function(tensors, m, n, optcode, stack_image_batch(pics, m, n), loss;
-                             inverse_code=inverse_code, batched_optcode=batched_optcode,
-                             batched_inverse_code=batched_inverse_code)
+        stacked = stack_image_batch(pics, m, n)
+        return _loss_function_batched(ts, m, n, stacked, loss, inverse_code, batched_optcode, batched_inverse_code)
     else
         n_imgs = length(pics)
-        total = zero(real(eltype(tensors[1])))
+        total = zero(real(eltype(ts[1])))
         for img in pics
-            total += loss_function(tensors, m, n, optcode, img, loss; inverse_code=inverse_code)
+            total += loss_function(ts, m, n, optcode, img, loss; inverse_code=inverse_code)
         end
         return total / n_imgs
     end
 end
 
-function loss_function(tensors::AbstractVector, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum,
+function loss_function(tensors, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum,
                        stacked_pics::AbstractArray, loss::AbstractLoss;
                        inverse_code=nothing, batched_optcode=nothing, batched_inverse_code=nothing)
-    return loss_function(Tuple(tensors), m, n, optcode, stacked_pics, loss;
-                         inverse_code=inverse_code, batched_optcode=batched_optcode,
-                         batched_inverse_code=batched_inverse_code)
+    ts = _ensure_tuple(tensors)
+    batched_optcode !== nothing || error("A pre-stacked batch requires batched_optcode")
+    return _loss_function_batched(ts, m, n, stacked_pics, loss, inverse_code, batched_optcode, batched_inverse_code)
 end
 
-function loss_function(tensors::Tuple, m::Int, n::Int, optcode::OMEinsum.AbstractEinsum,
-                       stacked_pics::AbstractArray, loss::AbstractLoss;
-                       inverse_code=nothing, batched_optcode=nothing, batched_inverse_code=nothing)
-    if batched_optcode !== nothing
-        if loss isa L1Norm
-            return batched_loss_l1(batched_optcode, tensors, stacked_pics)
-        elseif loss isa MSELoss
-            return batched_loss_mse(batched_optcode, tensors, stacked_pics, m, n, loss.k, inverse_code;
-                                    batched_inverse_code=batched_inverse_code)
-        else
-            error("unsupported loss type for batched dispatch: $(typeof(loss))")
-        end
+"""Dispatch batched loss computation to the appropriate loss-specific function."""
+function _loss_function_batched(tensors::Tuple, m, n, stacked_pics, loss, inverse_code, batched_optcode, batched_inverse_code)
+    if loss isa L1Norm
+        return batched_loss_l1(batched_optcode, tensors, stacked_pics)
+    elseif loss isa MSELoss
+        return batched_loss_mse(batched_optcode, tensors, stacked_pics, m, n, loss.k, inverse_code;
+                                batched_inverse_code=batched_inverse_code)
     else
-        error("A pre-stacked batch requires batched_optcode")
+        error("unsupported loss type for batched dispatch: $(typeof(loss))")
     end
 end
