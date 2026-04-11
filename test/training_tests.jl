@@ -3,6 +3,33 @@
 # ============================================================================
 
 # ============================================================================
+# Dispatch interface: _init_circuit, _build_basis, _basis_name
+# ============================================================================
+
+@testset "_init_circuit and _build_basis dispatch" begin
+    for (BasisType, m, n, kwargs) in [
+        (QFTBasis, 3, 3, NamedTuple()),
+        (EntangledQFTBasis, 3, 3, NamedTuple()),
+        (TEBDBasis, 2, 2, (phases=randn(4) * 0.1,)),
+        (MERABasis, 2, 2, (phases=randn(4) * 0.1,)),
+    ]
+        @testset "$BasisType" begin
+            optcode, inverse_code, tensors = ParametricDFT._init_circuit(BasisType, m, n; kwargs...)
+            @test optcode isa OMEinsum.AbstractEinsum
+            @test inverse_code isa OMEinsum.AbstractEinsum
+            @test !isempty(tensors)
+
+            basis = ParametricDFT._build_basis(BasisType, m, n, tensors, optcode, inverse_code; kwargs...)
+            @test basis isa BasisType
+            @test basis.m == m
+            @test basis.n == n
+
+            @test ParametricDFT._basis_name(BasisType) isa String
+        end
+    end
+end
+
+# ============================================================================
 # Common training: basic smoke test for all basis types
 # ============================================================================
 
