@@ -779,3 +779,116 @@ The implementation caches frequency weights per $(m, n)$ pair to avoid per-call 
 - *Large circuits or batches*: GPU wins from batched parallelism
 - *L1/L2 loss*: fully batched, GPU-friendly
 - *MSE loss*: `topk_truncate` is per-image, limiting GPU parallelism (though the inverse is now batched)
+
+= The Training Pipeline (`training.jl`)
+
+The `_train_basis_core` function orchestrates the full training loop, composing the batched einsum, Riemannian optimizers, and device management described in previous sections.
+
+== Data Preparation
+
+#line(length: 100%)
+
+```julia
+# Convert images to Complex{Float64} and move to device
+complex_dataset = [to_device(Complex{Float64}.(img), device) for img in dataset]
+
+# Split into training/validation sets
+n_validation = clamp(round(Int, n_images * validation_split), 0, n_images - 1)
+indices = shuffle ? Random.shuffle(1:n_images) : collect(1:n_images)
+training_data = complex_dataset[indices[n_validation+1:end]]
+validation_data = complex_dataset[indices[1:n_validation]]
+
+# Clamp batch_size and move tensors to device
+batch_size = clamp(batch_size, 1, length(training_data))
+device_tensors = [to_device(Matrix{ComplexF64}(t), device) for t in initial_tensors]
+```
+
+#line(length: 100%)
+
+== Batched Einsum Pre-Computation
+
+When `batch_size > 1`, the batched einsum codes are optimized _once_ at startup and reused for all epochs and batches:
+
+#line(length: 100%)
+
+```julia
+if batch_size > 1
+    flat_batched, blabel = make_batched_code(optcode, n_gates)
+    batched_optcode = optimize_batched_code(flat_batched, blabel, batch_size)
+    # Also batch the inverse code for MSELoss
+    if inverse_code !== nothing && loss isa MSELoss
+        flat_batched_inv, blabel_inv = make_batched_code(inverse_code, n_gates)
+        batched_inverse_code = optimize_batched_code(flat_batched_inv, blabel_inv, batch_size)
+    end
+end
+```
+
+#line(length: 100%)
+
+This is critical for efficiency: TreeSA optimization can take minutes for large circuits, but `optimize_code_cached` (see the einsum cache in the previous section) ensures it runs at most once per unique circuit structure.
+
+== Batch Iteration Scaling
+
+The number of optimizer iterations per batch is scaled by the batch size:
+
+$ "batch\_max\_iter" = "steps\_per\_image" times |"batch"| $
+
+Without this scaling, `batch_size=16` would do $16 times$ fewer total optimization steps on the aggregated data. The scaling ensures that total optimizer iterations per image remains constant regardless of how images are grouped into batches.
+
+== Loss and Gradient Construction
+
+For each batch, closures are constructed that capture the batched einsum codes:
+
+#line(length: 100%)
+
+```julia
+# Batched path: single einsum call for all B images
+batch_loss_fn = ts -> loss_function(ts, m, n, optcode, stacked_batch, loss;
+                                     batched_optcode=batched_optcode,
+                                     batched_inverse_code=batched_inverse_code)
+
+# Gradient via Zygote pullback
+batch_grad_fn = ts -> begin
+    _, back = Zygote.pullback(batch_loss_fn, ts)
+    return back(one(real(eltype(ts[1]))))[1]
+end
+
+# Run optimizer (iterations scaled by batch size)
+current_tensors = optimize!(opt, current_tensors, batch_loss_fn, batch_grad_fn;
+                            max_iter=steps_per_image * length(batch), tol=1e-8)
+```
+
+#line(length: 100%)
+
+== Checkpointing
+
+When `checkpoint_interval > 0` and `checkpoint_dir` is set, the training loop saves the current tensors and loss history every `checkpoint_interval` global steps. This allows resuming long training runs without losing progress.
+
+== Early Stopping
+
+Validation loss is computed after each epoch. If it improves, the best tensors are snapshotted. If it does not improve for `early_stopping_patience` consecutive epochs, training stops:
+
+#line(length: 100%)
+
+```julia
+if val_loss < best_val_loss
+    best_val_loss = val_loss
+    best_tensors = copy.(current_tensors)
+    patience_counter = 0
+else
+    patience_counter += 1
+    patience_counter >= early_stopping_patience && epoch > 1 && break
+end
+```
+
+#line(length: 100%)
+
+== Finalization
+
+After training, the best tensors are moved back to CPU and converted to `ComplexF64` for serialization:
+
+```julia
+final_tensors = [ComplexF64.(Array(t)) for t in best_tensors]
+```
+
+This ensures consistent types regardless of whether training ran on CPU or GPU.
