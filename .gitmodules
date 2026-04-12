@@ -1,3 +1,0 @@
-[submodule "examples/benchmark"]
-	path = examples/benchmark
-	url = https://github.com/zazabap/ParametricDFT-Benchmarks.jl
