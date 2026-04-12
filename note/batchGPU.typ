@@ -682,3 +682,100 @@ The diagram below shows one iteration of the training loop. Gate tensors and the
   content((-2.2, -0.8), text(8pt, fill: blue)[update $bold(theta)$])
 
 }), caption: [One training iteration. Forward: gate tensors $bold(theta)$ and images $bold(X)_b$ contract via batched einsum to produce $bold(Y)_b$, then the loss $cal(L)$ is evaluated. Backward: Zygote computes $nabla cal(L)$, the Riemannian optimizer projects the gradient and retracts to update $bold(theta)$ on the manifold.])
+
+= GPU Acceleration (`ext/CUDAExt.jl`) <gpu>
+
+== Device Abstraction
+
+`to_device(x, device)` moves arrays between CPU and GPU using Julia's extension mechanism:
+
+#line(length: 100%)
+
+```julia
+# Core (training.jl) — always available
+to_device(x, Val(:cpu)) = x       # CPU is identity
+to_cpu(x::AbstractArray) = Array(x)
+
+# Extension (CUDAExt.jl) — loaded when CUDA.jl is available
+to_device(x::AbstractArray{T}, Val(:gpu)) = CuArray{T}(x)
+to_device(x, Val(:gpu)) = x       # scalars pass through
+```
+
+#line(length: 100%)
+
+The `Val{:gpu}` dispatch avoids runtime type instability: if `CUDA.jl` is loaded, the extension adds the method; otherwise `to_device(x, :gpu)` raises an informative error.
+
+== GPU Dispatch Table
+
+On GPU, the batched operations dispatch to optimized kernels:
+
+#table(
+  columns: 3,
+  [*Operation*], [*CPU (`manifolds.jl`)*], [*GPU (`CUDAExt.jl`)*],
+  [`batched_matmul`], [Per-slice `mul!` loop], [`CUBLAS.gemm_strided_batched!` (1 kernel)],
+  [`batched_inv`], [Per-slice `inv()` loop], [Broadcast $2 times 2$ formula (1 kernel)],
+  [`batched_adjoint`], [`permutedims(conj.())`], [Same (GPU broadcast)],
+  [Einsum contraction], [CPU OMEinsum], [CuArray dispatch (GPU contraction)],
+  [`topk_truncate`], [CPU `partialsort!` + mask], [Frequency-weighted GPU sort + mask],
+)
+
+== CUBLAS Strided Batched GEMM
+
+For $K$ matrix multiplications of $d times d$ matrices, the CPU loops $K$ times. On GPU, `CUBLAS.gemm_strided_batched!` processes all $K$ slices in a single kernel launch:
+
+#line(length: 100%)
+
+```julia
+function batched_matmul(A::CuArray{T,3}, B::CuArray{T,3})
+    C = similar(A, T, d1, d3, n)
+    CUDA.CUBLAS.gemm_strided_batched!('N', 'N', one(T), A, B, zero(T), C)
+    return C
+end
+```
+
+#line(length: 100%)
+
+This eliminates $K - 1$ kernel launches. For $2 times 2$ matrices (our typical case), each individual multiplication is too small to saturate a GPU, but the batched call amortizes the $~10 mu s$ launch overhead across all $K$ gates.
+
+== Closed-Form $2 times 2$ Inverse
+
+For $2 times 2$ matrices, the analytical inverse $mat(a,b;c,d)^(-1) = (a d - b c)^(-1) mat(d,-b;-c,a)$ is implemented as pure broadcasting --- a single GPU kernel for all $K$ slices:
+
+#line(length: 100%)
+
+```julia
+function batched_inv(A::CuArray{T,3})
+    if d == 2
+        a, b, c, dd = A[1:1,1:1,:], A[1:1,2:2,:], A[2:2,1:1,:], A[2:2,2:2,:]
+        det = a .* dd .- b .* c
+        inv_det = one(T) ./ det
+        return cat(
+            cat(dd .* inv_det, -(b .* inv_det); dims=2),
+            cat(-(c .* inv_det), a .* inv_det; dims=2);
+            dims=1)
+    else
+        # Fallback: per-slice LU inverse
+    end
+end
+```
+
+#line(length: 100%)
+
+The `1:1` indexing (instead of scalar indexing) keeps everything as `CuArray` slices, avoiding `@allowscalar` and enabling broadcasting.
+
+== Frequency-Aware Top-$k$ Truncation
+
+On GPU, `topk_truncate` uses frequency-weighted scores instead of raw magnitudes:
+
+$ s_(i,j) = |bold(Y)_(i,j)| dot (1 + w_(i,j)), #h(2em) w_(i,j) = 1 - d_(i,j) / (2 d_"max") $
+
+where $d_(i,j) = sqrt((i - i_c)^2 + (j - j_c)^2)$ is the distance from the center (DC component) and $d_"max"$ is the maximum distance. This weighting favors low-frequency components (structural information) over high-frequency ones (fine details) of similar magnitude.
+
+The implementation caches frequency weights per $(m, n)$ pair to avoid per-call GPU allocations. The threshold is extracted via 1-element slice `sorted[k:k]` (not `sorted[k]`) to avoid `@allowscalar`, which would block GPU kernel fusion.
+
+== When GPU Wins vs CPU
+
+- *Small circuits* ($< 10$ tensors): CPU faster due to GPU transfer overhead
+- *Large circuits or batches*: GPU wins from batched parallelism
+- *L1/L2 loss*: fully batched, GPU-friendly
+- *MSE loss*: `topk_truncate` is per-image, limiting GPU parallelism (though the inverse is now batched)
