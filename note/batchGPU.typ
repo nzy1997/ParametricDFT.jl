@@ -379,3 +379,306 @@ Each iteration of `_optimization_loop` follows this sequence:
 + *Convergence check*: if $||tilde(bold(g))|| < "tol"$, stop
 + *Optimizer step*: `_update_step!` dispatches to GD (Armijo line search) or Adam (moment update + retract)
 + *Loss trace*: record the current loss if requested
+
+= Batched Einsum (`loss.jl`)
+
+== Background: OMEinsum and the Forward Transform
+
+The QFT circuit is represented as a tensor network contraction using #link("https://github.com/under-Peter/OMEinsum.jl")[OMEinsum.jl]. In OMEinsum, a contraction is specified by a `DynamicEinCode`: a list of input index lists and an output index list. Indices that appear in inputs but not in the output are summed over (contracted). For example, matrix multiplication $bold(C)_(i,k) = sum_j bold(A)_(i,j) bold(B)_(j,k)$ is written as:
+
+#align(center)[`ein"ij, jk -> ik"(A, B)` #h(1em) or equivalently #h(1em) `DynamicEinCode([[1,2], [2,3]], [1,3])`]
+
+where integer labels replace characters (OMEinsum uses `Int` labels internally).
+
+The function `qft_code(m, n)` builds the einsum for the QFT circuit:
+1. Construct the QFT circuit using `Yao.EasyBuild.qft_circuit` for $m$ row qubits and $n$ column qubits
+2. Convert the circuit to an einsum via `yao2einsum` --- this assigns each gate and each qubit wire an integer index label
+3. Optimize the contraction order using `TreeSA()` (done once, reused for all iterations)
+
+*Concrete example* ($m = 2, n = 2$, i.e. $4 times 4$ images with 4 qubits). The circuit has $K = 6$ gate tensors (4 Hadamard gates $H$ and 2 controlled-phase gates $M_k$), plus the image tensor. After `yao2einsum`, the contraction looks like:
+
+#align(center)[`DynamicEinCode([[5,1], [6,2], [7,3], [8,4], [5,2], [7,4], [5,6,7,8]], [1,2,3,4])`]
+
+Reading this notation:
+- Gate tensors: $bold(theta)_1$ has indices $[5,1]$, $bold(theta)_2$ has $[6,2]$, ..., $bold(theta)_6$ has $[7,4]$ --- each is a $2 times 2$ matrix
+- Image tensor: indices $[5,6,7,8]$ --- these are the $m+n = 4$ qubit dimensions
+- Output: indices $[1,2,3,4]$ --- the transformed image's qubit dimensions
+- Contracted indices: $5,6,7,8$ appear in both gate and image inputs but not in the output, so they are summed over
+
+The corresponding tensor contraction is:
+
+$ bold(Y)_(j_1, j_2, j_3, j_4) = sum_(i_1, i_2, i_3, i_4) (bold(theta)_1)_(i_1, j_1) (bold(theta)_2)_(i_2, j_2) (bold(theta)_3)_(i_3, j_3) (bold(theta)_4)_(i_4, j_4) (bold(theta)_5)_(i_1, i_2) (bold(theta)_6)_(i_3, i_4) bold(X)_(i_1, i_2, i_3, i_4) $
+
+== The Problem: Single-Image Contraction
+
+Without batching, training on a dataset of $N$ images requires calling this einsum $N$ times per gradient step --- each call launches its own kernel(s).
+
+The diagram below shows the tensor network for _one_ image. The gate tensors $bold(theta)_k$ (shared across all images) each have 2 legs that connect into the circuit, while the image tensor $bold(X)$ feeds $m+n$ qubit indices through the circuit to produce output $bold(Y)$:
+
+#figure(canvas(length: 0.9cm, {
+  import draw: *
+  let n = 4
+  let dy = 0.8
+
+  // Image input tensor
+  ngate((0, 0), n, "X", text: [$bold(X)$], gap-y: dy, width: 0.8)
+
+  // Gate tensors along the qubit lines
+  ngate((1.8, 1.2), 1, "t1", text: text(8pt)[$bold(theta)_1$], gap-y: dy, width: 0.6)
+  ngate((2.8, 0.4), 1, "t2", text: text(8pt)[$bold(theta)_2$], gap-y: dy, width: 0.6)
+  ngate((3.8, -0.4), 1, "t3", text: text(8pt)[$bold(theta)_3$], gap-y: dy, width: 0.6)
+  content((4.8, -1.0), [$dots.c$])
+  ngate((5.8, -1.2), 1, "tK", text: text(8pt)[$bold(theta)_K$], gap-y: dy, width: 0.6)
+
+  // Output tensor
+  ngate((7.5, 0), n, "Y", text: [$bold(Y)$], gap-y: dy, width: 0.8)
+
+  // Connect image → gates → output (qubit lines)
+  line("X.o0", "t1.i0", stroke: gray)
+  line("t1.o0", "Y.i0", stroke: gray)
+  line("X.o1", "t2.i0", stroke: gray)
+  line("t2.o0", "Y.i1", stroke: gray)
+  line("X.o2", "t3.i0", stroke: gray)
+  line("t3.o0", "Y.i2", stroke: gray)
+  line("X.o3", (4.5, -1.2), stroke: gray)
+  line((5.2, -1.2), "tK.i0", stroke: gray)
+  line("tK.o0", "Y.i3", stroke: gray)
+
+  // Qubit labels
+  for i in range(n) {
+    content((-1.2, -i * dy + (n - 1) * dy / 2), [$q_#i$])
+  }
+
+  // "× N images" annotation
+  rect((-1.5, -2.0), (8.5, 2.2), stroke: (dash: "dotted", paint: red.darken(20%)))
+  content((3.5, -2.4), text(8pt, fill: red.darken(20%))[called $N$ times (once per image)])
+
+}), caption: [Single-image einsum: gate tensors $bold(theta)_k$ sit on qubit lines between input $bold(X)$ and output $bold(Y)$. This contraction is called $N$ times, once per image.])
+
+This is inefficient because the contraction tree is _identical_ for every image --- only the image tensor changes. The gate tensors $bold(theta)_1, dots, bold(theta)_K$ are shared.
+
+== The Solution: Append a Batch Dimension
+
+The key insight: add a new _batch label_ to the image input and output index lists, leaving gate indices unchanged. Since this label is not contracted (it appears in both the image input and the output), OMEinsum processes all $B$ images in a single kernel call.
+
+Continuing the $m = 2, n = 2$ example, `make_batched_code` computes `batch_label = max(1,...,8) + 1 = 9` and appends it:
+
+#align(center)[`DynamicEinCode([[5,1], [6,2], [7,3], [8,4], [5,2], [7,4],` *`[5,6,7,8,9]`*`],` *`[1,2,3,4,9]`*`)`]
+
+Only the last two entries change (bold): the image input gains label 9, the output gains label 9. The contraction becomes:
+
+$ bold(Y)_(j_1, j_2, j_3, j_4, b) = sum_(i_1, i_2, i_3, i_4) (bold(theta)_1)_(i_1, j_1) dots.c (bold(theta)_6)_(i_3, i_4) bold(X)_(i_1, i_2, i_3, i_4, b) $
+
+where $b in {1, dots, B}$ indexes images in the batch.
+
+#figure(canvas(length: 0.9cm, {
+  import draw: *
+  let n = 4
+  let dy = 0.8
+
+  // Batched image input tensor
+  ngate((0, 0), n, "X", text: [$bold(X)$], gap-y: dy, width: 0.8)
+
+  // Batch dimension leg (dangling down from X)
+  line("X.b", (rel: (0, -0.6)), stroke: blue, name: "Xb")
+  content((rel: (0.4, -0.1), to: "Xb.end"), text(8pt, fill: blue)[$b$])
+
+  // Gate tensors along the qubit lines (same as single-image)
+  ngate((1.8, 1.2), 1, "t1", text: text(8pt)[$bold(theta)_1$], gap-y: dy, width: 0.6)
+  ngate((2.8, 0.4), 1, "t2", text: text(8pt)[$bold(theta)_2$], gap-y: dy, width: 0.6)
+  ngate((3.8, -0.4), 1, "t3", text: text(8pt)[$bold(theta)_3$], gap-y: dy, width: 0.6)
+  content((4.8, -1.0), [$dots.c$])
+  ngate((5.8, -1.2), 1, "tK", text: text(8pt)[$bold(theta)_K$], gap-y: dy, width: 0.6)
+
+  // Batched output tensor
+  ngate((7.5, 0), n, "Y", text: [$bold(Y)$], gap-y: dy, width: 0.8)
+
+  // Batch dimension leg (dangling down from Y)
+  line("Y.b", (rel: (0, -0.6)), stroke: blue, name: "Yb")
+  content((rel: (0.4, -0.1), to: "Yb.end"), text(8pt, fill: blue)[$b$])
+
+  // Connect qubit lines
+  line("X.o0", "t1.i0", stroke: gray)
+  line("t1.o0", "Y.i0", stroke: gray)
+  line("X.o1", "t2.i0", stroke: gray)
+  line("t2.o0", "Y.i1", stroke: gray)
+  line("X.o2", "t3.i0", stroke: gray)
+  line("t3.o0", "Y.i2", stroke: gray)
+  line("X.o3", (4.5, -1.2), stroke: gray)
+  line((5.2, -1.2), "tK.i0", stroke: gray)
+  line("tK.o0", "Y.i3", stroke: gray)
+
+  // Qubit labels
+  for i in range(n) {
+    content((-1.2, -i * dy + (n - 1) * dy / 2), [$q_#i$])
+  }
+
+  // Annotation: batch dimension passes through
+  line((0, -2.4), (7.5, -2.4), stroke: (dash: "dashed", paint: blue.darken(20%)))
+  content((3.75, -2.9), text(8pt, fill: blue.darken(20%))[batch index $b$: passes through gates unchanged --- 1 call for all $B$ images])
+
+}), caption: [Batched einsum: an extra batch index $b$ (blue) is added to $bold(X)$ and $bold(Y)$. Gate tensors $bold(theta)_k$ have no $b$ index, so the _same_ contraction processes all $B$ images in one call.])
+
+The image tensor $bold(X)$ has shape $(2, 2, dots, 2, B) in CC^(2^(m+n) times B)$ --- $B$ images stacked along a new last dimension.
+
+#line(length: 100%)
+
+```julia
+# Step 1: Append batch label to the einsum code
+batched_flat, batch_label = make_batched_code(optcode, n_gates)
+
+# Step 2: Re-optimize contraction order for batched tensor sizes
+# size_dict: {1=>2, ..., 8=>2, 9=>B}  (all qubit dims = 2, batch dim = B)
+batched_optcode = optimize_batched_code(batched_flat, batch_label, batch_size)
+
+# Step 3: Stack B images and evaluate in one einsum call
+stacked = stack_image_batch(batch, m, n)   # (2,...,2,B)
+result = batched_optcode(tensors..., stacked)  # shape: (2,...,2,B)
+```
+
+#line(length: 100%)
+
+== Einsum Contraction Cache (`einsum_cache.jl`)
+
+TreeSA contraction order optimization can take minutes for large circuits. To amortize this cost across training runs, `optimize_code_cached` implements content-addressed disk caching:
+
+1. *Key computation*: A SHA-256 hash of the einsum's index lists and size dictionary. This is stable across Julia sessions.
+2. *Cache storage*: Serialized Julia objects in `~/.cache/ParametricDFT/einsum_codes/<hash>.jls`.
+3. *Graceful fallback*: If deserialization fails (e.g. Julia version change), the cache file is deleted and TreeSA re-runs.
+
+#figure(canvas(length: 0.85cm, {
+  import draw: *
+
+  // Input
+  rect((-2, 2), (2, 3), fill: blue.lighten(85%), name: "input")
+  content("input", text(8pt)[`(flat_code, size_dict)`])
+
+  // Hash
+  rect((-1.2, 0.5), (1.2, 1.5), fill: gray.lighten(85%), name: "hash")
+  content("hash", text(8pt)[SHA-256 hash])
+  line((0, 2), (0, 1.5), stroke: gray, mark: (end: ">", size: 0.2))
+
+  // Decision diamond
+  content((0, -0.8), text(8pt)[cache file\ exists?])
+  rect((-1.2, -1.5), (1.2, -0.1), stroke: (dash: "dashed", paint: gray))
+  line((0, 0.5), (0, -0.1), stroke: gray, mark: (end: ">", size: 0.2))
+
+  // Hit path (left)
+  rect((-4.5, -3.5), (-1.5, -2.5), fill: green.lighten(85%), name: "hit")
+  content("hit", text(8pt)[`deserialize`])
+  line((-0.6, -1.5), (-3.0, -2.5), stroke: green.darken(20%), mark: (end: ">", size: 0.2))
+  content((-2.2, -1.7), text(7pt, fill: green.darken(20%))[hit])
+
+  // Miss path (right)
+  rect((1.5, -3.5), (4.5, -2.5), fill: orange.lighten(85%), name: "miss")
+  content("miss", text(8pt)[TreeSA optimize])
+  line((0.6, -1.5), (3.0, -2.5), stroke: orange.darken(20%), mark: (end: ">", size: 0.2))
+  content((2.2, -1.7), text(7pt, fill: orange.darken(20%))[miss])
+
+  // Serialize after miss
+  rect((1.5, -5.2), (4.5, -4.2), fill: gray.lighten(85%), name: "save")
+  content("save", text(8pt)[`serialize` to disk])
+  line((3.0, -3.5), (3.0, -4.2), stroke: gray, mark: (end: ">", size: 0.2))
+
+  // Both paths converge
+  rect((-1.5, -7.0), (1.5, -6.0), fill: blue.lighten(85%), name: "result")
+  content("result", text(8pt)[optimized einsum code])
+  line((-3.0, -3.5), (-3.0, -6.5), stroke: gray)
+  line((-3.0, -6.5), (-1.5, -6.5), stroke: gray, mark: (end: ">", size: 0.2))
+  line((3.0, -5.2), (3.0, -6.5), stroke: gray)
+  line((3.0, -6.5), (1.5, -6.5), stroke: gray, mark: (end: ">", size: 0.2))
+
+}), caption: [Einsum cache flow. The key is a SHA-256 hash of the contraction structure and tensor sizes. On cache hit, deserialization is near-instant. On miss, TreeSA runs (potentially minutes) and the result is saved for next time.])
+
+== Loss Dispatch by Type
+
+The batching strategy differs by loss function:
+
+*L1/L2*: Fully batched end-to-end. One einsum call produces all $B$ outputs as a $(2,dots,2,B)$ tensor, then a single reduction:
+
+$ cal(L)_"L1" = 1/B sum_(b=1)^B sum_(j_1, dots, j_(m+n)) |bold(Y)_(j_1, dots, j_(m+n), b)|, #h(2em) cal(L)_"L2" = 1/B sum_(b=1)^B sum_(j_1, dots, j_(m+n)) |bold(Y)_(j_1, dots, j_(m+n), b)|^2 $
+
+*MSE*: The forward pass is batched, but `topk_truncate` must run per-image because the truncation mask depends on each image's frequency content. The inverse transform is batched again when `batched_inverse_code` is available:
+
++ *Batched forward*: One einsum call $arrow.r$ all $B$ frequency-domain outputs
++ *Per-image truncation*: `map(1:B)` applies `topk_truncate` to each image slice (content-dependent mask, cannot batch)
++ *Batched inverse*: If `batched_inverse_code` is provided, the truncated slices are re-stacked and a single inverse einsum reconstructs all $B$ images. Otherwise, falls back to per-image inverse.
+
+$ cal(L)_"MSE" = 1/B sum_(b=1)^B || bold(X)_b - "einsum"^(-1)(bold(theta)_1^*, dots, bold(theta)_K^*, "truncate"_k (bold(Y)_b)) ||^2 $
+
+#line(length: 100%)
+
+```julia
+# Batched forward — single einsum call for all B images
+fft_batched = batched_forward(optcode_batched, ts, stacked_batch)
+
+# Per-image truncation (mask is content-dependent)
+truncated_slices = map(1:B) do i
+    fft_slice = reshape(selectdim(fft_batched, m + n + 1, i), 2^m, 2^n)
+    reshape(topk_truncate(fft_slice, k), qubit_dims...)
+end
+
+# Batched inverse — single einsum call when batched_inverse_code available
+if batched_inverse_code !== nothing
+    stacked_trunc = cat(truncated_slices...; dims=m + n + 1)
+    inv_batched = batched_inverse_code(conj.(tensors)..., stacked_trunc)
+    total_loss = sum(abs2.(stacked_batch .- inv_batched))
+end
+```
+
+#line(length: 100%)
+
+== The Training Loop
+
+The diagram below shows one iteration of the training loop. Gate tensors and the image batch feed into the batched einsum; the output flows through the loss; Zygote differentiates to get gradients; the Riemannian optimizer projects and retracts to update the tensors:
+
+#figure(canvas(length: 0.85cm, {
+  import draw: *
+
+  // --- Forward pass (left to right) ---
+
+  // Gate tensors
+  ngate((0, 1.5), 1, "theta", text: [$bold(theta)$], width: 1.0)
+  content((0, 2.3), text(8pt)[gate tensors])
+
+  // Image batch
+  ngate((0, -1.5), 1, "img", text: [$bold(X)_b$], width: 1.0)
+  content((0, -2.3), text(8pt)[image batch])
+
+  // Einsum
+  ngate((3.0, 0), 2, "ein", text: text(8pt)[einsum], gap-y: 3, width: 1.2)
+
+  // Arrows into einsum
+  line("theta.o0", "ein.i0", stroke: gray, mark: (end: ">", size: 0.2))
+  line("img.o0", "ein.i1", stroke: gray, mark: (end: ">", size: 0.2))
+
+  // Loss
+  ngate((5.5, 0), 1, "loss", text: [$cal(L)$], width: 0.8)
+  content((5.5, 0.8), text(8pt)[loss])
+  line("ein.o0", (4.3, 1.5), stroke: gray)
+  line((4.3, 1.5), (4.3, 0), stroke: gray)
+  line((4.3, 0), "loss.i0", stroke: gray, mark: (end: ">", size: 0.2))
+  // Y label on the connection
+  content((4.3, 1.9), text(8pt)[$bold(Y)_b$])
+
+  // --- Backward pass (right to left, below) ---
+
+  // Gradient
+  ngate((5.5, -3.0), 1, "grad", text: text(8pt)[$nabla cal(L)$], width: 0.8)
+  content((5.5, -3.8), text(8pt)[Zygote AD])
+  line("loss.o0", (6.5, 0), stroke: gray)
+  line((6.5, 0), (6.5, -3.0), stroke: gray)
+  line((6.5, -3.0), "grad.o0", stroke: gray, mark: (end: ">", size: 0.2))
+
+  // Optimizer: project + retract
+  ngate((2.5, -3.0), 1, "opt", text: text(7pt)[project $arrow.r$ retract], width: 2.0)
+  content((2.5, -3.8), text(8pt)[Riemannian optimizer])
+  line("grad.i0", "opt.o0", stroke: gray, mark: (end: ">", size: 0.2))
+
+  // Feedback loop: optimizer → gate tensors
+  line("opt.i0", (-1.2, -3.0), stroke: (paint: blue, thickness: 1.2pt))
+  line((-1.2, -3.0), (-1.2, 1.5), stroke: (paint: blue, thickness: 1.2pt))
+  line((-1.2, 1.5), "theta.i0", stroke: (paint: blue, thickness: 1.2pt), mark: (end: ">", size: 0.25))
+  content((-2.2, -0.8), text(8pt, fill: blue)[update $bold(theta)$])
+
+}), caption: [One training iteration. Forward: gate tensors $bold(theta)$ and images $bold(X)_b$ contract via batched einsum to produce $bold(Y)_b$, then the loss $cal(L)$ is evaluated. Backward: Zygote computes $nabla cal(L)$, the Riemannian optimizer projects the gradient and retracts to update $bold(theta)$ on the manifold.])
