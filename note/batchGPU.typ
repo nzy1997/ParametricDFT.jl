@@ -1,5 +1,6 @@
 #import "@preview/cetz:0.4.2": canvas, draw
 #show link: set text(blue)
+#set heading(numbering: "1.1")
 
 // Tensor box helper for diagrams (same as main.typ / stepbystep.typ)
 #let ngate(pos, n, name, text: none, width: 1, gap-y: 1, padding-y: 0.25) = {
