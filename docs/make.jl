@@ -18,6 +18,7 @@ makedocs(;
         "Training" => "training.md",
         "Compression & Serialization" => "compression.md",
         "Visualization" => "visualization.md",
+        "Performance" => "performance.md",
     ],
 )
 
