@@ -71,7 +71,9 @@ end
 """
     _compute_gradients(grad_fn, tensors)
 
-Compute Euclidean gradients via `grad_fn`. Returns `nothing` on NaN/Inf.
+Compute Euclidean gradients via `grad_fn`. Returns `nothing` on NaN/Inf,
+after logging which tensor index carried the non-finite value (and the
+count of each kind) to aid debugging of divergent runs.
 """
 function _compute_gradients(grad_fn, tensors)
     euclidean_grads_raw = grad_fn(tensors)
@@ -84,9 +86,15 @@ function _compute_gradients(grad_fn, tensors)
         for i in eachindex(raw)
     ]
 
-    # Check for NaN/Inf in gradients
-    if any(g -> !all(isfinite, g), euclidean_grads)
-        return nothing
+    # Per-tensor NaN/Inf diagnostic. Walk once; on the first non-finite tensor,
+    # report which index and the NaN/Inf counts, then stop.
+    for (i, g) in enumerate(euclidean_grads)
+        if !all(isfinite, g)
+            n_nan = count(isnan, g)
+            n_inf = count(isinf, g)
+            @warn "Non-finite gradient — optimizer will stop" tensor_index=i n_nan=n_nan n_inf=n_inf
+            return nothing
+        end
     end
 
     return euclidean_grads
@@ -209,10 +217,11 @@ function _update_step!(
 
     alpha = RT(opt.lr)
     accepted = false
+    # Reused across every line-search trial: keys are manifold types (stable
+    # across trials), so overwriting entries is equivalent to fresh allocation.
     last_cand_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
 
     for _ls in 1:opt.max_ls_steps
-        last_cand_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
         for (manifold, indices) in state.manifold_groups
             pb = state.point_batches[manifold]
             rg = rg_batches[manifold]
