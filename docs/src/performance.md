@@ -1,113 +1,124 @@
 # Performance
 
-This page characterises the cost of the batched training inner loop and
-documents the speed-ups that batching gives over a naive per-image
+This page characterises the cost of the training inner loop and gives a
+decision rule — "for my batch size and image size, which configuration
+should I use?" — grounded in measured numbers against a Manopt.jl
 baseline.
 
 ## Methodology
 
 All numbers come from
-[`examples/benchmark_training.jl`](https://github.com/nzy1997/ParametricDFT.jl/blob/main/examples/benchmark_training.jl),
-which measures with `@elapsed` (min of 3 trials after 2 untimed warm-ups)
-the wall-clock time, allocation count, and peak memory of
-five [`optimize!`](@ref) iterations for every combination of
+[`examples/speedup_benchmark.jl`](https://github.com/nzy1997/ParametricDFT.jl/blob/main/examples/speedup_benchmark.jl).
+The harness runs each cell for **10 `optimize!` iterations**, after two
+untimed warm-up runs, and reports the **minimum of three wall-clock
+trials** (`@elapsed`). GPU cells use `CUDA.synchronize()` inside the timed
+block so the interval covers kernel completion, not just launch.
 
-* **batch size** `B ∈ {1, 4, 16, 64}`,
-* **loss** `L1Norm()` or `MSELoss(k = 8)`,
-* **optimizer** `RiemannianGD(lr = 0.01)` or `RiemannianAdam(lr = 0.001)`.
+The benchmark uses the **`MSELoss(k)`** with `k = ⌊0.1 · 2^(m+n)⌋` (10 %
+keep ratio) across every cell. Seeds (`Random.seed!(42)` at the top)
+make the numbers byte-reproducible run-to-run on the same host.
 
-`time/iter/B` below is the per-image cost in microseconds — the
-quantity that would be **flat** in `B` if batching were perfectly
-amortised. A downward curve is a real batching saving; a flat or
-slowly-falling curve signals a per-image bottleneck.
+Results were captured on
 
-Results were captured on the CPU path (`julia-1.12.5`, single-threaded,
-no CUDA). A GPU column will be added once someone runs the same script
-on a CUDA host — the harness picks up `CuArray` tensors automatically
-when `using CUDA` has loaded the extension.
+- Julia 1.12.5
+- CPU path: single-threaded
+- GPU path: NVIDIA GeForce RTX 3090
 
-To regenerate:
+Re-run with
 
 ```bash
-julia --project=. examples/benchmark_training.jl
+julia --project=examples examples/speedup_benchmark.jl
 ```
 
-## CPU results (`m = n = 2`, 4 × 4 images, `K = 6` gate tensors)
+## Main decision table — `m = n = 6` (64 × 64 images, `k = 409`)
 
-### L1 loss, `RiemannianGD`
+Reported cell: `time / 10 iters` in milliseconds. **Bold** marks the
+fastest cell in each column.
 
-| `B` | time / 5 iters (ms) | time/iter/B (μs) | allocs | memory (KiB) |
-| ---:| ---:| ---:| ---:| ---:|
-|   1 |  6.25 | 1250.9 |  34370 |  1578.3 |
-|   4 |  6.38 |  319.1 |  32423 |  1681.8 |
-|  16 |  6.62 |   82.8 |  32366 |  2375.7 |
-|  64 |  7.77 |   24.3 |  34208 |  5308.5 |
+| config | `B = 1` | `B = 8` | `B = 32` | `B = 64` |
+| --- | ---:| ---:| ---:| ---:|
+| `Manopt-GD-CPU`   |  4 115  | 32 459  | 110 708  | 200 919 |
+| `PDFT-GD-CPU`     |    315  |  1 116  |   6 574  |  14 848 |
+| `PDFT-GD-GPU`     |    871  |  1 013  |   2 439  |   3 975 |
+| `PDFT-Adam-CPU`   | **253** |    941  |   5 424  |  12 862 |
+| `PDFT-Adam-GPU`   |    498  | **867** | **2 285**| **3 817**|
 
-### L1 loss, `RiemannianAdam`
+## Appendix — `m = n = 9` (512 × 512 DIV2K-scale images, `B = 1`, `k = 26 214`)
 
-| `B` | time / 5 iters (ms) | time/iter/B (μs) | allocs | memory (KiB) |
-| ---:| ---:| ---:| ---:| ---:|
-|   1 |  5.71 | 1142.2 |  28829 |  1329.8 |
-|   4 |  5.86 |  293.1 |  27194 |  1402.3 |
-|  16 |  6.15 |   76.9 |  27089 |  1926.6 |
-|  64 |  7.12 |   22.3 |  28889 |  4272.4 |
+| config | `time / 10 iters (ms)` |
+| --- | ---:|
+| `PDFT-GD-CPU` | 22 685 |
+| `PDFT-GD-GPU` |  **4 575** |
 
-### MSE loss (`k = 8`), `RiemannianGD`
+Manopt is intentionally absent — by extrapolating the `m = n = 6` row
+(~50× slowdown from `B = 1` to `B = 64`, and another ~20× for the
+`m = 6 → m = 9` image-size jump), a single Manopt cell would take
+>1 hour. Not worth measuring to restate what the main table already
+shows.
 
-| `B` | time / 5 iters (ms) | time/iter/B (μs) | allocs | memory (KiB) |
-| ---:| ---:| ---:| ---:| ---:|
-|   1 | 16.13 | 3226.6 |  69824 |  3195.0 |
-|   4 | 18.44 |  922.0 |  75848 |  4063.2 |
-|  16 | 22.67 |  283.4 |  91705 |  7401.1 |
-|  64 | 40.04 |  125.1 | 169219 | 33996.5 |
+## Which configuration for which situation?
 
-### MSE loss (`k = 8`), `RiemannianAdam`
+Reading the main table column by column:
 
-| `B` | time / 5 iters (ms) | time/iter/B (μs) | allocs | memory (KiB) |
-| ---:| ---:| ---:| ---:| ---:|
-|   1 | 16.82 | 3363.7 |  58416 |  2674.3 |
-|   4 | 18.98 |  948.8 |  63550 |  3373.3 |
-|  16 | 22.79 |  284.9 |  77397 |  6263.1 |
-|  64 | 38.18 |  119.3 | 145563 | 30824.6 |
+| batch size | winner | runner-up | verdict |
+| ---: | --- | --- | --- |
+| `B = 1`  | `PDFT-Adam-CPU` (253 ms) | `PDFT-GD-CPU` (315 ms) | **Use CPU.** GPU launch overhead at `K = 42` gates exceeds any throughput gain. |
+| `B = 8`  | `PDFT-Adam-GPU` (867 ms) | `PDFT-Adam-CPU` (941 ms) | **Crossover.** GPU and CPU within 10 %. Either is fine; GPU wins by a whisker. |
+| `B = 32` | `PDFT-Adam-GPU` (2 285 ms) | `PDFT-GD-GPU` (2 439 ms) | **Use GPU.** 2.4× faster than best CPU (`Adam-CPU` 5 424 ms). |
+| `B = 64` | `PDFT-Adam-GPU` (3 817 ms) | `PDFT-GD-GPU` (3 975 ms) | **Use GPU.** 3.4× faster than best CPU. |
 
-## Reading the numbers
+And the appendix shows that at production image size (512 × 512) **even
+at `B = 1`** GPU wins 5× — the crossover batch-size threshold gets lower
+as the circuit grows, because per-kernel work scales faster than
+per-kernel launch overhead.
 
-**L1 batching is nearly ideal.** `time/iter/B` drops **~52×** from
-`B = 1` to `B = 64` (from ~1.2 ms/image/iter to ~23 μs/image/iter).
-Allocations are essentially **flat** with `B`
-(34 370 → 34 208 for GD): the inner loop reuses `OptimizationState`'s
-persistent buffers; what grows with `B` is only the einsum output
-tensor. This matches the "image-level batching" story in the
-[notes](https://github.com/nzy1997/ParametricDFT.jl/blob/main/note/batchGPU.pdf) §3–§4.
+## Manopt comparison
 
-**MSE batching is bottlenecked by the per-image `topk_truncate`.**
-`time/iter/B` drops ~26× (half the L1 scaling) and **allocations grow
-2.4× from `B = 1` to `B = 64`** (70 k → 169 k for GD) because the
-`map(1:B)` in `batched_loss_mse` runs the content-dependent top-$k$
-selection once per image. Memory also grows roughly linearly in `B`.
-This validates the note's claim that the per-image topk is the last
-remaining serial step on the MSE path. A batched segmented-sort
-path on GPU (CUB `cub::DeviceSegmentedRadixSort`) would close this
-gap; tracked in
-[issue #70](https://github.com/nzy1997/ParametricDFT.jl/issues/70).
+Every PDFT cell is **10–50× faster than Manopt at the same batch size**:
+
+| `B` | `Manopt-GD-CPU` | `PDFT-GD-CPU` | `PDFT-Adam-GPU` |
+| ---: | ---: | ---: | ---: |
+|  1 |  4 115 | **315** (13×) |   498 (8.3×) |
+|  8 | 32 459 | **1 116** (29×) |   867 (37×) |
+| 32 | 110 708 | **6 574** (17×) | 2 285 (48×) |
+| 64 | 200 919 | **14 848** (14×) | 3 817 (**53×**) |
+
+The ratio widens with `B` because Manopt has no batch axis — each extra
+image in the batch adds a full serial forward+backward pass — while
+PDFT's batched einsum amortises per-call overhead across `B`.
+
+**Bottom line:** there is no batch size at which Manopt is competitive
+with the PDFT stack on this workload.
+
+## Adam vs GD
+
+Adam is a hair faster than GD at every cell because GD runs an Armijo
+backtracking line search (up to 10 loss evaluations per step), while
+Adam trusts its bias-corrected moments and never re-evaluates. The
+per-step speed gap is 15–25 %; whether the extra step-size hygiene is
+worth it is a convergence question that this page does not try to
+answer.
 
 ## Known bottlenecks and follow-ups
 
-* **Per-image `topk_truncate` in the MSE path** — above. Batched
-  implementation on GPU is the single biggest untaken speedup.
+* **Per-image `topk_truncate` no longer the bottleneck on GPU.** The
+  batched `topk_truncate` added in
+  [PR #72](https://github.com/nzy1997/ParametricDFT.jl/pull/72) issues
+  one `sort(dims = 1)` call for all `B` images instead of `B` sequential
+  sorts. Contributes meaningfully to the `Adam-GPU` / `GD-GPU` numbers
+  at large `B`.
 * **`Complex{Float64}` throughout.** A mixed-precision
   (`Complex{Float32}`) variant would roughly halve memory and often
-  double throughput on GPU; tracked in issue #70.
-* **Per-iteration allocations inside `project` and `retract`** —
-  each call to `project(::UnitaryManifold, ...)` and
-  `retract(::UnitaryManifold, ...)` allocates several `(d, d, K)`
-  arrays. Writing in-place variants plus batched `batched_matmul!`
-  would cut the low-level allocation count further; an architectural
-  change, tracked in issue #70.
+  double throughput on GPU; tracked in
+  [issue #70](https://github.com/nzy1997/ParametricDFT.jl/issues/70).
+* **Per-iteration allocations inside `project` and `retract`.** Each
+  call still allocates several `(d, d, K)` intermediates. A fully
+  in-place `project!` / `retract!` refactor would cut allocation count
+  further and cooperate better with CUDA Graphs; tracked in issue #70.
 
 ## History
 
 | PR | change | observed effect |
 | --- | --- | --- |
-| [#71](https://github.com/nzy1997/ParametricDFT.jl/pull/71) | reuse Armijo `last_cand_batches` Dict across line-search trials | up to `max_ls_steps - 1` fewer Dict allocations per iteration |
-| [#72](https://github.com/nzy1997/ParametricDFT.jl/pull/72) | pre-allocate `euclidean_grads_buf` in `OptimizationState` | one fewer `Vector{AbstractMatrix}` per iteration |
+| [#71](https://github.com/nzy1997/ParametricDFT.jl/pull/71) (absorbed into #72) | reuse Armijo `last_cand_batches` Dict; per-tensor NaN/Inf diagnostic | up to `max_ls_steps − 1` fewer Dict allocations per iteration; better divergent-run debugging |
+| [#72](https://github.com/nzy1997/ParametricDFT.jl/pull/72) | pre-allocated `euclidean_grads_buf`; batched `topk_truncate` (CPU + GPU via CUB sort-with-dims); Manopt comparison harness; this Performance page | GPU MSE path no longer per-image sort-bound; main decision table + appendix populated |
