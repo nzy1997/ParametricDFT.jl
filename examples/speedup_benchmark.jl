@@ -7,9 +7,13 @@
 #   - Large-image appendix: 2 configs × B=1 at m = n = 9 (512×512).
 #
 # Usage:
-#   julia --project=. examples/speedup_benchmark.jl
+#   julia --project=examples examples/speedup_benchmark.jl
 # or with nohup:
-#   nohup julia --project=. examples/speedup_benchmark.jl > /tmp/speedup.log 2>&1 &
+#   nohup julia --project=examples examples/speedup_benchmark.jl > /tmp/speedup.log 2>&1 &
+#
+# Requires the `examples/` project (Project.toml) which brings in Manopt,
+# Manifolds, ManifoldDiff, RecursiveArrayTools, and ADTypes alongside
+# ParametricDFT, Zygote, and CUDA.
 # ============================================================================
 
 using ParametricDFT
