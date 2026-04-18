@@ -102,7 +102,7 @@ function manopt_gd_run(
     if istaskdone(task)
         r = take!(result_channel)
         if haskey(r, :error)
-            rethrow(r.error)
+            throw(r.error)
         end
         final_tensors = r.tensors
         time_s = r.time_s
