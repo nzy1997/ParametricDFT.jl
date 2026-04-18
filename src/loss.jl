@@ -196,39 +196,56 @@ function batched_loss_l1(optcode_batched, tensors, batch::Vector{<:AbstractMatri
     return batched_loss_l1(optcode_batched, tensors, stack_image_batch(batch, m, n))
 end
 
-"""Batched MSE loss: batched forward, per-image topk_truncate, batched inverse."""
+"""
+    batched_topk_truncate(x_batched::AbstractArray{T,N}, m::Int, n::Int, k::Integer)
+
+Apply per-image top-`k` truncation to a batched frequency-domain tensor of
+shape `(2, 2, …, 2, B)` (with `m + n` qubit dims). Returns a tensor of the
+same shape with all but the `k` largest-magnitude entries of each image
+zeroed.
+
+The mask is content-dependent — each image can keep a different set of
+coefficients — so on CPU this falls back to a per-image loop. GPU
+specialisations in `ext/CUDAExt.jl` compute all `B` masks in a single
+sort call.
+"""
+function batched_topk_truncate(x_batched::AbstractArray{T,N}, m::Int, n::Int, k::Integer) where {T,N}
+    @assert N == m + n + 1 "Expected rank m + n + 1, got $N"
+    B = size(x_batched, N)
+    qubit_dims = fill(2, m + n)
+    slices = map(1:B) do i
+        slice = reshape(selectdim(x_batched, m + n + 1, i), 2^m, 2^n)
+        reshape(topk_truncate(slice, k), qubit_dims...)
+    end
+    return cat(slices...; dims = m + n + 1)
+end
+
+"""Batched MSE loss: batched forward, batched top-k truncation, batched inverse."""
 function batched_loss_mse(optcode_batched, tensors, batch_data, m::Int, n::Int, k::Int, inverse_code;
                           batched_inverse_code=nothing)
     ts = _ensure_tuple(tensors)
     stacked_batch = batch_data isa AbstractVector{<:AbstractMatrix} ? stack_image_batch(batch_data, m, n) : batch_data
     B = size(stacked_batch, ndims(stacked_batch))
-    qubit_dims = fill(2, m + n)
 
     # Batched forward pass — single einsum call
     fft_batched = batched_forward(optcode_batched, ts, stacked_batch)
 
-    # Per-image truncation (mask is content-dependent, cannot be batched)
-    # Use map instead of mutation to keep Zygote happy
-    truncated_slices = map(1:B) do i
-        fft_slice = reshape(selectdim(fft_batched, m + n + 1, i), 2^m, 2^n)
-        reshape(topk_truncate(fft_slice, k), qubit_dims...)
-    end
+    # Batched top-k truncation (CPU: per-image loop; GPU: one sort call via CUDAExt)
+    stacked_trunc = batched_topk_truncate(fft_batched, m, n, k)
 
     # Batched inverse pass
     conj_tensors = conj.(ts)
     if batched_inverse_code !== nothing
         # Single einsum call for all B inverse transforms
-        stacked_trunc = cat(truncated_slices...; dims=m + n + 1)
         inv_batched = batched_inverse_code(conj_tensors..., stacked_trunc)
         total_loss = sum(abs2.(stacked_batch .- inv_batched))
     else
         # Fallback: per-image inverse
         total_loss = zero(real(eltype(fft_batched)))
+        qubit_dims = fill(2, m + n)
         for i in 1:B
-            reconstructed = reshape(
-                inverse_code(conj_tensors..., truncated_slices[i]),
-                2^m, 2^n
-            )
+            trunc_slice = reshape(selectdim(stacked_trunc, m + n + 1, i), qubit_dims...)
+            reconstructed = reshape(inverse_code(conj_tensors..., trunc_slice), 2^m, 2^n)
             pic = reshape(selectdim(stacked_batch, m + n + 1, i), 2^m, 2^n)
             total_loss += sum(abs2.(pic .- reconstructed))
         end
