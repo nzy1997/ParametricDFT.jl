@@ -74,21 +74,23 @@ function manopt_gd_run(
     result_channel = Channel{Any}(1)
     task = @async begin
         try
-            gc_before = Base.gc_num()
-            t = @elapsed begin
+            # @timed gives (value, time, bytes, gctime, gcstats) where
+            # gcstats is the Base.GCStats that Base.gc_alloc_count accepts.
+            run = @timed begin
                 res = Manopt.gradient_descent(
                     M, f, grad_f, p0;
                     stopping_criterion = Manopt.StopAfterIteration(steps),
                     return_state = true,
                 )
+                get_solver_result(res)
             end
-            gc_after = Base.gc_num()
-            fp = get_solver_result(res)
-            fts = [Matrix{ComplexF64}(t2) for t2 in _point2tensors(fp)]
-            put!(result_channel, (; time_s = t, tensors = fts,
-                                  allocs = Base.gc_alloc_count(gc_after) -
-                                           Base.gc_alloc_count(gc_before),
-                                  memory = gc_after.allocd - gc_before.allocd))
+            fts = [Matrix{ComplexF64}(t2) for t2 in _point2tensors(run.value)]
+            put!(result_channel, (;
+                time_s = run.time,
+                tensors = fts,
+                allocs = Base.gc_alloc_count(run.gcstats),
+                memory = run.bytes,
+            ))
         catch e
             put!(result_channel, (; error = e))
         end
