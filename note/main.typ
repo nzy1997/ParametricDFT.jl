@@ -40,17 +40,13 @@
 
 = Introduction
 
-A *sparse basis* is a transform basis in which a signal can be represented with few non-zero coefficients. For compression, the goal is to find a basis $cal(T)$ such that $bold(y) = cal(T)(bold(x))$ has most energy concentrated in a small number of components: $||bold(y)||_0 << dim(bold(y))$.
+A *sparse basis* is a transform $cal(T)$ for which $bold(y) = cal(T)(bold(x))$ concentrates energy in few components: $||bold(y)||_0 << dim(bold(y))$.
 
-Classical transforms (FFT, DCT) provide fixed bases optimized for specific signal classes. However, the Fourier basis is not optimal for image processing because:
-- It assumes periodic boundary conditions, which do not hold for natural images.
-- The 2D Fourier basis assumes the $X$ and $Y$ coordinates are independent, ignoring spatial correlations common in natural images.
+The Fourier basis is not optimal for natural images: it assumes periodic boundaries, and its 2D form treats the $X$ and $Y$ axes as independent, ignoring spatial correlations. The tensor-network form of the FFT, however, exposes parameters (Hadamard gates $H$, controlled-phase gates $M_k$) that can be tuned without changing the $O(n log n)$ cost. This suggests: learn these parameters from data.
 
-Observing that the tensor network representation of the FFT contains parameters (Hadamard gates $H$ and controlled-phase gates $M_k$) that can be tuned without affecting the computational complexity, we ask: can we find a transformation _better_ than the Fourier basis by learning these parameters from data?
+We present _parametric tensor network bases_ — data-adaptive unitary transforms parameterized by quantum circuits. Parameters live on Riemannian manifolds ($U(2)$ for Hadamard, $U(1)^4$ for phase gates) and are optimized via Riemannian gradient descent. The classical QFT is one point on this manifold; training moves to a better one.
 
-This document presents _parametric tensor network bases_ --- a family of data-adaptive unitary transforms parameterized by quantum circuit structures. The circuit parameters live on Riemannian manifolds ($U(2)$ for Hadamard gates, $U(1)^4$ for phase gates) and are optimized via Riemannian gradient descent to find a sparse basis tailored to specific image data. The standard QFT with fixed parameters is one point on this manifold; learning moves us to a better point.
-
-We describe four circuit topologies (QFT, Entangled QFT, TEBD, MERA), the loss functions that drive sparsity, and the Riemannian optimization machinery that makes training possible while preserving unitarity.
+We cover four topologies (QFT, Entangled QFT, TEBD, MERA), sparsity-promoting losses, and the Riemannian machinery that keeps iterates unitary.
 
 = Background
 
@@ -76,7 +72,7 @@ dots.v , dots.v , dots.v , dots.down , dots.v, dots.v, dots.down, dots.v, dots.v
 1 , omega^(n-1) , omega^(2n-2) , dots , omega^((n-1)(n/2-1)), omega^((n-1)n/2), dots, omega^((n-1)(n-2)), omega^((n-1)^2)
 ). $])
 }))
-The Cooley-Tukey FFT is a divide-and-conquer algorithm for computing the DFT. For simplicity, we assume $n$ is a power of 2, such that we can divide the matrix into 4 blocks:
+The Cooley-Tukey FFT is divide-and-conquer. For $n$ a power of 2, split the matrix into four blocks:
 - The odd columns (blue background), top half:
   $
     F_("odd", "top") = mat(1,1, dots, 1; 1,omega^2, dots, omega^(n-2); dots.v, dots.v, dots.down, dots.v; 1, omega^(n-2), dots, omega^((n/2-1)(n-2))) = mat(1,1, dots, 1; 1,(omega^2), dots, (omega^2)^(n/2-1); dots.v, dots.v, dots.down, dots.v; 1, (omega^2)^(n/2-1), dots, (omega^2)^((n/2-1)(n/2-1)))
@@ -107,15 +103,13 @@ $ F_n bold(x) = mat(
   0, F_(n/2)
 ) vec(bold(x)_("odd"), bold(x)_("even"))
 $ <eq:fft>
-where $bold(x)_("odd")$ and $bold(x)_("even")$ contain the odd and even indexed elements of $bold(x)$, respectively.
-This shows that the DFT in $RR^n$ decomposes into two smaller DFTs in $RR^(n/2)$ with a diagonal twiddle factor matrix $D_(n\/2)$ in between.
-Since diagonal matrices can be applied in $O(n)$ operations, this decomposition yields the recurrence $T(n) = 2T(n\/2) + O(n)$, which solves to $O(n log n)$ total operations.
+where $bold(x)_("odd")$ and $bold(x)_("even")$ are the odd- and even-indexed elements of $bold(x)$. The DFT thus decomposes into two half-size DFTs with a diagonal twiddle $D_(n\/2)$ between them. Diagonal matrices apply in $O(n)$, giving $T(n) = 2T(n\/2) + O(n) = O(n log n)$.
 
-The inverse transformation is given by $F_n^dagger bold(x)\/n$. The DFT matrix is unitary up to a scale factor: $F_n F_n^dagger = n I$.
+The inverse is $F_n^dagger bold(x)\/n$, since $F_n F_n^dagger = n I$.
 
 == Tensor Network Representation of the FFT <bg-tn>
 
-We now reformulate the FFT as a tensor network, which reveals the parametric structure exploited throughout this work. In tensor network notation, a vector of size $n=2^k$ is represented as a rank-$k$ tensor with binary indices, where the basis index decomposes as $i = 2^0 q_0 + 2^1 q_1 + ... + 2^(k-1) q_(k-1)$.
+We reformulate the FFT as a tensor network, exposing the parametric structure used throughout. A vector of size $n = 2^k$ becomes a rank-$k$ tensor with binary indices, via $i = 2^0 q_0 + 2^1 q_1 + dots + 2^(k-1) q_(k-1)$.
 #figure(canvas({
   import draw: *
   let n = 4
@@ -126,7 +120,7 @@ We now reformulate the FFT as a tensor network, which reveals the parametric str
   }
 }))
 
-In the following, we aim to find a tensor network decomposition for the linear map $F_n$:
+We seek a tensor network decomposition of $F_n$:
 #figure(canvas({
   import draw: *
   let n = 4
@@ -170,8 +164,7 @@ $
 }))
 where $H = mat(1, 1; 1, -1)$ is the Hadamard matrix (up to a normalization constant).
 
-*Step 2*: Next, we decompose the controlled diagonal matrix $mat(I_(n/2), 0; 0, D_(n/2))$ into a tensor network.
-This matrix acts as the identity when bit $q_0 = 0$ (odd index) and applies $D_(n/2)$ when $q_0 = 1$ (even index).
+*Step 2*: Decompose $mat(I_(n/2), 0; 0, D_(n/2))$ — identity when $q_0 = 0$, $D_(n/2)$ when $q_0 = 1$ — into a tensor network.
 // We define the following control tensor in block matrix form:
 // $
 //   "ctrl"_1(A) := mat(I, 0; 0, A)
@@ -188,7 +181,7 @@ D_n = "diag"(1, omega^(n/2)) times.circle "diag"(1, omega, omega^2, ..., omega^(
 $
   mat(I_(n/2), 0; 0, D_(n/2)) = "ctrl"_0("diag"(1, omega^(n/4))_1) "ctrl"_0("diag"(1, omega^(n/8))_2) ... "ctrl"_0 ("diag"(1, omega)_(log_2 n)),
 $
-where $"ctrl"_i (A_j)$ means the target operation applied on $A_j$ is applied only if bit $q_i$ is $1$. Here, since the controlled gate is diagonal, it can be represented as a matrix connecting two variables:
+where $"ctrl"_i (A_j)$ applies $A_j$ only when bit $q_i = 1$. Since each controlled gate is diagonal, it is drawn as a matrix connecting two qubits:
 
 #let cphase(x, i, j, k, name: "CP") = {
   import draw: *
@@ -218,7 +211,7 @@ where $"ctrl"_i (A_j)$ means the target operation applied on $A_j$ is applied on
   }
   line("H.o0", (rel: (0.5, 0)))
 }))
-In this diagram, the gate $M_k = mat(1, 1; 1, e^(i pi \/ 2^(k-1)))$ connects the two qubits involved in the controlled operation, multiplying a phase factor $e^(i pi \/ 2^(k-1))$ when both bits are in state $1$. Recursively decomposing the $F_(n/2)$ tensor yields the complete tensor network:
+The gate $M_k = mat(1, 1; 1, e^(i pi \/ 2^(k-1)))$ multiplies by $e^(i pi\/2^(k-1))$ when both qubits are in state $1$. Recursing on $F_(n/2)$ yields the complete network:
 
 #figure(canvas({
   import draw: *
@@ -253,29 +246,25 @@ In this diagram, the gate $M_k = mat(1, 1; 1, e^(i pi \/ 2^(k-1)))$ connects the
   line("x_n.o3", "H.i0")
 }))
 
-Direct evaluation of this tensor network takes $O(n log^2 n)$ operations. However, since the controlled-phase gates are diagonal matrices, adjacent phase operations on the same qubit can be merged, reducing the total complexity to $O(n log n)$ --- matching the classical FFT.
+Direct evaluation is $O(n log^2 n)$. Merging adjacent diagonal phase operations on the same qubit recovers the classical $O(n log n)$.
 
 = Parametric Circuit Bases
 
-We now present four circuit topologies for parametric sparse bases. Each topology defines which qubit pairs are connected by gates, while sharing the same gate parameterization (Hadamard on $U(2)$, controlled-phase on $U(1)^4$) and optimization framework.
+Four topologies share the same gate parameterization ($H in U(2)$, controlled-phase $in U(1)^4$) and optimization framework; they differ only in which qubit pairs are connected.
 
 == QFT Basis
 
-The QFT circuit implements a unitary transform $cal(T)(bold(theta)): CC^(2^m times 2^n) -> CC^(2^m times 2^n)$ parameterized by Hadamard gates $H in U(2)$ and controlled-phase gates $M_k in U(1)^4$. With fixed parameters, this reduces to the classical DFT; making the parameters learnable enables the optimizer to search for a transform with better sparsity properties for a given dataset.
-
-The tensor network structure derived in @bg-tn applies directly: each gate in the recursive QFT decomposition becomes a learnable parameter. The Hadamard gates $H$ live on the unitary manifold $U(2)$, while the controlled-phase gates $M_k = "diag"(1, 1, 1, e^(i phi))$ live on the phase manifold $U(1)^4$. For a 2D image of size $2^m times 2^n$, the QFT basis applies independent QFT circuits on the $m$ row qubits and $n$ column qubits, yielding the separable transform $cal(T) = F_m times.circle F_n$.
+The QFT basis is the tensor network of @bg-tn with every gate made learnable: Hadamards on $U(2)$ and controlled-phase $M_k = "diag"(1,1,1,e^(i phi))$ on $U(1)^4$. With fixed $M_k$ phases it reduces to the classical DFT. For a $2^m times 2^n$ image, separate QFT circuits act on the $m$ row and $n$ column qubits: $cal(T) = F_m times.circle F_n$.
 
 == Entangled QFT Basis: XY Correlation
 
-The separable QFT basis processes the $x$ and $y$ dimensions independently. For a square image of size $2^n times 2^n$, the QFT is applied separately on the $n$ row qubits and $n$ column qubits. This independence assumption is suboptimal for natural images, which exhibit strong spatial correlations between rows and columns (e.g., edges at arbitrary angles, diagonal textures).
-
-We propose an _entangled QFT basis_ that introduces controlled-phase gates between x and y qubits after each layer of the QFT circuit. For the square case $m = n$, we use a _one-to-one_ entanglement structure where each x qubit $x_k$ is coupled with the corresponding y qubit $y_k$. The entanglement gate $E_k$ has exactly the same form as the $M$ gate defined in the previous section:
+Separating $x$ and $y$ ignores cross-dimensional structure in natural images (diagonal edges, oblique textures). We add controlled-phase _entanglement_ gates between corresponding row and column qubits. For $m = n$, pair $x_k$ with $y_k$ via
 $
   E_k = mat(1, 0, 0, 0; 0, 1, 0, 0; 0, 0, 1, 0; 0, 0, 0, e^(i phi_k))
 $
-acting on qubits $(x_(n-k), y_(n-k))$, where $phi_k$ is a learnable phase parameter. Similar to the $M_k$ gate which multiplies a phase factor when both control and target qubits are in state $|1 angle.r$, the entanglement gate $E_k$ multiplies a phase $e^(i phi_k)$ when both $x_(n-k) = 1$ and $y_(n-k) = 1$. The key difference is that while $M_k$ uses the fixed phase $pi\/2^(k-1)$ determined by the QFT structure, $E_k$ uses a learnable phase $phi_k$ that can be optimized to capture image-specific correlations.
+acting on $(x_(n-k), y_(n-k))$. $E_k$ has the same form as $M_k$ but with a _learnable_ phase $phi_k$ in place of the fixed $pi\/2^(k-1)$.
 
-The circuit structure for $n = 4$ qubits per dimension is shown below. Each row qubit $x_k$ first passes through its QFT circuit (Hadamard gate $H$ followed by controlled-phase gates $M_j$ with other row qubits), and similarly for column qubits $y_k$. The entanglement gates $E_k$ (shown as boxes connecting x and y qubit lines) are applied after the Hadamard layers, coupling the corresponding row and column qubits:
+Circuit for $n = 4$: each qubit runs its standard QFT (Hadamard then $M_j$ gates), then an $E_k$ couples each row qubit to its column partner:
 
 #let egate(x, i, j, k, name: "E") = {
   import draw: *
@@ -382,27 +371,15 @@ The circuit structure for $n = 4$ qubits per dimension is shown below. Each row 
   egate(8.2, 0, -ysep, 1, name: "E1")
 }))
 
-Summarizing the gate applications for each qubit:
-- *Row qubit $x_k$*: Hadamard gate $H$, followed by controlled-phase gates $M_j$ with qubits $x_0, ..., x_(k-1)$ (standard QFT structure), then entanglement gate $E_(n-k)$ with column qubit $y_k$
-- *Column qubit $y_k$*: Hadamard gate $H$, followed by controlled-phase gates $M_j$ with qubits $y_0, ..., y_(k-1)$ (standard QFT structure), then entanglement gate $E_(n-k)$ with row qubit $x_k$
-
-For a square $2^n times 2^n$ image encoded with $n$ row qubits and $n$ column qubits (total $2n$ qubits), we add exactly $n$ entanglement gates ${E_1, E_2, ..., E_n}$, one for each pair of corresponding row/column qubits.
-
-The total transformation becomes:
+Per-qubit sequence: Hadamard, intra-dimension $M_j$ gates (standard QFT), then $E_(n-k)$ with the partner qubit. The full transform is
 $
-  cal(T)_"entangled" = U_"entangle" dot (F_n times.circle F_n)
+  cal(T)_"entangled" = U_"entangle" dot (F_n times.circle F_n), quad U_"entangle" = product_(k=1)^n E_k.
 $
-where $U_"entangle" = product_(k=1)^n E_k$ is the product of all entanglement gates acting on qubit pairs $(x_(n-k), y_(n-k))$, and $F_n$ is the $n$-qubit QFT applied along each spatial dimension.
-
-This approach has several desirable properties:
-- It captures diagonal features and cross-dimensional correlations common in natural images.
-- The computational complexity remains $O(n log n)$ per spatial dimension (equivalently $O(N log N)$ for image side length $N = 2^n$), matching the standard QFT.
-- Only $n$ additional real-valued parameters $phi_k$ are introduced --- one phase per qubit pair, i.e., $O(n)$ overhead.
-- Setting all entanglement phases $phi_k = 0$ recovers the standard separable 2D QFT.
+Cost remains $O(N log N)$; only $n$ real parameters are added; $phi_k = 0$ recovers the separable 2D QFT.
 
 == TEBD Basis
 
-Time-Evolving Block Decimation (TEBD) is a tensor network ansatz originally developed for simulating 1D quantum many-body systems. Unlike the QFT's hierarchical all-to-all connectivity, TEBD uses a _ring topology_ of nearest-neighbor controlled-phase gates preceded by Hadamard gates on each qubit. For image processing on a $2^n times 2^n$ grid, the $n$ row qubits and $n$ column qubits each form an independent ring of controlled-phase gates.
+Time-Evolving Block Decimation (TEBD) replaces the QFT's hierarchical all-to-all connectivity with a _ring topology_: each qubit gets a Hadamard, then nearest-neighbor controlled-phase gates around a ring. Row and column qubits form two independent rings.
 
 #let tebdgate(x, i, j, label, name: "T") = {
   import draw: *
@@ -458,24 +435,17 @@ Time-Evolving Block Decimation (TEBD) is a tensor network ansatz originally deve
   tebdgate(5.5, -ysep, -ysep - 3 * dy, [$T_(y 4)$], name: "Ty4")
 }), caption: [TEBD circuit for $n = 4$ row and column qubits with ring topology. Hadamard gates $H$ are applied to all qubits, followed by nearest-neighbor controlled-phase gates $T_(x k)$ (row ring) and $T_(y k)$ (column ring). Wrap-around gates $T_(x 4)$ and $T_(y 4)$ close each ring.])
 
-Each two-qubit gate in the TEBD circuit is a controlled-phase gate:
+Each two-qubit gate is $T_k = "diag"(1, 1, 1, e^(i phi_k))$ with a learnable $phi_k$ — same form as $M_k$ but with trainable phase. Two rings of $n$ gates give $2n$ phases, with parameter manifold
 $
-  T_k = "diag"(1, 1, 1, e^(i phi_k))
+  cal(M)_"TEBD" = product_(k=1)^(2n) U(1)^4.
 $
-with a single learnable phase $phi_k$ per gate. This gate multiplies a phase factor $e^(i phi_k)$ when both qubits are in state $|1 angle.r$, identical in form to the $M_k$ gates in the QFT circuit but with learnable phases instead of fixed ones.
-
-For $n$ row qubits and $n$ column qubits with ring topology, we have $n$ row ring gates and $n$ column ring gates, giving $2n$ total learnable phases. The parameter manifold is:
-$
-  cal(M)_"TEBD" = product_(k=1)^(2n) U(1)^4
-$
-
-Optimization proceeds on this product of phase manifolds using the same Riemannian framework as the QFT basis (@sec:riemannian). The TEBD circuit evaluates in $O(n)$ operations (one $2 times 2$ gate per qubit), making it the cheapest basis to evaluate at inference time.
+Evaluation is $O(n)$, the cheapest of the four bases.
 
 == MERA-inspired Basis
 
-The Multi-scale Entanglement Renormalization Ansatz (MERA) is a hierarchical tensor network inspired by the renormalization group. The original MERA for quantum many-body systems uses _disentanglers_ (full $U(4)$ unitaries) and _isometries_ (coarse-graining maps on the Stiefel manifold $"St"(2,4)$). However, our application requires a _unitary_ transform $cal(T): CC^(2^n) -> CC^(2^n)$ for image compression --- true coarse-graining would reduce the output dimension, making the transform non-invertible. Instead, we borrow MERA's _hierarchical connectivity pattern_ while parameterizing all gates as controlled-phase gates, consistent with the QFT and TEBD bases. We call the resulting circuit a _MERA-inspired_ basis.
+The original Multi-scale Entanglement Renormalization Ansatz (MERA) uses $U(4)$ disentanglers and Stiefel-manifold isometries. True coarse-graining reduces the output dimension, so it cannot give an invertible transform. We keep MERA's hierarchical connectivity but parameterize every gate as a controlled-phase gate — consistent with the other bases and invertible by construction.
 
-For $n = 2^k$ qubits, the MERA-inspired circuit has $k = log_2 n$ layers. Each layer $l$ has stride $s = 2^(l-1)$ and $n \/ (2s)$ pairs of gates. Within each pair, we apply a _disentangler_ gate followed by an _isometry_ gate, both parameterized as controlled-phase gates $"diag"(1, 1, 1, e^(i phi))$ acting on qubit pairs determined by the MERA connectivity:
+For $n = 2^k$ qubits the circuit has $k = log_2 n$ layers. Layer $l$ has stride $s = 2^(l-1)$ and $n\/(2s)$ pairs; each pair is a _disentangler_ followed by an _isometry_, both controlled-phase gates $"diag"(1,1,1,e^(i phi))$:
 
 - *Disentangler* at pair $p$, layer $l$: acts on qubits $(2 p s + 2,  (2 p s + s + 2) mod n)$
 - *Isometry* at pair $p$, layer $l$: acts on qubits $(2 p s + 1,  2 p s + s + 1)$
@@ -579,32 +549,15 @@ For $n = 2^k$ qubits, the MERA-inspired circuit has $k = log_2 n$ layers. Each l
   line((8.3, 0.9), (11.2, 0.9), stroke: gray)
 }), caption: [MERA-inspired circuit for $n=8$ row and column qubits (16 qubits total). All gates are controlled-phase gates with learnable phases. Disentanglers $D$ and isometries $W$ follow the hierarchical MERA-inspired connectivity: layer 1 (stride 1) connects nearest neighbors, layer 2 (stride 2) connects qubits at distance 2, layer 3 (stride 4) connects distant qubits. Row and column qubits are processed independently.])
 
-Both disentanglers and isometries use identical controlled-phase gate parameterization:
+Both gate types share the form $D_k = W_k = "diag"(1, 1, 1, e^(i phi_k))$; disentangler vs isometry is a distinction of _connectivity_ only.
+
+Controlled-phase (not full $U(4)$) gates are chosen for: invertibility (the transform must be bijective); consistency with the other bases; parsimony ($U(4)$ has 16 parameters vs 1 per gate, avoiding overfitting on small datasets); and diagonality, which plugs cleanly into the shared einsum framework.
+
+Per dimension, $sum_(l=1)^k 2 dot n\/2^l = 2(n-1)$ gates. For 2D images with $m + n$ qubits the parameter manifold is
 $
-  D_k = W_k = "diag"(1, 1, 1, e^(i phi_k))
+  cal(M)_"MERA" = product_(k=1)^(2(m-1)+2(n-1)) U(1)^4.
 $
-with one learnable phase $phi_k$ per gate. The distinction between "disentangler" and "isometry" is purely in their _connectivity_ (which qubit pairs they act on), not their functional form.
-
-*Why controlled-phase gates instead of full unitaries?*
-
-+ *Unitarity requirement*: Image compression requires an invertible transform $cal(T)$ with $cal(T)^(-1)$. True MERA isometries ($2 times 4$ matrices on $"St"(2,4)$) reduce dimensions and cannot be inverted. We need all gates to be unitary ($2 times 2$) to preserve the output dimension.
-
-+ *Consistency*: All basis types (QFT, Entangled QFT, TEBD) use controlled-phase gates. Using the same parameterization for the MERA-inspired basis ensures a uniform optimization framework, shared manifold operations, and fair comparison between basis types.
-
-+ *Parsimony*: A full $U(4)$ gate has 16 real parameters. For small circuits (e.g., $n = 4$ qubits with 6 gates), this would give 96 parameters --- prone to overfitting when training on small image datasets. A single phase per gate keeps the model lean ($2(n-1)$ real parameters per dimension).
-
-+ *Efficient evaluation*: Controlled-phase gates are diagonal in the computational basis, making them compatible with the einsum tensor contraction framework used for all basis types.
-
-For $n = 2^k$ qubits in one dimension, the parameter count is:
-- Layer $l$: $n \/ (2 dot 2^(l-1))$ disentanglers + $n \/ (2 dot 2^(l-1))$ isometries
-- Total: $sum_(l=1)^k 2 dot n \/ 2^l = 2(n - 1)$ gates per dimension
-
-For 2D images with $m$ row qubits and $n$ column qubits, the row and column circuits run independently, giving $2(m-1) + 2(n-1)$ total learnable phases. The parameter manifold is:
-$
-  cal(M)_"MERA" = product_(k=1)^(2(m-1)+2(n-1)) U(1)^4
-$
-
-The hierarchical connectivity captures multi-scale features: layer 1 gates act on nearest-neighbor qubits (fine-scale correlations), while deeper layers connect qubits at increasing stride (coarse-scale correlations). This gives $O(log n)$ circuit depth for $n$ qubits, compared to TEBD's $O(n)$ ring depth.
+Layer $l$ has stride $2^(l-1)$, so depth is $O(log n)$ — compared to TEBD's $O(n)$ — and captures correlations across multiple scales.
 
 == Comparison with Fixed Bases
 
@@ -617,133 +570,101 @@ The hierarchical connectivity captures multi-scale features: layer 1 gates act o
   [Unitarity], [Preserved], [Preserved (manifold constraint)],
 )
 
-The learned basis $cal(T)(bold(theta)^*)$ is signal-adaptive: unlike fixed DCT/FFT bases, it can exploit structure specific to the input data (e.g., textures, edges in images).
+The learned basis $cal(T)(bold(theta)^*)$ is signal-adaptive — it exploits structure specific to the training data (textures, edges) rather than the generic assumptions behind DCT/FFT.
 
 = Training Objective
 
-Given a parametric basis $cal(T)(bold(theta))$ and a dataset of images, we need a loss function that drives the optimizer toward sparser representations. Different loss functions capture different notions of "good compression" and have different optimization properties.
-
 == Loss Functions
 
-=== L1 Norm Loss (Sparsity Promotion)
+=== L1 Norm Loss
 
-The L1 norm loss is defined as:
 $cal(L)_(L 1)(bold(theta)) = sum_(i,j) |cal(T)(bold(theta))(bold(x))_(i,j)|$
 
-This promotes *sparsity* by exploiting a key result from compressed sensing theory: minimizing the $ell_1$ norm $||bold(y)||_1$ is the tightest convex relaxation of the $ell_0$ pseudo-norm $||bold(y)||_0 = |{i,j : bold(y)_(i,j) != 0}|$. The optimization thus drives the transform to concentrate signal energy into fewer frequency components.
-
-*Limitation*: The L1 norm is a proxy for sparsity, not a direct measure of reconstruction quality. It is independent of $||bold(x) - cal(T)^(-1)("truncate"(bold(y), k))||_F^2$, so the sparsest transform may not yield the best reconstruction at a given compression ratio $k$.
-
-=== L2 Norm Loss
-
-$cal(L)_(L 2)(bold(theta)) = sum_(i,j) |cal(T)(bold(theta))(bold(x))_(i,j)|^2$
-
-Encourages energy concentration with smoother gradients than L1, but provides weaker sparsity promotion. Useful as a regularizer or when gradient stability is more important than aggressive sparsity.
+$ell_1$ is the tightest convex relaxation of $ell_0$, so minimizing it concentrates energy into few components. _Limitation_: it is a proxy for sparsity, not reconstruction error — the sparsest transform may not reconstruct best at a given $k$.
 
 === MSE Reconstruction Loss
 
 $cal(L)_"MSE"(bold(theta)) = ||bold(x) - cal(T)(bold(theta))^(-1)("truncate"(cal(T)(bold(theta))(bold(x)), k))||_F^2$
 
-Directly optimizes reconstruction quality after top-$k$ truncation, measuring how well the image can be recovered from its $k$ most important coefficients. This is the loss most aligned with the compression objective, but it requires computing the inverse transform and involves a non-differentiable truncation step (addressed in @sec:topk-grad).
-
-=== Hybrid Loss
-
-$cal(L)_"hybrid"(bold(theta)) = alpha cal(L)_(L 1)(bold(theta)) + beta cal(L)_"MSE"(bold(theta))$
-
-Balances sparsity promotion with reconstruction quality. The weights $alpha$ and $beta$ control the trade-off: larger $alpha$ favors sparser representations, while larger $beta$ favors faithful reconstruction.
+Directly optimizes reconstruction from the top-$k$ coefficients. Most aligned with the compression goal, but requires the inverse transform and a non-differentiable truncation (see @sec:topk-grad).
 
 == Frequency-Dependent Truncation
 
-Naïve top-$k$ truncation selects coefficients by magnitude alone, treating all frequency components equally. In image compression, however, low-frequency components carry structural information (smooth gradients, large-scale shapes) while high-frequency components encode fine details (edges, textures). To bias retention toward perceptually important components, the truncation uses a frequency-weighted score:
+Magnitude-only top-$k$ treats all frequencies equally, but the HVS is more sensitive to low frequencies. We score coefficients with a frequency-weighted score:
 
-$s_(i,j) = |bold(y)_(i,j)| dot (1 + w_(i,j))$, where $w_(i,j) = 1 - d_(i,j) / (2 d_"max")$
+$s_(i,j) = |bold(y)_(i,j)| dot (1 + w_(i,j))$, with $w_(i,j) = 1 - d_(i,j) / (2 d_"max")$,
 
-Here $d_(i,j) = sqrt((i - c_i)^2 + (j - c_j)^2)$ is the distance from frequency bin $(i,j)$ to the DC component $(c_i, c_j)$, and $d_"max"$ is the maximum such distance across the grid. The weight $w_(i,j)$ ranges from $1$ (at DC) to $0.5$ (at the Nyquist corner), so low-frequency coefficients receive up to a $2 times$ boost in their retention score relative to the highest frequencies. This ensures that, at equal magnitude, a low-frequency coefficient is preferred over a high-frequency one --- consistent with the human visual system's greater sensitivity to low-frequency content.
+where $d_(i,j)$ is the distance from bin $(i,j)$ to the DC center and $d_"max"$ is its max over the grid. Then $w$ ranges from $1$ at DC to $0.5$ at the Nyquist corner — a $2 times$ boost for low-frequency coefficients at equal magnitude.
 
 == Sparse Basis Learning Objective
 
-Combining the loss functions and truncation rule, the sparse basis learning problem is:
-
-$bold(theta)^* = arg min_(bold(theta) in cal(M)) cal(L)(bold(theta))$
-
-where $cal(M)$ is the parameter manifold (a product of unitary and phase manifolds, as defined in @sec:riemannian) and $cal(L)$ is one of:
-
-+ *L1 Sparsity*: $cal(L)_(L 1) = ||cal(T)(bold(theta))(bold(x))||_1$ --- promotes sparse representations by penalizing the total magnitude of all coefficients.
-+ *MSE Reconstruction*: $cal(L)_"MSE" = ||bold(x) - cal(T)^(-1)("topk"(cal(T)(bold(x)), k))||_F^2$ --- directly optimizes reconstruction quality after frequency-weighted top-$k$ truncation.
-
-The optimization is performed via Riemannian gradient methods (@sec:riemannian), which ensure that every iterate remains on the constraint manifold. The result $cal(T)(bold(theta)^*)$ is a signal-adaptive basis: unlike fixed DCT/FFT transforms, it exploits structure specific to the training data.
+The training problem is
+$
+  bold(theta)^* = arg min_(bold(theta) in cal(M)) cal(L)(bold(theta)),
+$
+with $cal(M)$ the parameter manifold (@sec:riemannian) and $cal(L)$ one of the losses above. Optimization uses Riemannian methods (@sec:riemannian), which keep every iterate on the manifold.
 
 == Custom Gradient Rule for Top-$k$ Truncation <sec:topk-grad>
 
-The MSE loss $cal(L)_"MSE" = ||bold(x) - cal(T)^(-1)("topk"(cal(T)(bold(x)), k))||_F^2$ involves a top-$k$ truncation that is not differentiable in the classical sense: the set of retained indices changes discontinuously as parameters vary. To make this operation compatible with reverse-mode automatic differentiation (Zygote), we define a custom chain rule (rrule) that provides a well-defined gradient.
+The retained-index set $cal(S)$ changes discontinuously with $bold(theta)$, so top-$k$ is not classically differentiable. We use a _straight-through_ rrule.
 
-*Forward pass*: Given the transformed coefficients $bold(y) = cal(T)(bold(x))$, compute frequency-weighted scores $s_(i,j) = |y_(i,j)| dot (1 + w_(i,j))$ (as defined in the truncation section), select the top-$k$ indices $cal(S) = "argtopk"(s, k)$, and zero out all other entries:
+*Forward*: with scores $s_(i,j) = |y_(i,j)|(1 + w_(i,j))$ and $cal(S) = "argtopk"(s, k)$,
 $
-  ["topk"(bold(y), k)]_(i,j) = cases(y_(i,j) & "if" (i,j) in cal(S), 0 & "otherwise")
+  ["topk"(bold(y), k)]_(i,j) = cases(y_(i,j) & "if" (i,j) in cal(S), 0 & "otherwise").
 $
 
-*Pullback (reverse pass)*: The gradient flows back only through the retained coefficients. Given an upstream gradient $overline(bold(y))$, the pullback produces:
+*Pullback*: treat $cal(S)$ as fixed and pass gradients through retained entries:
 $
-  overline(bold(x))_(i,j) = cases(overline(y)_(i,j) & "if" (i,j) in cal(S), 0 & "otherwise")
+  overline(bold(x))_(i,j) = cases(overline(y)_(i,j) & "if" (i,j) in cal(S), 0 & "otherwise").
 $ <eq:topk_pullback>
-This is the _straight-through estimator_ applied to truncation: we treat the truncation mask as fixed (non-differentiable) and pass gradients through the selected entries unchanged.
 
-*Why this works*: Although the truncation mask $cal(S)$ depends on $bold(y)$ (and therefore on $bold(theta)$), ignoring this dependency is justified because:
-+ The mask changes discretely --- a coefficient either enters or leaves $cal(S)$ --- so the true Jacobian has delta-function contributions at the boundaries that are unusable for gradient-based optimization.
-+ The straight-through gradient correctly tells the optimizer: "to reduce the MSE loss, adjust the parameters so that the _retained_ coefficients better approximate the original signal." This is the actionable information.
-+ In practice, the mask is relatively stable during training: once a coefficient is large enough to be in the top-$k$, small parameter changes keep it there, so the straight-through approximation is locally exact almost everywhere.
+The true Jacobian carries delta-function terms at index-switch boundaries — useless for gradient descent. The straight-through estimator instead encodes the actionable signal: "move the retained coefficients closer to $bold(x)$." In training, $cal(S)$ is locally stable, so this approximation is exact almost everywhere.
 
 = Riemannian Optimization <sec:riemannian>
 
-The trainable parameters of our quantum circuits --- Hadamard gates $H$, controlled-phase gates $M_k$, and TEBD/MERA two-qubit gates $T_k$ --- live on Riemannian manifolds rather than in Euclidean space. A naïve Euclidean update $H <- H - eta nabla f$ would immediately violate the unitarity constraint $H H^dagger = I$, producing a matrix that no longer represents a valid quantum gate. _Riemannian optimization_ resolves this by performing three operations at each iteration: (1) projecting the Euclidean gradient onto the tangent space of the manifold, (2) computing a descent direction in that tangent space, and (3) mapping the result back to the manifold via a retraction. This guarantees that every iterate is a valid point on the constraint surface, without the need for explicit re-orthogonalization or penalty terms.
+Circuit parameters — Hadamards $H$, controlled-phase gates $M_k$, TEBD/MERA gates $T_k$ — live on manifolds, not in Euclidean space. A Euclidean step $H <- H - eta nabla f$ immediately violates $H H^dagger = I$. Each Riemannian iteration instead (1) projects $nabla_E f$ onto the tangent space, (2) takes a descent step there, and (3) retracts back to the manifold — so every iterate is feasible without penalty terms.
 
 == Manifold Structure
 
-The circuit parameters inhabit two distinct manifolds, each with its own geometric structure:
++ *Unitary manifold $U(2)$*: $2 times 2$ matrices with $U U^dagger = I$, a compact Lie group of dimension 4. Tangent space:
+  $
+    T_U U(2) = { U S : S^dagger = -S },
+  $
+  i.e. $U$ times a skew-Hermitian matrix — the first-order condition for preserving $U U^dagger = I$.
 
-+ *Unitary manifold $U(2)$*: Hadamard-like gates are $2 times 2$ unitary matrices satisfying $U U^dagger = I$. Geometrically, $U(2)$ is a compact Lie group of dimension 4. Its tangent space at a point $U$ consists of all matrices of the form
++ *Phase manifold $U(1)^4$*: diagonal unitaries with $|z_i| = 1$, i.e. the 4-torus $(S^1)^4$. Tangent space:
   $
-    T_U U(2) = { U S : S^dagger = -S }
+    T_z U(1)^4 = { i theta dot.c z : theta in RR^4 },
   $
-  where $S$ is skew-Hermitian. Intuitively, infinitesimal perturbations of a unitary matrix must be "anti-Hermitian rotations" to preserve the constraint to first order.
-
-+ *Product of unit circles $U(1)^4$*: Controlled-phase gates are diagonal unitary matrices with entries on the unit circle $|z_i| = 1$. The parameter space is a 4-torus $U(1)^4 = (S^1)^4$, with tangent space
-  $
-    T_z U(1)^4 = { i theta dot.c z : theta in RR^4 }
-  $
-  corresponding to purely imaginary scalings of each component. Each $z_i$ can only move tangentially along its circle, so the tangent direction at $z_i$ is $i theta_i z_i$ for some $theta_i in RR$.
+  purely imaginary scalings of each component.
 
 == Riemannian Gradient
 
-Automatic differentiation (Zygote) produces a Euclidean gradient $nabla_E f$ that lives in the ambient space $CC^(2 times 2)$ or $CC^4$, not on the tangent space of the manifold. To obtain a valid descent direction, we project this gradient onto the tangent space --- yielding the _Riemannian gradient_:
+Zygote returns a Euclidean gradient $nabla_E f$ in ambient space. Projecting onto the tangent space gives the _Riemannian gradient_:
 
-- *For $U(2)$*: $"grad" f(U) = U dot "skew"(U^dagger nabla_E f)$, where $"skew"(A) = (A - A^dagger) \/ 2$ extracts the skew-Hermitian part. The product $U^dagger nabla_E f$ pulls the gradient into the Lie algebra coordinates, and $"skew"$ removes the Hermitian component (which would move off the manifold).
-- *For $U(1)^4$*: $"grad" f(z) = i dot "Im"(overline(z) circle.stroked.tiny nabla_E f) circle.stroked.tiny z$, applied element-wise. The term $"Im"(overline(z)_i dot (nabla_E f)_i)$ extracts the tangential component of the gradient along each circle.
+- $U(2)$: $"grad" f(U) = U dot "skew"(U^dagger nabla_E f)$, with $"skew"(A) = (A - A^dagger)\/2$. $U^dagger nabla_E f$ pulls the gradient into the Lie algebra; $"skew"$ strips the Hermitian component that would leave the manifold.
+- $U(1)^4$: element-wise $"grad" f(z) = i dot "Im"(overline(z) circle.stroked.tiny nabla_E f) circle.stroked.tiny z$ — the tangential component along each circle.
 
 == Retraction
 
-A tangent vector $xi in T_x cal(M)$ indicates a direction of descent, but following it linearly would leave the manifold. A _retraction_ $R_x : T_x cal(M) -> cal(M)$ maps the tangent update back onto the constraint surface:
+A tangent step $alpha xi$ leaves the manifold; a _retraction_ $R_x : T_x cal(M) -> cal(M)$ maps it back.
 
-- *Cayley retraction for $U(2)$*: Let $W = xi dot U^dagger$, projected to the Lie algebra $frak(u)(2)$ via $W <- (W - W^dagger)\/2$. The retraction is
+- *Cayley, for $U(2)$*: set $W = xi dot U^dagger$ and project to $frak(u)(2)$ via $W <- (W - W^dagger)\/2$. Then
   $
-    R_U (alpha xi) = (I - alpha/2 dot W)^(-1) (I + alpha/2 dot W) dot U
+    R_U (alpha xi) = (I - alpha/2 dot W)^(-1) (I + alpha/2 dot W) dot U.
   $
-  The Cayley map preserves unitarity _exactly_ for any step size $alpha$, because $(I - alpha/2 dot W)^(-1)(I + alpha/2 dot W)$ is unitary whenever $W$ is skew-Hermitian. This is a stronger guarantee than first-order retractions, which only approximate the manifold. The Cayley map also avoids the QR decomposition and its sign-correction step, yielding a simpler implementation.
+  Exactly unitary for any $alpha$ whenever $W$ is skew-Hermitian; no QR or sign correction.
 
-- *Normalization for $U(1)^4$*: $R_z (alpha xi) = (z + alpha xi) \/ |z + alpha xi|$, applied element-wise. This projects each updated component back onto the unit circle by normalizing its magnitude --- the simplest possible retraction for $U(1)$.
+- *Normalization, for $U(1)^4$*: element-wise $R_z (alpha xi) = (z + alpha xi)\/|z + alpha xi|$.
 
 === Cayley vs QR Retraction
 
-Two widely used retractions for the unitary manifold $U(n)$ are the Cayley map and the QR decomposition. Our implementation uses the Cayley retraction; the comparison below summarizes their trade-offs:
-
-*Cayley retraction*: Given a skew-Hermitian direction $W in frak(u)(n)$,
+We use Cayley. For $U(n)$ the two standard options are:
 $
-  R^"Cayley"_U (alpha W) = (I - alpha/2 dot W)^(-1) (I + alpha/2 dot W) dot U
+  R^"Cayley"_U (alpha W) = (I - alpha/2 dot W)^(-1) (I + alpha/2 dot W) dot U, quad W in frak(u)(n)
 $
-
-*QR retraction*: Given $U + alpha xi = Q R$ (thin QR decomposition),
 $
-  R^"QR"_U (alpha xi) = Q dot "diag"("sgn"(R_(i i)))
+  R^"QR"_U (alpha xi) = Q dot "diag"("sgn"(R_(i i))), quad U + alpha xi = Q R.
 $
 
 #table(
@@ -756,80 +677,58 @@ $
   [Implementation], [Requires batched inverse], [Requires sign correction],
 )
 
-For our application with $2 times 2$ gates, both retractions have $O(1)$ cost per gate, so the choice is driven by algebraic convenience rather than performance:
-+ The Cayley map operates directly in the Lie algebra $frak(u)(2)$, making the connection between tangent vectors and group elements algebraically transparent.
-+ The re-projection $W <- (W - W^dagger)\/2$ acts as a safety net: even when the direction is not exactly tangent (e.g., after Adam's element-wise scaling), the Cayley map still produces a valid unitary.
-+ For $2 times 2$ matrices, the inverse $(I - alpha/2 dot W)^(-1)$ admits a closed-form expression via the adjugate matrix, sidestepping numerical pivoting entirely.
+For $2 times 2$ gates both are $O(1)$ per gate, so we pick on algebraic grounds: Cayley stays in $frak(u)(2)$; the re-projection $W <- (W - W^dagger)\/2$ absorbs any non-tangent component from Adam's element-wise scaling; and $(I - alpha/2 dot W)^(-1)$ has a closed form via the adjugate — no pivoting.
 
 == Riemannian Gradient Descent
 
-The simplest Riemannian optimizer applies the steepest-descent direction in the tangent space, then retracts:
+Steepest descent in the tangent space followed by retraction:
 $
-  x_(t+1) = R_(x_t) (-eta dot "grad" f(x_t))
+  x_(t+1) = R_(x_t) (-eta dot "grad" f(x_t)).
 $ <eq:rgd>
-where $eta > 0$ is the step size and $R$ is the retraction defined above. This is the manifold analogue of Euclidean gradient descent: at each step, the Riemannian gradient gives the direction of steepest decrease on the manifold, and the retraction ensures the iterate remains feasible.
 
 === Armijo Backtracking Line Search <armijo>
 
-The update rule @eq:rgd requires a step size $eta$ that produces sufficient decrease in the loss. A fixed step size is unreliable: too large and the iterates oscillate or diverge; too small and convergence stalls. The _Armijo backtracking line search_ resolves this by adaptively selecting $eta$ at each iteration.
-
-Starting from an initial step size $alpha_0 > 0$ (e.g., $alpha_0 = 0.01$), the algorithm tests the _sufficient decrease condition_ (Armijo condition):
+A fixed $eta$ either oscillates or stalls; we adapt it per step. Starting from $alpha_0 > 0$ (e.g., $0.01$), accept the first $alpha$ satisfying the sufficient-decrease condition
 $
-  cal(L)(R_(x_t)(-alpha dot "grad" f(x_t))) <= cal(L)(x_t) - c dot alpha dot ||"grad" f(x_t)||^2
+  cal(L)(R_(x_t)(-alpha dot "grad" f(x_t))) <= cal(L)(x_t) - c dot alpha dot ||"grad" f(x_t)||^2,
 $ <eq:armijo>
-where $c in (0, 1)$ is a small constant (typically $c = 10^(-4)$) that sets the bar for "sufficient" decrease. If the condition fails, the step size is contracted:
-$
-  alpha <- tau dot alpha, quad tau in (0, 1)
-$
-with $tau = 0.5$ (halving). The process repeats for up to a fixed number of backtracking steps (e.g., 10). The algorithm accepts the first $alpha$ satisfying @eq:armijo, or falls back to the smallest step tried.
-
-*Why Armijo is well-suited to Riemannian optimization*: On a curved manifold, the retraction $R_(x_t)$ maps the tangent space back to the manifold surface. For large step sizes, the manifold "bends away" from the tangent approximation, so a step size that was valid at one point may overshoot at another. The Armijo condition adapts to this curvature automatically: it guarantees that each step makes progress proportional to $alpha ||g||^2$, while the backtracking loop finds the largest acceptable step size, balancing convergence speed against the risk of overshooting.
+with $c = 10^(-4)$. Otherwise contract $alpha <- tau dot alpha$ with $tau = 0.5$, for up to $~10$ steps. This adapts to manifold curvature: the tangent approximation breaks down for large $alpha$, and Armijo bounds each step's progress by $alpha ||g||^2$.
 
 == Riemannian Adam
 
-Riemannian gradient descent with Armijo line search is reliable but can converge slowly, particularly in loss landscapes with very different curvatures along different parameter directions. We also implement _Riemannian Adam_ (Bécigneul & Ganea, 2019), which extends the classical Adam optimizer to manifolds. Adam maintains per-parameter running averages of the gradient (first moment) and squared gradient (second moment), using their ratio to scale each parameter's update independently. This adaptive scaling implicitly adjusts the effective step size for each gate, often yielding faster convergence than a single global step size --- at the cost of weaker per-step descent guarantees.
+RGD+Armijo is reliable but slow when curvatures differ across parameters. Riemannian Adam (Bécigneul & Ganea, 2019) scales each parameter's step by the ratio of first and second moments.
 
-Let $g_t = "grad" f(x_t)$ be the Riemannian gradient at step $t$. The algorithm maintains exponentially weighted first and second moment estimates:
-
+With $g_t = "grad" f(x_t)$, the moments are
 $
   m_t &= beta_1 m_(t-1) + (1 - beta_1) g_t \
   v_t &= beta_2 v_(t-1) + (1 - beta_2) |g_t|^2
 $ <eq:adam_moments>
-
-where $beta_1, beta_2 in [0, 1)$ are decay rates (typically $beta_1 = 0.9$, $beta_2 = 0.999$). To correct the initialization bias (both moments start at zero), we use the bias-corrected estimates $hat(m)_t = m_t \/ (1 - beta_1^t)$ and $hat(v)_t = v_t \/ (1 - beta_2^t)$. The update direction is:
-
+with $beta_1 = 0.9$, $beta_2 = 0.999$. Bias-corrected $hat(m)_t = m_t\/(1-beta_1^t)$, $hat(v)_t = v_t\/(1-beta_2^t)$ give the direction and update
 $
-  d_t = hat(m)_t \/ (sqrt(hat(v)_t) + epsilon)
+  d_t = hat(m)_t \/ (sqrt(hat(v)_t) + epsilon), quad x_(t+1) = R_(x_t) (-eta dot d_t),
 $
+with $epsilon approx 10^(-8)$.
 
-where $epsilon approx 10^(-8)$ prevents division by zero. The new iterate is obtained by retraction:
-
+*Parallel transport of momentum.* After retraction, $m_t in T_(x_t) cal(M)$ must be transported to $T_(x_(t+1)) cal(M)$. We use projection-based transport
 $
-  x_(t+1) = R_(x_t) (-eta dot d_t)
+  Gamma_(x_t -> x_(t+1)) (m_t) = "proj"_(T_(x_(t+1)) cal(M)) (m_t),
 $
-
-*Parallel transport of momentum.* A subtlety arises because $m_t$ lives in the tangent space $T_(x_t) cal(M)$, but after the retraction, the new iterate $x_(t+1)$ has a _different_ tangent space $T_(x_(t+1)) cal(M)$. To carry the momentum forward, it must be _parallel transported_ to the new tangent space. We use projection-based transport as a computationally cheap first-order approximation:
-
-$
-  Gamma_(x_t -> x_(t+1)) (m_t) = "proj"_(T_(x_(t+1)) cal(M)) (m_t)
-$
-
-For $U(2)$, this is $U_(t+1) dot "skew"(U_(t+1)^dagger m_t)$: the old momentum is re-projected into the Lie algebra at the new point. For $U(1)^4$, the tangent projection is re-applied element-wise at the new phase values. This approximation is exact to first order in the step size and introduces negligible error for the small steps typical in practice.
+i.e. $U_(t+1) dot "skew"(U_(t+1)^dagger m_t)$ for $U(2)$ and the element-wise tangent projection at the new phases for $U(1)^4$. First-order accurate; the error is negligible at typical step sizes.
 
 == Batched Einsum and Gradient Computation
 
-Evaluating the forward transform $bold(y) = cal(T)(bold(theta))(bold(x))$ amounts to a tensor contraction: the image $bold(x)$ is reshaped into a rank-$(m+n)$ tensor with binary indices $(q_1, ..., q_(m+n))$, each of dimension 2, and contracted with the circuit gate tensors $H_1, H_2, ..., M_1, M_2, ...$ via an Einstein summation (einsum) code. The einsum formulation has two key advantages: it makes the contraction order explicit and optimizable, and it naturally extends to batched evaluation.
+The forward transform is a tensor contraction: reshape $bold(x)$ to a rank-$(m+n)$ tensor with binary indices and contract with the gate tensors via an Einstein-summation (einsum) code. This exposes the contraction order to optimization and extends naturally to batches.
 
-*Single-image forward pass.* The einsum code specifies which tensor indices are contracted (internal circuit wires) and which survive (output qubit indices). The contraction order is pre-optimized using a tree search algorithm (TreeSA) that minimizes the total floating-point operation count. For a QFT on $k$ qubits, the optimized contraction achieves $O(2^k dot k)$ complexity, matching the classical FFT.
+*Single-image forward pass.* The einsum code names contracted (internal) and surviving (output) indices. The contraction order is pre-optimized by TreeSA, minimizing total flops; QFT on $k$ qubits reaches $O(2^k dot k)$.
 
-*Batched forward pass.* During training, we process $B$ images simultaneously to amortize overhead. A batch label $beta$ is appended to the image input and output indices of the einsum code, and the $B$ images are stacked into a single $(2, 2, ..., 2, B)$ tensor. The einsum then contracts all $B$ images in one call:
+*Batched forward pass.* Stack $B$ images into $(2,...,2,B)$, append a batch label $beta$ to the image and output indices:
 $
-  bold(Y)_(q'_1, ..., q'_(m+n), beta) = sum_(q_1, ..., q_(m+n)) (product_j G^j_(dots)) bold(X)_(q_1, ..., q_(m+n), beta)
+  bold(Y)_(q'_1, ..., q'_(m+n), beta) = sum_(q_1, ..., q_(m+n)) (product_j G^j_(dots)) bold(X)_(q_1, ..., q_(m+n), beta).
 $
-The gate tensors $G^j$ are shared across the batch --- they do not carry the $beta$ index. This reduces GPU kernel launch overhead from $O(B)$ to $O(1)$, a significant saving when $B$ is large and each individual contraction is small (as is the case for $2 times 2$ gates).
+Gate tensors $G^j$ are shared (no $beta$ index), cutting kernel launches from $O(B)$ to $O(1)$ — a large saving on GPU for small $2 times 2$ gates.
 
-*Gradient computation.* Zygote's reverse-mode automatic differentiation traces through the einsum call to produce the Euclidean gradient $nabla_E cal(L)$ with respect to each gate tensor. Three design choices ensure correct and stable differentiation:
+*Gradient computation.* Zygote differentiates through the einsum. Three conventions keep AD correct and efficient:
 
-+ *Tuple vs Vector tangent types*: Zygote represents the gradient of a vector-of-tensors as a tuple of tangent arrays, but the Riemannian optimizer expects a vector. The loss function converts `Vector` inputs to `Tuple` before the einsum call, so that Zygote produces stable, predictable tangent types. After differentiation, the tuple gradient is converted back to a vector for the optimizer.
-+ *No mutation in the forward pass*: The einsum contraction is a pure function --- no in-place array modification --- as required by Zygote's source-to-source AD. All intermediate arrays are constructed via allocation (`reshape`, `cat`) rather than mutation (`setindex!`, `.=`).
-+ *Conjugation for the inverse transform*: The inverse transform uses conjugated gate tensors $overline(G)^j$ rather than explicit matrix inverses, exploiting unitarity: $U^(-1) = U^dagger = overline(U)^top$. This keeps the inverse pass as cheap as the forward pass and avoids numerical issues from matrix inversion.
++ *Tuple tangents*: the loss wraps the tensor `Vector` into a `Tuple` before contraction, since Zygote produces stable tangent types on tuples; the result is converted back after.
++ *No mutation in the forward pass*: intermediates are built by `reshape`/`cat`, never `setindex!` or `.=`, as required by Zygote.
++ *Inverse via conjugation*: since $U^(-1) = U^dagger = overline(U)^top$, the inverse transform uses $overline(G)^j$ instead of matrix inversion — same cost as forward, no numerical inversion issues.
