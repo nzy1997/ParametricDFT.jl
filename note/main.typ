@@ -645,6 +645,65 @@ Zygote returns a Euclidean gradient $nabla_E f$ in ambient space. Projecting ont
 - $U(2)$: $"grad" f(U) = U dot "skew"(U^dagger nabla_E f)$, with $"skew"(A) = (A - A^dagger)\/2$. $U^dagger nabla_E f$ pulls the gradient into the Lie algebra; $"skew"$ strips the Hermitian component that would leave the manifold.
 - $U(1)^4$: element-wise $"grad" f(z) = i dot "Im"(overline(z) circle.stroked.tiny nabla_E f) circle.stroked.tiny z$ — the tangential component along each circle.
 
+#figure(canvas(length: 1.25cm, {
+  import draw: *
+  let purple-c = rgb("#8e5ea2")
+  let red-c = rgb("#e15759")
+  let blue-c = rgb("#4e79a7")
+
+  // Manifold M as a curved arc
+  bezier((-4.2, -0.5), (0, 2.3), (4.2, -0.5),
+         stroke: (thickness: 2pt, paint: purple-c.darken(25%)))
+  content((4.55, -0.15), text(12pt, weight: "bold", fill: purple-c.darken(25%))[$cal(M)$])
+
+  // Point x at the peak of the arc (tangent horizontal here)
+  let tx = 0.0
+  let ty = 1.75
+  circle((tx, ty), radius: 0.11, fill: black)
+  content((tx - 0.35, ty + 0.3), text(12pt, weight: "bold")[$x$])
+
+  // Tangent plane T_x M as a thin horizontal ribbon
+  rect((tx - 2.7, ty - 0.1), (tx + 2.7, ty + 0.1),
+       fill: blue-c.lighten(88%),
+       stroke: (thickness: 0.7pt, paint: gray.darken(20%), dash: "dashed"))
+  content((tx + 3.05, ty + 0.32), text(11pt, fill: gray.darken(25%))[$T_x cal(M)$])
+
+  // Euclidean gradient ∇_E f --- off-manifold (up-right)
+  let gx = tx + 1.4
+  let gy = ty + 1.6
+  line((tx, ty), (gx, gy),
+       stroke: (thickness: 1.7pt, paint: red-c.darken(10%)),
+       mark: (end: ">", size: 0.3))
+  content((gx + 0.4, gy + 0.2),
+          text(13pt, weight: "bold", fill: red-c.darken(10%))[$nabla_E f$])
+
+  // Projected grad f --- horizontal component, in the tangent plane
+  let gtx = tx + 1.4
+  let gty = ty + 0.05
+  line((tx, ty), (gtx, gty),
+       stroke: (thickness: 1.7pt, paint: purple-c.darken(10%)),
+       mark: (end: ">", size: 0.3))
+  content((gtx + 0.55, gty - 0.08),
+          text(13pt, weight: "bold", fill: purple-c.darken(10%))[$"grad" f$])
+
+  // Dotted perpendicular: the projection itself
+  line((gx, gy), (gtx, gty),
+       stroke: (thickness: 0.8pt, paint: gray.darken(30%), dash: "dotted"))
+
+  // Right-angle marker at the foot of the perpendicular
+  line((gtx - 0.2, gty), (gtx - 0.2, gty + 0.2),
+       stroke: (thickness: 0.6pt, paint: gray.darken(40%)))
+  line((gtx - 0.2, gty + 0.2), (gtx, gty + 0.2),
+       stroke: (thickness: 0.6pt, paint: gray.darken(40%)))
+
+  // Subtle context labels
+  content((-2.6, ty + 1.3),
+          text(8pt, fill: red-c.darken(20%), style: "italic")[off-manifold])
+  content((2.8, ty - 0.45),
+          text(8pt, fill: purple-c.darken(20%), style: "italic")[on-tangent])
+
+}), caption: [Riemannian projection: the Euclidean gradient $nabla_E f$ (red) shoots off the manifold $cal(M)$; its orthogonal projection onto the tangent space $T_x cal(M)$ (dashed ribbon) is the Riemannian gradient $"grad" f$ (purple). The dotted line is the projection direction, with the right-angle marker confirming orthogonality. Concrete forms for our two manifolds are given by the formulas above.]) <fig-tangent>
+
 == Retraction
 
 A tangent step $alpha xi$ leaves the manifold; a _retraction_ $R_x : T_x cal(M) -> cal(M)$ maps it back.
