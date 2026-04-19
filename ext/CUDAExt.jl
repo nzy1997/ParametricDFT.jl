@@ -64,6 +64,50 @@ function ChainRulesCore.rrule(::typeof(ParametricDFT.topk_truncate), x::CuArray{
     return y, topk_truncate_pullback
 end
 
+# GPU batched top-k truncation: all B per-image masks via one sort(dims=1) call.
+# Replaces the per-image `map(1:B)` loop in batched_loss_mse on GPU.
+
+function _topk_mask_gpu_batched(x_batched::CuArray{T, N}, m::Int, n::Int,
+                                k::Integer) where {T, N}
+    @assert N == m + n + 1
+    B = size(x_batched, N)
+    Ntot = 2^(m + n)
+    RT = real(T)
+    k2 = min(Int(k), Ntot)
+
+    freq_weights = _get_freq_weights_gpu(2^m, 2^n)
+    freq_flat = reshape(freq_weights, Ntot)                 # (Ntot,)
+
+    # Scores: |x| * (1 + w), broadcast w across the B columns
+    x_flat = reshape(x_batched, Ntot, B)
+    scores = abs.(x_flat) .* (one(RT) .+ freq_flat)
+
+    # Sort each column descending, take the k-th largest per column as threshold
+    sorted = sort(scores; dims = 1, rev = true)             # (Ntot, B)
+    thresholds = sorted[k2:k2, :]                            # (1, B) — broadcasts
+
+    mask_flat = RT.(scores .>= thresholds)                   # (Ntot, B)
+    return reshape(mask_flat, size(x_batched))
+end
+
+function ParametricDFT.batched_topk_truncate(x_batched::CuArray{T}, m::Int, n::Int,
+                                             k::Integer) where T
+    return x_batched .* _topk_mask_gpu_batched(x_batched, m, n, k)
+end
+
+function ChainRulesCore.rrule(::typeof(ParametricDFT.batched_topk_truncate),
+                              x_batched::CuArray{T}, m::Int, n::Int,
+                              k::Integer) where T
+    mask = _topk_mask_gpu_batched(x_batched, m, n, k)
+    y = x_batched .* mask
+    function pullback(ȳ)
+        return (ChainRulesCore.NoTangent(), ȳ .* mask,
+                ChainRulesCore.NoTangent(), ChainRulesCore.NoTangent(),
+                ChainRulesCore.NoTangent())
+    end
+    return y, pullback
+end
+
 function ParametricDFT.batched_inv(A::CuArray{T,3}) where T
     d, _, n = size(A)
     if d == 2
