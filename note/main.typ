@@ -582,23 +582,11 @@ $cal(L)_(L 1)(bold(theta)) = sum_(i,j) |cal(T)(bold(theta))(bold(x))_(i,j)|$
 
 $ell_1$ is the tightest convex relaxation of $ell_0$, so minimizing it concentrates energy into few components. _Limitation_: it is a proxy for sparsity, not reconstruction error — the sparsest transform may not reconstruct best at a given $k$.
 
-=== L2 Norm Loss
-
-$cal(L)_(L 2)(bold(theta)) = sum_(i,j) |cal(T)(bold(theta))(bold(x))_(i,j)|^2$
-
-Smoother gradients than L1, weaker sparsity pressure. Useful as a regularizer.
-
 === MSE Reconstruction Loss
 
 $cal(L)_"MSE"(bold(theta)) = ||bold(x) - cal(T)(bold(theta))^(-1)("truncate"(cal(T)(bold(theta))(bold(x)), k))||_F^2$
 
 Directly optimizes reconstruction from the top-$k$ coefficients. Most aligned with the compression goal, but requires the inverse transform and a non-differentiable truncation (see @sec:topk-grad).
-
-=== Hybrid Loss
-
-$cal(L)_"hybrid"(bold(theta)) = alpha cal(L)_(L 1)(bold(theta)) + beta cal(L)_"MSE"(bold(theta))$
-
-Trades sparsity against reconstruction; larger $alpha$ favors sparsity, larger $beta$ favors fidelity.
 
 == Frequency-Dependent Truncation
 
