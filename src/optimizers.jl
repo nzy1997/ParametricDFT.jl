@@ -18,7 +18,8 @@ abstract type AbstractRiemannianOptimizer end
     OptimizationState{ET, RT}
 
 Bundles shared loop state built by `_common_setup`. Holds manifold groupings,
-batched point/gradient buffers, and the identity-batch cache for Cayley retraction.
+batched point/gradient buffers, the identity-batch cache for Cayley retraction,
+and a per-tensor Euclidean-gradient buffer that is reused across iterations.
 """
 struct OptimizationState{ET, RT}
     manifold_groups::Dict{AbstractRiemannianManifold, Vector{Int}}
@@ -26,6 +27,9 @@ struct OptimizationState{ET, RT}
     grad_buf_batches::Dict{AbstractRiemannianManifold, AbstractArray}
     ibatch_cache::Dict{AbstractRiemannianManifold, AbstractArray}
     current_tensors::Vector{<:AbstractMatrix}
+    # Pre-allocated Vector{AbstractMatrix} reused by `_compute_gradients!` each
+    # iteration. Eliminates the per-iteration `AbstractMatrix[...]` comprehension.
+    euclidean_grads_buf::Vector{AbstractMatrix}
 end
 
 _element_type(::OptimizationState{ET, RT}) where {ET, RT} = ET
@@ -63,33 +67,58 @@ function _common_setup(tensors::Vector{T}) where T <: AbstractMatrix
         end
     end
 
+    # Pre-allocate the Vector{AbstractMatrix} wrapper used by _compute_gradients!.
+    # Entries are placeholders; they are overwritten each iteration.
+    euclidean_grads_buf = AbstractMatrix[similar(t) for t in current_tensors]
+
     return OptimizationState{ET, RT}(
-        manifold_groups, point_batches, grad_buf_batches, ibatch_cache, current_tensors
+        manifold_groups, point_batches, grad_buf_batches, ibatch_cache,
+        current_tensors, euclidean_grads_buf,
     )
+end
+
+"""
+    _compute_gradients!(buf, grad_fn, tensors)
+
+Compute Euclidean gradients via `grad_fn`, writing into the pre-allocated
+`buf::Vector{AbstractMatrix}` (typically `state.euclidean_grads_buf`) to
+avoid per-iteration wrapper allocation. Returns `buf` on success, `nothing`
+on NaN/Inf (after logging which tensor carried the non-finite value).
+"""
+function _compute_gradients!(buf::Vector{AbstractMatrix}, grad_fn, tensors)
+    euclidean_grads_raw = grad_fn(tensors)
+    raw = euclidean_grads_raw isa Tuple ? collect(euclidean_grads_raw) : euclidean_grads_raw
+
+    # Overwrite buf in place. For non-matrix ChainRules tangents (ZeroTangent,
+    # NoTangent) substitute a zero array sized like the corresponding tensor.
+    for i in eachindex(raw)
+        buf[i] = raw[i] isa AbstractMatrix ? raw[i] :
+                 fill!(similar(tensors[i]), zero(eltype(tensors[i])))
+    end
+
+    # Per-tensor NaN/Inf diagnostic. Walk once; on the first non-finite tensor,
+    # report which index and the NaN/Inf counts, then stop.
+    for (i, g) in enumerate(buf)
+        if !all(isfinite, g)
+            n_nan = count(isnan, g)
+            n_inf = count(isinf, g)
+            @warn "Non-finite gradient — optimizer will stop" tensor_index=i n_nan=n_nan n_inf=n_inf
+            return nothing
+        end
+    end
+
+    return buf
 end
 
 """
     _compute_gradients(grad_fn, tensors)
 
-Compute Euclidean gradients via `grad_fn`. Returns `nothing` on NaN/Inf.
+Allocating wrapper used outside the main optimization loop. Prefer
+`_compute_gradients!` inside the loop, where a buffer is already available.
 """
 function _compute_gradients(grad_fn, tensors)
-    euclidean_grads_raw = grad_fn(tensors)
-    raw = euclidean_grads_raw isa Tuple ? collect(euclidean_grads_raw) : euclidean_grads_raw
-
-    # Build typed Vector, replacing any non-matrix ChainRules tangents (ZeroTangent, etc.)
-    # with zero arrays. collect() first ensures the guard runs before typed conversion.
-    euclidean_grads = AbstractMatrix[
-        raw[i] isa AbstractMatrix ? raw[i] : fill!(similar(tensors[i]), zero(eltype(tensors[i])))
-        for i in eachindex(raw)
-    ]
-
-    # Check for NaN/Inf in gradients
-    if any(g -> !all(isfinite, g), euclidean_grads)
-        return nothing
-    end
-
-    return euclidean_grads
+    buf = AbstractMatrix[similar(t) for t in tensors]
+    return _compute_gradients!(buf, grad_fn, tensors)
 end
 
 """
@@ -209,10 +238,11 @@ function _update_step!(
 
     alpha = RT(opt.lr)
     accepted = false
+    # Reused across every line-search trial: keys are manifold types (stable
+    # across trials), so overwriting entries is equivalent to fresh allocation.
     last_cand_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
 
     for _ls in 1:opt.max_ls_steps
-        last_cand_batches = Dict{AbstractRiemannianManifold, AbstractArray}()
         for (manifold, indices) in state.manifold_groups
             pb = state.point_batches[manifold]
             rg = rg_batches[manifold]
@@ -317,8 +347,10 @@ function _optimization_loop(
             unstack_tensors!(state.current_tensors, state.point_batches[manifold], indices)
         end
 
-        # Compute Euclidean gradients
-        euclidean_grads = _compute_gradients(grad_fn, state.current_tensors)
+        # Compute Euclidean gradients (in-place into pre-allocated buffer)
+        euclidean_grads = _compute_gradients!(
+            state.euclidean_grads_buf, grad_fn, state.current_tensors
+        )
         euclidean_grads === nothing && break
 
         # Batched projection
