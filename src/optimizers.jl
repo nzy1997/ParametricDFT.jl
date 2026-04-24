@@ -158,10 +158,12 @@ struct RiemannianGD <: AbstractRiemannianOptimizer
     armijo_c::Float64
     armijo_tau::Float64
     max_ls_steps::Int
+    max_grad_norm::Union{Nothing, Float64}
 end
 
-RiemannianGD(; lr=0.01, armijo_c=1e-4, armijo_tau=0.5, max_ls_steps=10) =
-    RiemannianGD(lr, armijo_c, armijo_tau, max_ls_steps)
+RiemannianGD(; lr=0.01, armijo_c=1e-4, armijo_tau=0.5,
+               max_ls_steps=10, max_grad_norm=nothing) =
+    RiemannianGD(lr, armijo_c, armijo_tau, max_ls_steps, max_grad_norm)
 
 # ============================================================================
 # RiemannianAdam -- Riemannian Adam Optimizer
@@ -173,10 +175,12 @@ struct RiemannianAdam <: AbstractRiemannianOptimizer
     beta1::Float64
     beta2::Float64
     eps::Float64
+    max_grad_norm::Union{Nothing, Float64}
 end
 
-RiemannianAdam(; lr=0.001, betas=(0.9, 0.999), eps=1e-8) =
-    RiemannianAdam(lr, betas[1], betas[2], eps)
+RiemannianAdam(; lr=0.001, betas=(0.9, 0.999), eps=1e-8,
+                 max_grad_norm=nothing) =
+    RiemannianAdam(lr, betas[1], betas[2], eps, max_grad_norm)
 
 # ============================================================================
 # Per-Optimizer State Initialization
@@ -318,6 +322,9 @@ end
 # Shared Optimization Loop
 # ============================================================================
 
+_max_grad_norm(opt::RiemannianGD)   = opt.max_grad_norm
+_max_grad_norm(opt::RiemannianAdam) = opt.max_grad_norm
+
 """
     _optimization_loop(opt, tensors, loss_fn, grad_fn; max_iter, tol, loss_trace)
 
@@ -359,6 +366,17 @@ function _optimization_loop(
         )
 
         grad_norm_sq = grad_norm^2
+
+        # Gradient-norm clipping (opt-in via max_grad_norm field on the optimizer).
+        max_norm = _max_grad_norm(opt)
+        if max_norm !== nothing && grad_norm > max_norm
+            clip_factor = max_norm / grad_norm
+            for (_, batch) in rg_batches
+                batch .*= clip_factor
+            end
+            grad_norm    = max_norm
+            grad_norm_sq = grad_norm^2
+        end
 
         # Check convergence
         if grad_norm < tol

@@ -268,4 +268,56 @@ using RecursiveArrayTools
         @test 0.2 < loss_adam / max(loss_manopt, 1e-10) < 5.0
     end
 
+    @testset "RiemannianGD max_grad_norm field" begin
+        opt_default = RiemannianGD()
+        @test opt_default.max_grad_norm === nothing
+
+        opt_clipped = RiemannianGD(max_grad_norm = 2.5)
+        @test opt_clipped.max_grad_norm == 2.5
+        @test opt_clipped.lr == 0.01
+        @test opt_clipped.armijo_c == 1e-4
+    end
+
+    @testset "RiemannianAdam max_grad_norm field" begin
+        opt_default = RiemannianAdam()
+        @test opt_default.max_grad_norm === nothing
+
+        opt_clipped = RiemannianAdam(max_grad_norm = 1.0)
+        @test opt_clipped.max_grad_norm == 1.0
+        @test opt_clipped.beta1 == 0.9
+        @test opt_clipped.beta2 == 0.999
+        @test opt_clipped.eps == 1e-8
+    end
+
+    @testset "Gradient clipping _max_grad_norm dispatch" begin
+        # Covers the internal helper the clipping branch dispatches on.
+        @test ParametricDFT._max_grad_norm(RiemannianGD()) === nothing
+        @test ParametricDFT._max_grad_norm(RiemannianGD(max_grad_norm=2.5)) == 2.5
+        @test ParametricDFT._max_grad_norm(RiemannianAdam()) === nothing
+        @test ParametricDFT._max_grad_norm(RiemannianAdam(max_grad_norm=1.0)) == 1.0
+    end
+
+    @testset "Gradient clipping passthrough" begin
+        m, n = 2, 2
+        Random.seed!(2222)
+        pic = rand(ComplexF64, 2^m, 2^n)
+        optcode, tensors_raw = ParametricDFT.qft_code(m, n)
+        optcode_inv, _ = ParametricDFT.qft_code(m, n; inverse=true)
+        tensors = Matrix{ComplexF64}[Matrix{ComplexF64}(t) for t in tensors_raw]
+        loss_obj = ParametricDFT.MSELoss(4)
+        loss_fn = ts -> ParametricDFT.loss_function(ts, m, n, optcode, pic, loss_obj;
+                                                     inverse_code=optcode_inv)
+        grad_fn = ts -> Zygote.pullback(loss_fn, ts)[2](1.0)[1]
+
+        ts_no_clip = [copy(t) for t in tensors]
+        ts_hi_clip = [copy(t) for t in tensors]
+        ParametricDFT.optimize!(RiemannianAdam(lr=0.001),
+                                 ts_no_clip, loss_fn, grad_fn; max_iter=1, tol=0.0)
+        ParametricDFT.optimize!(RiemannianAdam(lr=0.001, max_grad_norm=1e6),
+                                 ts_hi_clip, loss_fn, grad_fn; max_iter=1, tol=0.0)
+        for (a, b) in zip(ts_no_clip, ts_hi_clip)
+            @test isapprox(a, b; atol=1e-12)
+        end
+    end
+
 end  # @testset "Riemannian Optimizers (New API)"
