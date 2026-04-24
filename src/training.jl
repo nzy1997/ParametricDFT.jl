@@ -1,5 +1,23 @@
 
 
+"""
+    _cosine_with_warmup(step, total_steps; warmup_frac, lr_peak, lr_final)
+
+Linear warmup followed by cosine decay. `step` is 0-indexed global step;
+`warmup_frac ∈ (0, 1)` sets the warmup portion of total steps.
+"""
+function _cosine_with_warmup(step::Int, total_steps::Int;
+                              warmup_frac::Float64 = 0.05,
+                              lr_peak::Float64  = 0.01,
+                              lr_final::Float64 = 0.001)
+    warmup_steps = max(1, round(Int, warmup_frac * total_steps))
+    if step <= warmup_steps
+        return lr_peak * (step / warmup_steps)
+    end
+    progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+    return lr_final + 0.5 * (lr_peak - lr_final) * (1 + cos(pi * progress))
+end
+
 """Move array to device. `:gpu` requires CUDA.jl via CUDAExt."""
 to_device(x, ::Val{:cpu}) = x
 
@@ -27,7 +45,7 @@ function _train_basis_core(
     m::Int, n::Int,
     loss::AbstractLoss,
     epochs::Int,
-    steps_per_image::Int,
+    steps_per_image::Union{Nothing, Int},
     validation_split::Float64,
     shuffle::Bool,
     early_stopping_patience::Int,
@@ -38,7 +56,11 @@ function _train_basis_core(
     device::Symbol = :cpu,
     checkpoint_interval::Int = 0,
     checkpoint_dir::Union{Nothing, String} = nothing,
-    build_basis_fn::Union{Nothing, Function} = nothing
+    build_basis_fn::Union{Nothing, Function} = nothing,
+    warmup_frac::Float64 = 0.05,
+    lr_peak::Float64 = 0.01,
+    lr_final::Float64 = 0.001,
+    max_grad_norm::Union{Nothing, Float64} = nothing,
 )
     # Convert Symbol to optimizer type for backward compatibility
     opt = if optimizer isa AbstractRiemannianOptimizer
@@ -49,6 +71,14 @@ function _train_basis_core(
         RiemannianGD(lr=0.01)
     else
         error("Unknown optimizer: $optimizer. Use RiemannianGD(), RiemannianAdam(), or :gradient_descent/:adam")
+    end
+
+    # `steps_per_image` is ignored since the per-batch inner loop was removed;
+    # kept in the signature for one release with a deprecation warning.
+    if steps_per_image !== nothing
+        Base.depwarn("`steps_per_image` is ignored; use warmup_frac / lr_peak / " *
+                     "lr_final / max_grad_norm instead.",
+                     :train_basis)
     end
 
     # Convert images to complex matrices and move to device
@@ -109,6 +139,7 @@ function _train_basis_core(
         mkpath(checkpoint_dir)
     end
     global_step = 0
+    total_steps = max(1, epochs * n_batches)
 
     # Training loop
     for epoch in 1:epochs
@@ -147,13 +178,17 @@ function _train_basis_core(
                 return grads
             end
 
-            # Run optimizer with per-iteration loss tracing
-            # Scale max_iter by batch size so steps_per_image is honored per image,
-            # not per batch. Without this, batch_size=16 would do 16x fewer total steps.
+            # One optimizer step per mini-batch with cosine-schedule + clipping.
+            # The per-batch inner loop was removed in the optimizer-fix work; see
+            # parametric-dft-paper/docs/superpowers/specs/2026-04-24-*.md.
             batch_loss_trace = Float64[]
-            batch_max_iter = steps_per_image * length(batch)
-            current_tensors = optimize!(opt, current_tensors, batch_loss_fn, batch_grad_fn;
-                                         max_iter=batch_max_iter, tol=1e-8,
+            lr_t = _cosine_with_warmup(global_step + 1, total_steps;
+                                        warmup_frac=warmup_frac,
+                                        lr_peak=lr_peak, lr_final=lr_final)
+            opt_t = RiemannianAdam(lr=lr_t, betas=(0.9, 0.999), eps=1e-8,
+                                    max_grad_norm=max_grad_norm)
+            current_tensors = optimize!(opt_t, current_tensors, batch_loss_fn, batch_grad_fn;
+                                         max_iter=1, tol=0.0,
                                          loss_trace=batch_loss_trace)
 
             # Collect per-iteration losses into step_train_losses
@@ -318,7 +353,7 @@ function train_basis(
     m::Int, n::Int,
     loss::AbstractLoss = MSELoss(round(Int, 2^(m+n) * 0.1)),
     epochs::Int = 3,
-    steps_per_image::Int = 200,
+    steps_per_image::Union{Nothing, Int} = nothing,
     validation_split::Float64 = 0.2,
     shuffle::Bool = true,
     early_stopping_patience::Int = 2,
@@ -328,6 +363,10 @@ function train_basis(
     device::Symbol = :cpu,
     checkpoint_interval::Int = 0,
     checkpoint_dir::Union{Nothing, String} = nothing,
+    warmup_frac::Float64 = 0.05,
+    lr_peak::Float64 = 0.01,
+    lr_final::Float64 = 0.001,
+    max_grad_norm::Union{Nothing, Float64} = nothing,
     kwargs...
 ) where B <: AbstractSparseBasis
     @assert 0.0 <= validation_split < 1.0 "validation_split must be in [0, 1)"
@@ -347,7 +386,9 @@ function train_basis(
         save_loss_path=save_loss_path, optimizer=optimizer,
         batch_size=batch_size, device=device,
         checkpoint_interval=checkpoint_interval, checkpoint_dir=checkpoint_dir,
-        build_basis_fn=build_fn
+        build_basis_fn=build_fn,
+        warmup_frac=warmup_frac, lr_peak=lr_peak, lr_final=lr_final,
+        max_grad_norm=max_grad_norm,
     )
 
     trained_basis = build_fn(final_tensors)

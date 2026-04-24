@@ -398,4 +398,76 @@ end
         @test length(history.step_train_losses) > 1
     end
 
+    @testset "_cosine_with_warmup schedule" begin
+        total = 1000
+        warmup_frac = 0.1
+        lr_peak  = 0.01
+        lr_final = 0.001
+        f(step) = ParametricDFT._cosine_with_warmup(step, total;
+                      warmup_frac=warmup_frac, lr_peak=lr_peak, lr_final=lr_final)
+
+        # Step 0 during warmup → near 0 (at most lr_peak / warmup_steps)
+        @test f(0) < lr_peak * 0.01
+
+        # End of warmup (step = warmup_steps = 100) → approximately lr_peak
+        @test isapprox(f(100), lr_peak; rtol=1e-10)
+
+        # Last step → approximately lr_final
+        @test isapprox(f(total), lr_final; rtol=1e-10)
+
+        # Midway between warmup end and total → between lr_peak and lr_final, strictly
+        mid = f(round(Int, (100 + total) / 2))
+        @test lr_final < mid < lr_peak
+    end
+
+    @testset "train_basis one-step-per-batch descent" begin
+        Random.seed!(4444)
+        images = [rand(Float64, 4, 4) for _ in 1:8]
+        basis, history = ParametricDFT.train_basis(QFTBasis, images;
+            m = 2, n = 2,
+            loss = ParametricDFT.MSELoss(4),
+            epochs = 2,
+            batch_size = 4,
+            optimizer = :adam,
+            validation_split = 0.25,
+            early_stopping_patience = 10,
+            warmup_frac = 0.1,
+            lr_peak  = 0.01,
+            lr_final = 0.001,
+            max_grad_norm = nothing,
+            shuffle = false,
+        )
+        # Loss should decrease from first to last epoch on average
+        @test last(history.train_losses) <= first(history.train_losses)
+        # Unitarity preserved for the Hadamard-role tensors (those classified
+        # as UnitaryManifold by the library's runtime check). Phase tensors
+        # (CPHASE factored as 2x2 with row-norm √2) land on the other
+        # manifold and are not expected to satisfy UU† = I.
+        for t in basis.tensors
+            m = ParametricDFT.classify_manifold(t)
+            if m isa ParametricDFT.UnitaryManifold
+                d = size(t, 1)
+                @test isapprox(t * t', Matrix{ComplexF64}(I, d, d); atol=1e-8)
+            end
+        end
+    end
+
+    @testset "train_basis deprecation warning for steps_per_image" begin
+        Random.seed!(6666)
+        images = [rand(Float64, 4, 4) for _ in 1:4]
+        @test_logs (:warn, r"steps_per_image") match_mode=:any begin
+            ParametricDFT.train_basis(QFTBasis, images;
+                m = 2, n = 2,
+                loss = ParametricDFT.MSELoss(4),
+                epochs = 1, batch_size = 4,
+                optimizer = :adam,
+                validation_split = 0.25,
+                early_stopping_patience = 10,
+                steps_per_image = 5,
+                warmup_frac = 0.1, lr_peak = 0.01, lr_final = 0.001,
+                shuffle = false,
+            )
+        end
+    end
+
 end
