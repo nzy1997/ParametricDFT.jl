@@ -22,7 +22,7 @@ CUDAExt = "CUDA"
 
 [compat]
 ADTypes = "1.18.0"
-CUDA = "5.9.1"
+CUDA = "5.9.1, 6"
 CairoMakie = "0.12, 0.13, 0.14, 0.15"
 ChainRulesCore = "1"
 FFTW = "1.10.0"
